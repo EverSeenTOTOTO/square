@@ -1,0 +1,13 @@
+{
+    "extends": "./tsconfig.json",
+    "include": [
+        "src/**/*",
+        "cli.js",
+        "commitlint.config.js",
+        "babel.config.js",
+        ".eslintrc.js",
+        "jest.config.js",
+        "rollup.config.js"
+    ],
+    "exclude": []
+}

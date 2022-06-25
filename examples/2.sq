@@ -1,0 +1,24 @@
+[= http [require'http']]
+[= path [require 'path']]
+[= fs [require 'fs']]
+
+[= self [path.resolve 'examples/2.sq']]
+[= stream [fs.createReadStream self]]
+
+; line comment
+; line comment
+
+[= app /[req res] [begin 
+   [console.log ; inline comment ; req.url]
+   [stream.on 'end' /[] [res.end]]
+     [stream.pipe res]]]
+
+[= server [http.createServer app]]
+
+
+[setTimeout /[] [begin
+  [console.warn '---- NOW TURNING OFF SERVER ----']
+  [server.close]]
+  4000]
+
+[server.listen 8080 /[] [console.log '---- SERVER LISTENING ON 8080 ----']]
