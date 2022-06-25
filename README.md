@@ -86,7 +86,7 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 ```lisp
 [= stack /[vec] [begin 
   [= this [Object]]
-  [= this.vec [... vec]]
+  [= this.vec [vec.slice 0]]
   [= this.clear /[] [= this.vec []]]
   [= this.push /[x] [begin 
     [= this.vec [.. this.vec [x]]]]]
@@ -147,7 +147,7 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 
 ```bnf
 <lit> ::= <num> | <str> | <bool>
-<unOp> ::= '!' | '...'
+<unOp> ::= '!' | '-'
 <binOp> ::= '-' | '..' | '/' | '+' | '*' | '>' | '<' | '%' | '^' | '==' | '!='
 <dot> ::= '.' <id> <dot>
 
@@ -156,11 +156,11 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 
 <func> ::= '/' (<expand> | '['']') <expr>
 
+<unOpExpr> ::= <unOp> <expr> 
+
 <assign> ::= '[' '=' (<id> <dot>* | <expand>) <expr> ']'
 
 <binOpExpr> ::= '[' <binOp> <expr> <expr> ']'
-<unOpExpr> ::= '[' <unOp> <expr> ']'
-
 <call> ::= '[' <expr>* ']' 
 
 <expr> ::= (<id> | <lit> | <func> | <assign> | <binOpExpr> | <unOpExpr> | <call>) <dot>*

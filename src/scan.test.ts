@@ -93,6 +93,10 @@ it('readWhitespace', () => {
   expect(() => scan.readWhitespace('\\n', new Position())).toThrow();
 });
 
+it('readOp', () => {
+  expect(() => scan.readOp('@', new Position())).toThrow();
+});
+
 it('lookahead', () => {
   const pos = new Position();
   expect(scan.lookahead("'str'", pos).type).toBe('str');

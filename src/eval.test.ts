@@ -39,7 +39,6 @@ it('evalBinOp', () => {
   const concatNum = '.. 4 1';
   const concatNum2 = '.. 1 4';
   const concatArray = '.. [1 2] [3 4]';
-  const concatError = '.. 1 [1]';
 
   const ep = factory(parse.parseBinOpExpr, ev.evalBinOp);
   const env = new ev.Env();
@@ -74,7 +73,8 @@ it('evalBinOp', () => {
   expect(ep(concatNum)).toEqual([4, 3, 2]);
   expect(ep(concatNum2)).toEqual([1, 2, 3]);
   expect(ep(concatArray)).toEqual([1, 2, 3, 4]);
-  expect(() => ep(concatError)).toThrow();
+  expect(() => ep('.. 1 [1]')).toThrow();
+  expect(() => ep('+= 1 1')).toThrow();
 });
 
 it('evalUnOp', () => {
@@ -177,6 +177,7 @@ it('evalExpand', () => {
   expect(env.get('z')).toBe(6);
 
   expect(() => ep('[... x]')()).toThrow();
+  expect(() => ep('[... x y]')(1)).toThrow();
   expect(() => ep('[. . x]')(1, 2)).toThrow();
   expect(() => ep('[x . .]')(1, 2)).toThrow();
 });

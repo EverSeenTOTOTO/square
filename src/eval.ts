@@ -89,7 +89,7 @@ export function evalCall(expr: parse.Call, input: string, env: Env) {
 
   const caller = evalExpr(expr.children[0] as parse.Expr, input, env);
 
-  if (['BinOpExpr', 'Assign', 'UnOpExpr'].indexOf(master.type) !== -1) {
+  if (['BinOpExpr', 'Assign'].indexOf(master.type) !== -1) {
     return caller;
   }
 
@@ -229,10 +229,8 @@ export function evalUnOp(expr: parse.UnOpExpr, input: string, env: Env) {
   switch (expr.op.type) {
     case '!':
       return !value;
-    case '-': // TODO: add - support
+    case '-':
       return -value;
-    case '...':
-      return Array.isArray(value) ? [...value] : { ...value };
     default:
       throw new Error(codeFrame(input, `Eval error, expect <unOp>, got ${expr.op.type}`, expr.op.pos));
   }
@@ -375,21 +373,15 @@ export function evalWhile(expr: parse.Call, input: string, env: Env) {
 }
 
 export function evalMatch(expr: parse.Call, input: string, env: Env) {
-  const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
-
   evalExpr(expr.children[1] as parse.Expr, input, env);
 
   let rest = expr.children.slice(2);
 
   while (rest.length > 0) {
-    if (rest[0].type !== 'Expr') {
-      throw new Error(codeFrame(input, `Syntax error, expect pattern <expr>, got ${rest[0].type}`, keyword.name.pos));
-    }
-
     const [first, second] = ((rest[0] as parse.Expr).master as parse.Call).children;
     const match = evalExpr(first as parse.Expr, input, env);
 
-    if (!second) return match; // if no second expr, the default case
+    if (!second) return match; // if no second expr, the fallback case
     if (second && match) return evalExpr(second as parse.Expr, input, new Env(env, 'match'));
 
     rest = rest.slice(1);
@@ -412,6 +404,7 @@ function evalWordOp(expr: parse.Call, input: string, env: Env) {
       if (typeof lhs !== 'string') {
         throw new Error(codeFrame(input, `Eval error, cannot construct regexp, expect <string>, got ${typeof lhs}`, keyword.name.pos));
       }
+
       return new RegExp(lhs, typeof rhs === 'string' ? rhs : undefined);
     case 'in':
       if (Array.isArray(rhs) || typeof rhs === 'string') {

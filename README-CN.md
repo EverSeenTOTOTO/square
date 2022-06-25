@@ -10,7 +10,7 @@
 
     **square**是一个使用js编写的小型语言，语法与lisp类似。语言设计上尽可能避免`<Ctrl>`、`<Shift>`控制键的使用，因此除了运算符之外语言主要使用`.`、`[]`、`;`和`/`结构化代码，同时支持`...`数组展开、`..`连接运算等精简优雅的语法，提高生产力。
 
-    **square**采用递归下降编译，总代码量不超过1000行，具有相当的可读性和拓展性。同时语言内置了JS的运行环境，可以提供70~80%的JS功能。
+    **square**实现上采用较简单的递归下降，总代码量不超过1000行，具有相当的可读性和拓展性。同时语言内置了JS的运行环境，可以提供70~80%的JS功能。
 
 2. 为什么叫做**square**？
 
@@ -87,7 +87,7 @@
 ```lisp
 [= stack /[vec] [begin 
   [= this [Object]]
-  [= this.vec [... vec]]
+  [= this.vec [vec.slice 0]]
   [= this.clear /[] [= this.vec []]]
   [= this.push /[x] [begin 
     [= this.vec [.. this.vec [x]]]]]
@@ -148,7 +148,7 @@
 
 ```bnf
 <lit> ::= <num> | <str> | <bool>
-<unOp> ::= '!' | '...'
+<unOp> ::= '!' | '-'
 <binOp> ::= '-' | '..' | '/' | '+' | '*' | '>' | '<' | '%' | '^' | '==' | '!='
 <dot> ::= '.' <id> <dot>
 
@@ -157,11 +157,11 @@
 
 <func> ::= '/' (<expand> | '['']') <expr>
 
+<unOpExpr> ::= <unOp> <expr> 
+
 <assign> ::= '[' '=' (<id> <dot>* | <expand>) <expr> ']'
 
 <binOpExpr> ::= '[' <binOp> <expr> <expr> ']'
-<unOpExpr> ::= '[' <unOp> <expr> ']'
-
 <call> ::= '[' <expr>* ']' 
 
 <expr> ::= (<id> | <lit> | <func> | <assign> | <binOpExpr> | <unOpExpr> | <call>) <dot>*

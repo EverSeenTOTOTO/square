@@ -21,6 +21,9 @@ it('evaluate 1', () => {
 
 it('evaluate 2', () => {
   const code = `
+[/[] !true]
+[/[] [!true]]
+
 [= foo /[x y] [== x y]]
 
 [foo 1 2]
@@ -33,11 +36,15 @@ it('evaluate 2', () => {
 
 [[require 'os'].cpus].length
 
-[- [+ [-0 1] 2] [% 13 4]]
+[!0 ![] !0]
+[- [+ [- 0 -1] 2] [% 13 4]]
+[- [-0 -1] [- 0 -1]]
 `;
 
   const result = evaluate(code, createGlobalEnv());
   expect(result).toEqual([
+    false,
+    [false],
     undefined,
     false,
     process.cwd(),
@@ -45,7 +52,9 @@ it('evaluate 2', () => {
     undefined,
     // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
     require('os').cpus().length,
-    0,
+    [true, false, true],
+    2,
+    NaN,
   ]);
 });
 
@@ -101,6 +110,7 @@ it('evaluate 6', () => {
   const result = evaluate(code);
 
   expect(result).toEqual([4]);
+  expect(() => evaluate('[while ]')).toThrow();
 });
 
 it('evaluate 7', () => {
@@ -121,6 +131,7 @@ it('evaluate 7', () => {
   const result = evaluate(code);
 
   expect(result).toEqual([undefined, 2, 's']);
+  expect(() => evaluate("[regex [] 'g']")).toThrow();
 });
 
 it('evaluate 8', () => {
@@ -143,7 +154,7 @@ it('evaluate 9', () => {
   const code = `
 [= stack /[vec] [begin 
   [= this [Object]]
-  [= this.vec [... vec]]
+  [= this.vec [vec.slice 0]]
   [= this.clear /[] [= this.vec []]]
   [= this.push /[x] [begin 
     [= this.vec [.. this.vec [x]]]]]
@@ -182,7 +193,7 @@ it('evaluate 10', () => {
 
 [begin
   [= fib /[n] [begin
-    [console.log n]
+    ; [console.log n]
     [match n 
       [[< n 0] 0]
       [[< n 2] 1]
@@ -203,6 +214,7 @@ it('evaluate 10', () => {
     [1, 2, 3, 5]]);
 
   expect(() => evaluate('[in 2]')).toThrow();
+  expect(() => evaluate('[in 2 2]')).toThrow();
   expect(() => evaluate('[in 2 [2] 3]')).toThrow();
   expect(() => evaluate('[regex 2]')).toThrow();
 });

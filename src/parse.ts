@@ -180,11 +180,12 @@ function parseCallExprs(input: string, pos: Position) {
 
   while (next.type !== ']') {
     scan.skipWhitespace(input, pos);
+
     const expr = parseExpr(input, pos);
 
     children.push(expr);
-    // [opExpr]
-    if (['Assign', 'BinOpExpr', 'UnOpExpr'].indexOf(expr.master.type) !== -1) break;
+    // [BinOpExpr should have no extra exprs]
+    if (['Assign', 'BinOpExpr'].indexOf(expr.master.type) !== -1) break;
 
     next = scan.lookahead(input, pos);
   }
@@ -200,7 +201,6 @@ function parseOtherExprs(input: string, pos: Position) {
 
   switch (next.type) {
     case '..':
-    case '-':
     case '-=':
     case '+':
     case '+=':
@@ -222,7 +222,6 @@ function parseOtherExprs(input: string, pos: Position) {
     case '=':
       return parseAssign(input, pos);
     case '!':
-    case '...':
       return parseUnOpExpr(input, pos);
     case '/[':
       return parseFunc(input, pos);
@@ -232,6 +231,8 @@ function parseOtherExprs(input: string, pos: Position) {
     case 'num':
     case 'bool':
       return parseLit(input, pos);
+    case '-': // - can be [-1 0] or [- 1 0]
+      return scan.lookahead(input, pos, 2).type === 'space' ? parseBinOpExpr(input, pos) : parseUnOpExpr(input, pos);
     default:
       throw new Error(codeFrame(input, `Syntax error, expect <expr>, got ${next.type}`, pos, next.pos));
   }
@@ -336,8 +337,6 @@ export function parseDot(input: string, pos: Position): Dot {
 
 export function parseUnOpExpr(input: string, pos: Position) {
   const op = scan.raise(input, pos);
-
-  scan.skipWhitespace(input, pos);
 
   const expr = parseExpr(input, pos);
 

@@ -12,7 +12,7 @@ it('parseBinOpExpr', () => {
 });
 
 it('parseUnOpExpr', () => {
-  const input = '! a';
+  const input = '-a';
   const pos = new Position();
   const expr = parse.parseUnOpExpr(input, pos);
 
@@ -35,6 +35,7 @@ it('parseExpand [x]', () => {
   const expr = parse.parseExpand(input, pos);
 
   expect((expr.items[0] as parse.Id).name.source).toBe('x');
+  expect(() => parse.parseExpand('[-1]', pos)).toThrow();
 });
 
 it('parseExpand [ . x]', () => {
@@ -193,6 +194,15 @@ it('parseExpr "[! [.. x y]]"', () => {
   expect(((expr.master as parse.Call).children[0] as parse.Expr).master?.type).toBe('UnOpExpr');
 });
 
+it('parseExpr -', () => {
+  expect(() => parse.parseExpr('[-a]', new Position())).not.toThrow();
+  expect(() => parse.parseExpr('[- a a]', new Position())).not.toThrow();
+  expect(() => parse.parseExpr('[- a -a]', new Position())).not.toThrow();
+  expect(() => parse.parseExpr('[- a]', new Position())).toThrow();
+  expect(() => parse.parseExpr('[- a - a]', new Position())).toThrow();
+  expect(() => parse.parseExpr('[- a a a]', new Position())).toThrow();
+});
+
 it('parseExpr [/[. x] [.. x y]]', () => {
   const input = '[/[. x] [.. x y]]';
   const pos = new Position();
@@ -232,5 +242,6 @@ it('parseExpr [/[. x] [.. x y] [= z 2]]', () => {
 });
 
 it('parseExpr throw', () => {
-  expect(() => parse.parseExpr('[/ [2 x] [.. x y] [= z 2]]', new Position())).toThrow();
+  expect(parse.parseExpr('-1').str()).not.toBe('');
+  expect(() => parse.parseExpr('[/ [2 x] [.. x y] [= z 2]]')).toThrow();
 });
