@@ -238,7 +238,7 @@ function parseOtherExprs(input: string, pos: Position) {
 }
 
 export function parseFunc(input: string, pos: Position): Func {
-  const slash = scan.makeToken('/', pos, '/'); // left [ to parseExpand
+  const slash = scan.makeToken('/', pos, '/'); // not expect('/['), left [ to parseExpand
 
   scan.skipWhitespace(input, pos);
 

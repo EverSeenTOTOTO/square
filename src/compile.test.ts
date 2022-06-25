@@ -206,3 +206,18 @@ it('evaluate 10', () => {
   expect(() => evaluate('[in 2 [2] 3]')).toThrow();
   expect(() => evaluate('[regex 2]')).toThrow();
 });
+
+it('evaluate 11', () => {
+  const code = `
+  [= [a b c d] [.. 1 5]]
+  [begin [= a 9]]
+  [begin [= i 0] [while [< i 1] [+= i 1] [= b 9]]]
+  [if true [= c 9]]
+  [match true [true [= d 9]]]
+
+  [a b c d]
+`;
+  const result = evaluate(code, createGlobalEnv());
+
+  expect(result[result.length - 1]).toEqual([1, 2, 3, 4]);
+});

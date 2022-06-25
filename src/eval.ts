@@ -361,6 +361,7 @@ export function evalBegin(expr: parse.Call, input: string, env: Env) {
 export function evalWhile(expr: parse.Call, input: string, env: Env) {
   const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
   const cond = expr.children[1] as parse.Expr;
+  const whileEnv = new Env(env, 'while');
 
   if (!cond) {
     throw new Error(codeFrame(input, 'Syntax error, no condition for <while>', keyword.name.pos));
@@ -369,7 +370,7 @@ export function evalWhile(expr: parse.Call, input: string, env: Env) {
   const rest = expr.children.slice(2);
 
   while (evalExpr(cond, input, env)) {
-    rest.forEach((e) => evalExpr(e as parse.Expr, input, env));
+    rest.forEach((e) => evalExpr(e as parse.Expr, input, whileEnv));
   }
 }
 
@@ -389,7 +390,7 @@ export function evalMatch(expr: parse.Call, input: string, env: Env) {
     const match = evalExpr(first as parse.Expr, input, env);
 
     if (!second) return match; // if no second expr, the default case
-    if (second && match) return evalExpr(second as parse.Expr, input, env);
+    if (second && match) return evalExpr(second as parse.Expr, input, new Env(env, 'match'));
 
     rest = rest.slice(1);
   }
