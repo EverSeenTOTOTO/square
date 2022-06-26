@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-use-before-define */
-import { repeat, codeFrame } from './utils';
+import { repeat, codeFrame, Constants } from './utils';
 import * as parse from './parse';
 
-export class Env extends Map<string, unknown> {
+export class Env extends Map<string | symbol, unknown> {
   type?: string;
 
   parent?: Env;
@@ -22,6 +22,18 @@ export class Env extends Map<string, unknown> {
     }
 
     return { value, env: this };
+  }
+
+  obj(): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+
+    for (const [k, v] of [...this.entries()]) {
+      if (typeof k === 'string') {
+        result[k] = v;
+      }
+    }
+
+    return result;
   }
 }
 
@@ -77,6 +89,8 @@ export function evalCall(expr: parse.Call, input: string, env: Env) {
         return evalMatch(expr, input, env);
       case 'while':
         return evalWhile(expr, input, env);
+      case 'export':
+        return evalExport(expr, input, env);
       case 'regex':
       case 'and':
       case 'or':
@@ -347,25 +361,26 @@ export function evalIf(expr: parse.Call, input: string, env: Env) {
 
 export function evalBegin(expr: parse.Call, input: string, env: Env) {
   const beginEnv = new Env(env, 'begin');
-  const results: any[] = [];
+
+  let last;
 
   for (const e of expr.children.slice(1)) {
-    results.push(evalExpr(e as parse.Expr, input, beginEnv));
+    last = evalExpr(e as parse.Expr, input, beginEnv);
   }
 
-  return results[results.length - 1];
+  return last;
 }
 
 export function evalWhile(expr: parse.Call, input: string, env: Env) {
   const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
   const cond = expr.children[1] as parse.Expr;
-  const whileEnv = new Env(env, 'while');
 
   if (!cond) {
     throw new Error(codeFrame(input, 'Syntax error, no condition for <while>', keyword.name.pos));
   }
 
   const rest = expr.children.slice(2);
+  const whileEnv = new Env(env, 'while');
 
   while (evalExpr(cond, input, env)) {
     rest.forEach((e) => evalExpr(e as parse.Expr, input, whileEnv));
@@ -381,7 +396,7 @@ export function evalMatch(expr: parse.Call, input: string, env: Env) {
     const [first, second] = ((rest[0] as parse.Expr).master as parse.Call).children;
     const match = evalExpr(first as parse.Expr, input, env);
 
-    if (!second) return match; // if no second expr, the fallback case
+    if (!second) return match; // if no second expr, the fallback value
     if (second && match) return evalExpr(second as parse.Expr, input, new Env(env, 'match'));
 
     rest = rest.slice(1);
@@ -421,6 +436,36 @@ function evalWordOp(expr: parse.Call, input: string, env: Env) {
     case 'or':
       return Boolean(lhs) || Boolean(rhs);
     default:
-      throw new Error(codeFrame(input, `Syntax error, expect "in", "and" or "or", got ${keyword.name.source}`, keyword.name.pos));
+      throw new Error(codeFrame(input, `Syntax error, expect reserved keywords, got ${keyword.name.source}`, keyword.name.pos));
+  }
+}
+
+function evalExport(expr: parse.Call, input: string, env: Env) {
+  const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
+  const wrap = expr.children[1] as parse.Expr;
+  const id = wrap.master as parse.Id;
+  const assignment = expr.children[2] as parse.Expr;
+
+  if (wrap.dot) {
+    throw new Error(codeFrame(input, 'Syntax error, expect <id>, got <id><dot>', wrap.dot.dot.pos));
+  }
+
+  if (id.type !== 'Id') {
+    throw new Error(codeFrame(input, `Syntax error, expect <id>, got ${id.type}`, keyword.name.pos));
+  }
+
+  if (env.type !== 'file') {
+    throw new Error(codeFrame(input, 'Eval error, can only export on top level', keyword.name.pos));
+  }
+
+  const exports = env.get(Constants.EXPORTS) as Env;
+
+  if (assignment) {
+    const value = evalExpr(assignment, input, env);
+
+    env.set(id.name.source, value);
+    exports.set(id.name.source, value);
+  } else {
+    exports.set(id.name.source, evalId(id, input, env));
   }
 }

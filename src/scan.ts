@@ -22,7 +22,6 @@ export const makeToken = (type: Token['type'], pos: Position, source: string): T
   };
 };
 
-// !!! side effect
 export function raise(input: string, pos: Position): Token {
   if (pos.cursor >= input.length) return { type: 'eof', pos, source: 'eof' };
 
@@ -98,6 +97,7 @@ export function readComment(input: string, pos: Position): Token {
   throw new Error(codeFrame(input, 'Syntax error, expected <comment>', pos));
 }
 
+// read only 1 space character, comment is not considered
 export function readWhitespace(input: string, pos: Position): Token {
   const backup = pos.clone();
 
@@ -119,7 +119,6 @@ export function readWhitespace(input: string, pos: Position): Token {
   return { type: 'space', source: input.slice(0, pos.cursor - backup.cursor), pos: backup };
 }
 
-// !!! side effect
 export function skipWhitespace(input: string, pos: Position) {
   while (true) {
     if (/\s/m.test(input[pos.cursor])) {

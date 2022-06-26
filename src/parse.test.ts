@@ -241,7 +241,7 @@ it('parseExpr [/[. x] [.. x y] [= z 2]]', () => {
   expect((square.children[1] as parse.Expr)?.master.type).toBe('Call');
 });
 
-it('parseExpr throw', () => {
+it('parseExpr', () => {
   expect(parse.parseExpr('-1').str()).not.toBe('');
   expect(() => parse.parseExpr('[/ [2 x] [.. x y] [= z 2]]')).toThrow();
 });

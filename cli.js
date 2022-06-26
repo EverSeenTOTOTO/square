@@ -9,7 +9,8 @@ const errors = [];
 for (const file of files) {
   try {
     const content = fs.readFileSync(file, 'utf8');
-    evaluate(content, createGlobalEnv());
+
+    evaluate(content, createGlobalEnv(fs));
   } catch (e) {
     console.error(e);
     errors.push(e instanceof Error ? e : new Error(`Read and eval ${file} failed.`));

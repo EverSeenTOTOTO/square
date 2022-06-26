@@ -10,7 +10,7 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 
     **Square** is a small language written in JS with a lisp-like grammer. The language's design goal is to use as few control keys like `<Ctrl>`, `<Shift>` as possible, so the code structure is determined by `.`, `[]`, `;` and `/`. In addition, there are builtin supports for expanding vectors using `...`, concat operator `..` and other elegant simple syntax, which tends to be more productive.
 
-    **Square** is parsed by a recursive descent algorithm, the source code length is less than 1000 lines so it's easy to read and extend. Square also has an embedded JS runtime that provides 70~80% JS functionality.
+    **Square** is parsed by a recursive descent algorithm, the source code is less than 1000 lines so it's easy to read and extend. Square also has an embedded JS runtime that provides 70~80% JS functionality.
   
 2. Why called **square**?
 
@@ -114,12 +114,27 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 ; 行内注释 ;
 ```
 
+## Module
+
+```lisp 
+[= http [import 'http']] ; actually require('http')
+[= squareModule [import 'module.sq']]
+
+[[importDyn 'path'].then /[path] [path.resolve '.']] ; dynamic import
+
+[export add /[a b] [+ a b]]
+
+[= sub /[a b] [- a b]]
+
+[export sub]
+```
+
 ## Example
 
 ```lisp
-[= http [require'http']]
-[= path [require 'path']]
-[= fs [require 'fs']]
+[= http [import'http']]
+[= path [import 'path']]
+[= fs [import 'fs']]
 
 [= self [path.resolve 'examples/2.sq']]
 [= stream [fs.createReadStream self]]
@@ -128,9 +143,9 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 ; line comment
 
 [= app /[req res] [begin 
-   [console.log ; inline comment ; req.url]
-   [stream.on 'end' /[] [res.end]]
-     [stream.pipe res]]]
+    [console.log ; inline comment ; req.url]
+    [stream.on 'end' /[] [res.end]]
+    [stream.pipe res]]]
 
 [= server [http.createServer app]]
 
@@ -148,7 +163,7 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 ```bnf
 <lit> ::= <num> | <str> | <bool>
 <unOp> ::= '!' | '-'
-<binOp> ::= '-' | '..' | '/' | '+' | '*' | '>' | '<' | '%' | '^' | '==' | '!='
+<binOp> ::= '-' | '..' | '/' | '+' | '*' | '>' | '<' | '%' | '^' | '==' | '!=' | ...
 <dot> ::= '.' <id> <dot>
 
 <expandItem> ::= '.' | '...' | <id> | <expand>

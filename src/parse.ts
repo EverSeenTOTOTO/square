@@ -159,7 +159,6 @@ export function parseExpr(input: string, pos = new Position()): Expr {
   scan.skipWhitespace(input, pos);
 
   const next = scan.lookahead(input, pos);
-
   const expr = next.type === '['
     ? parseCallExprs(input, pos)
     : parseOtherExprs(input, pos);

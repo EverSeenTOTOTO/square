@@ -1,0 +1,24 @@
+[= _0 /[f] /[x] x]
+
+[= next /[n] /[f] /[x] [f [[n f] x]]]
+
+[= _1 [next _0]]
+[= _2 [next _1]]
+[= _3 [next _2]]
+[= _4 [next _3]]
+[= _5 [next _4]]
+[= _6 [next _5]]
+[= _7 [next _6]]
+[= _8 [next _7]]
+[= _9 [next _8]]
+
+[= toInt /[n] [begin
+                [= f /[x] [+ x 1]]
+                [[n f] 0]]]
+
+[console.log [toInt _1]]
+[console.log [toInt _8]]
+
+[= add /[x] /[y] [[x next] y]]
+
+[console.log [toInt [[add _2] _3]]]

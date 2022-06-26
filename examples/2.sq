@@ -1,6 +1,6 @@
-[= http [require'http']]
-[= path [require 'path']]
-[= fs [require 'fs']]
+[= http [import 'http']]
+[= path [import  'path']]
+[= fs [import  'fs']]
 
 [= self [path.resolve 'examples/2.sq']]
 [= stream [fs.createReadStream self]]
