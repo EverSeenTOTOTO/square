@@ -22,6 +22,8 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 [= a 'foo']
 [= b 2]
 [= c [.. 1 10]]
+[= e 0b11.11]
+[= f 0xff.ff]
 [= [x] [1 2]]
 [= [. x] [1 2 3]] ; x = 2
 [= [... x] [1 2 3]] ; x = 3

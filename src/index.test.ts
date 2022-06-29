@@ -11,6 +11,8 @@ it('evaluate 1', () => {
   [= c [.. 1 10]]
   [= [. [x] y] [1 [2] 3]]
   [= b -b]
+  [= e 0b11.11]
+  [= f 0xff.ff]
   `;
 
   const env = new Env();
@@ -21,6 +23,8 @@ it('evaluate 1', () => {
   expect(env.get('c')).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   expect(env.get('x')).toBe(2);
   expect(env.get('y')).toBe(3);
+  expect(env.get('e')).toBe(3.75);
+  expect(env.get('f')).toBe(16 * 15 + 15 + 16 ** -1 * 15 + 16 ** -2 * 15);
 });
 
 it('evaluate 2', () => {

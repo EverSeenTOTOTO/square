@@ -4,7 +4,7 @@
 import { Position, codeFrame } from './utils';
 
 export type Token = {
-  readonly type: 'space' | 'str' | 'num' | 'bool' | 'id' | 'comment' | 'eof' | '.' | '..' | '...' | ';' | '[' | ']' | '/' | '/=' | '=' | '!' | '-' | '-=' | '+' | '+=' | '*' | '*=' | '>' | '>=' | '<' | '<=' | '%' | '%=' | '^' | '^=' | '==' | '!=' | '/[';
+  readonly type: 'space' | 'str' | 'dig' | 'hex' | 'bin' | 'bool' | 'id' | 'comment' | 'eof' | '.' | '..' | '...' | ';' | '[' | ']' | '/' | '/=' | '=' | '!' | '-' | '-=' | '+' | '+=' | '*' | '*=' | '>' | '>=' | '<' | '<=' | '%' | '%=' | '^' | '^=' | '==' | '!=' | '/[';
   readonly source: string;
   readonly pos: Position;
 };
@@ -48,12 +48,18 @@ export function readString(input: string, pos: Position): Token {
   throw new Error(codeFrame(input, 'Syntax error, expected <string>', pos));
 }
 
-const NUMBER_REGEX = /^\d+(?:\.\d+)?(?:e\d+)?/;
+const NUMBER_REGEX = /^(?<bin>0b[01]+(?:\.[01]+)?)|^(?<hex>0x[0-9a-fA-F]+(?:\.[0-9a-fA-F]+)?)|^(?<dig>\d+(?:\.\d+)?(?:e\d+)?)/;
 export function readNumber(input: string, pos: Position): Token {
   const match = NUMBER_REGEX.exec(input.slice(pos.cursor));
 
-  if (match) {
-    return makeToken('num', pos, match[0]);
+  if (match && match.groups) {
+    const { bin, hex, dig } = match.groups;
+
+    return bin
+      ? makeToken('bin', pos, bin)
+      : hex
+        ? makeToken('hex', pos, hex)
+        : makeToken('dig', pos, dig);
   }
 
   throw new Error(codeFrame(input, 'Syntax error, expected <number>', pos));
@@ -152,9 +158,10 @@ export function expect(expected: Token['type'] | Token['type'][], input: string,
   const types = Array.isArray(expected) ? expected : [expected];
 
   if (types.indexOf(token.type) === -1) {
-    const message = codeFrame(input, `Syntax error, expect "${types.join(',')}", got ${token.type}`, token.pos, pos);
+    const message = codeFrame(input, `Syntax error, expect "${types.join(',')}", got ${token.type}`, pos);
 
     pos.copy(token.pos); // rollback
+
     throw new Error(message);
   }
 

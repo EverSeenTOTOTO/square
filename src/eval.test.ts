@@ -5,15 +5,41 @@ import { Position } from './utils';
 const factory = (parseMethod: any, evalMethod: any) => (input: string, env = new ev.Env()) => evalMethod(parseMethod(input, new Position()), input, env);
 
 it('evalLit', () => {
-  const num = '1.1e4';
   const bool = 'false';
   const str = "'str;\\'str\\''";
 
   const ep = factory(parse.parseLit, ev.evalLit);
 
-  expect(ep(num)).toBe(1.1e4);
   expect(ep(bool)).toBe(false);
   expect(ep(str)).toBe('str;\'str\'');
+
+  expect([
+    '010',
+    '010.010',
+    '010e010',
+    '010.010e010',
+  ].map((num) => ep(num))).toEqual([
+    10,
+    10.01,
+    10e10,
+    10.01e10,
+  ]);
+
+  expect([
+    '0b010',
+    '0b010.010',
+  ].map((num) => ep(num))).toEqual([
+    2,
+    2.25,
+  ]);
+
+  expect([
+    '0x0f0',
+    '0x0f0.0f0',
+  ].map((num) => ep(num))).toEqual([
+    16 * 15,
+    16 * 15 + (16 ** -2) * 15,
+  ]);
 });
 
 it('evalBinOp', () => {

@@ -63,7 +63,7 @@ export function evalExpr(expr: parse.Expr, input: string, env = new Env()): any 
       value = evalCall(expr.master as parse.Call, input, env);
       break;
     default:
-      throw new Error(`Eval error, expect <expr>, got ${expr.type}`);
+      throw new Error(codeFrame(input, `Eval error, expect <expr>, got ${expr.type}`, expr.pos));
   }
 
   if (expr.dot) {
@@ -132,7 +132,7 @@ export function evalDot(expr: parse.Dot, input: string, _env: Env) {
     }
 
     if (ptr.next || obj === undefined) {
-      throw new Error(codeFrame(input, `Eval error, expect ${key} to be object, got ${typeof obj}`, expr.id.name.pos));
+      throw new Error(codeFrame(input, `Eval error, expect ${key} to be object, got ${typeof obj}`, expr.pos));
     }
 
     if (value !== undefined) {
@@ -152,7 +152,7 @@ export function evalExpand(expr: parse.Expand, input: string, env: Env) {
 
     expr.items.forEach((item, idx) => {
       if (cursor >= value.length) {
-        throw new Error(codeFrame(input, `Eval error, expect ${cursor + 1} arguments, got: ${value.length}`, expr.bracketL.pos));
+        throw new Error(codeFrame(input, `Eval error, expect ${cursor + 1} arguments, got: ${value.length}`, expr.pos));
       }
 
       switch (item.type) {
@@ -164,7 +164,7 @@ export function evalExpand(expr: parse.Expand, input: string, env: Env) {
           const newCursor = value.length - (expr.items.length - idx - 1) + count;
 
           if (newCursor < cursor) {
-            throw new Error(codeFrame(input, `Eval error, expect ${cursor + 1} arguments, got: ${value.length}`, expr.bracketL.pos));
+            throw new Error(codeFrame(input, `Eval error, expect ${cursor + 1} arguments, got: ${value.length}`, expr.pos));
           }
 
           cursor = newCursor;
@@ -176,7 +176,7 @@ export function evalExpand(expr: parse.Expand, input: string, env: Env) {
           evalExpand(item as parse.Expand, input, env)(...value[cursor++]);
           break;
         default:
-          throw new Error(codeFrame(input, `Eval error, expect <expand>, got ${item.type}`, expr.bracketL.pos));
+          throw new Error(codeFrame(input, `Eval error, expect <expand>, got ${item.type}`, expr.pos));
       }
     });
   };
@@ -218,7 +218,25 @@ export function evalId(expr: parse.Id, input: string, env: Env) {
   const { value } = env.lookup(id);
 
   if (value === undefined) {
-    throw new Error(codeFrame(input, `Eval error, undefined identifier: ${id}`, expr.name.pos));
+    throw new Error(codeFrame(input, `Eval error, undefined identifier: ${id}`, expr.pos));
+  }
+
+  return value;
+}
+
+function evalNum(base: number, B: string, M?: string) {
+  const prefix = base === 2 ? '0b' : '0x';
+
+  let value = 0;
+
+  for (let i = 0; i < B.length; ++i) {
+    value += Number(prefix + B[B.length - 1 - i]) * (base ** i);
+  }
+
+  if (M) {
+    for (let i = 0; i < M.length - 1; ++i) {
+      value += Number(prefix + M[i + 1]) * (base ** -(i + 1));
+    }
   }
 
   return value;
@@ -227,14 +245,34 @@ export function evalId(expr: parse.Id, input: string, env: Env) {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function evalLit(expr: parse.Lit, input: string, _env: Env) {
   switch (expr.value.type) {
-    case 'num':
+    case 'dig':
       return Number(expr.value.source);
-    case 'str':
+    case 'bin': {
+      const match = /^0b(?<B>[01]+)(?<M>\.[01]+)?$/.exec(expr.value.source);
+
+      if (match && match.groups) {
+        const { B, M } = match.groups;
+
+        return evalNum(2, B, M);
+      }
+
+      throw new Error(codeFrame(input, `Syntax error, expect <bin>, got ${expr.value.type}`, expr.pos));
+    } case 'hex': {
+      const match = /^0x(?<B>[0-9a-fA-F]+)(?<M>\.[0-9a-fA-F]+)?$/.exec(expr.value.source);
+
+      if (match && match.groups) {
+        const { B, M } = match.groups;
+
+        return evalNum(16, B, M);
+      }
+
+      throw new Error(codeFrame(input, `Syntax error, expect <hex>, got ${expr.value.type}`, expr.pos));
+    } case 'str':
       return expr.value.source.replace(/^'|'$/g, '').replace(/\\'/g, '\'');
     case 'bool':
       return expr.value.source === 'true';
     default:
-      throw new Error(codeFrame(input, `Eval error, expect <literal>, got ${expr.value.type}`, expr.value.pos));
+      throw new Error(codeFrame(input, `Eval error, expect <literal>, got ${expr.value.type}`, expr.pos));
   }
 }
 
@@ -246,7 +284,7 @@ export function evalUnOp(expr: parse.UnOpExpr, input: string, env: Env) {
     case '-':
       return -value;
     default:
-      throw new Error(codeFrame(input, `Eval error, expect <unOp>, got ${expr.op.type}`, expr.op.pos));
+      throw new Error(codeFrame(input, `Eval error, expect <unOp>, got ${expr.op.type}`, expr.pos));
   }
 }
 
@@ -269,7 +307,7 @@ export function evalBinOp(expr: parse.BinOpExpr, input: string, env: Env) {
 
       record.env.set(key, record.value);
     } else {
-      throw new Error(codeFrame(input, `Eval error, cannot assign on ${master.type}`, expr.op.pos));
+      throw new Error(codeFrame(input, `Eval error, cannot assign on ${master.type}`, expr.pos));
     }
 
     return value;
@@ -324,10 +362,10 @@ export function evalBinOp(expr: parse.BinOpExpr, input: string, env: Env) {
       if (Array.isArray(lhs) && Array.isArray(rhs)) {
         return [...lhs, ...rhs];
       }
-      throw new Error(codeFrame(input, `Eval error, cannot concat ${typeof lhs} and ${typeof rhs}`, expr.op.pos));
+      throw new Error(codeFrame(input, `Eval error, cannot concat ${typeof lhs} and ${typeof rhs}`, expr.pos));
     }
     default:
-      throw new Error(codeFrame(input, `Eval error, expect < binOp >, got ${expr.op.type}`, expr.op.pos));
+      throw new Error(codeFrame(input, `Eval error, expect < binOp >, got ${expr.op.type}`, expr.pos));
   }
 }
 
@@ -337,15 +375,15 @@ export function evalIf(expr: parse.Call, input: string, env: Env) {
   const then = expr.children[2] as parse.Expr;
 
   if (!cond) {
-    throw new Error(codeFrame(input, 'Syntax error, no condition for <if>', keyword.name.pos));
+    throw new Error(codeFrame(input, 'Syntax error, no condition for <if>', keyword.pos));
   }
 
   if (!then) {
-    throw new Error(codeFrame(input, 'Syntax error, no then statement for <if>', keyword.name.pos));
+    throw new Error(codeFrame(input, 'Syntax error, no then statement for <if>', keyword.pos));
   }
 
   if (expr.children.length > 4) {
-    throw new Error(codeFrame(input, 'Syntax error, extra statements for <if>', keyword.name.pos));
+    throw new Error(codeFrame(input, 'Syntax error, extra statements for <if>', keyword.pos));
   }
 
   const condValue = evalExpr(cond, input, env);
@@ -376,7 +414,7 @@ export function evalWhile(expr: parse.Call, input: string, env: Env) {
   const cond = expr.children[1] as parse.Expr;
 
   if (!cond) {
-    throw new Error(codeFrame(input, 'Syntax error, no condition for <while>', keyword.name.pos));
+    throw new Error(codeFrame(input, 'Syntax error, no condition for <while>', keyword.pos));
   }
 
   const rest = expr.children.slice(2);
@@ -411,13 +449,13 @@ function evalWordOp(expr: parse.Call, input: string, env: Env) {
   const rhs = evalExpr(expr.children[2] as parse.Expr, input, env);
 
   if (expr.children.length > 3) {
-    throw new Error(codeFrame(input, `Syntax error, extra statements for ${keyword.name.source}`, keyword.name.pos));
+    throw new Error(codeFrame(input, `Syntax error, extra statements for ${keyword.name.source}`, keyword.pos));
   }
 
   switch (keyword.name.source) {
     case 'regex':
       if (typeof lhs !== 'string') {
-        throw new Error(codeFrame(input, `Eval error, cannot construct regexp, expect <string>, got ${typeof lhs}`, keyword.name.pos));
+        throw new Error(codeFrame(input, `Eval error, cannot construct regexp, expect <string>, got ${typeof lhs}`, keyword.pos));
       }
 
       return new RegExp(lhs, typeof rhs === 'string' ? rhs : undefined);
@@ -430,13 +468,13 @@ function evalWordOp(expr: parse.Call, input: string, env: Env) {
         return Object.keys(rhs).indexOf(lhs) !== -1;
       }
 
-      throw new Error(codeFrame(input, `Eval error, invalid "in" operator, rhs type is ${typeof rhs}`, keyword.name.pos));
+      throw new Error(codeFrame(input, `Eval error, invalid "in" operator, rhs type is ${typeof rhs}`, keyword.pos));
     case 'and':
       return Boolean(lhs) && Boolean(rhs);
     case 'or':
       return Boolean(lhs) || Boolean(rhs);
     default:
-      throw new Error(codeFrame(input, `Syntax error, expect reserved keywords, got ${keyword.name.source}`, keyword.name.pos));
+      throw new Error(codeFrame(input, `Syntax error, expect reserved keywords, got ${keyword.name.source}`, keyword.pos));
   }
 }
 
@@ -447,15 +485,15 @@ function evalExport(expr: parse.Call, input: string, env: Env) {
   const assignment = expr.children[2] as parse.Expr;
 
   if (wrap.dot) {
-    throw new Error(codeFrame(input, 'Syntax error, expect <id>, got <id><dot>', wrap.dot.dot.pos));
+    throw new Error(codeFrame(input, 'Syntax error, expect <id>, got <id><dot>', wrap.dot.pos));
   }
 
   if (id.type !== 'Id') {
-    throw new Error(codeFrame(input, `Syntax error, expect <id>, got ${id.type}`, keyword.name.pos));
+    throw new Error(codeFrame(input, `Syntax error, expect <id>, got ${id.type}`, keyword.pos));
   }
 
   if (env.type !== 'file') {
-    throw new Error(codeFrame(input, 'Eval error, can only export on top level', keyword.name.pos));
+    throw new Error(codeFrame(input, 'Eval error, can only export on top level', keyword.pos));
   }
 
   const exports = env.get(Constants.EXPORTS) as Env;

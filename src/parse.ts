@@ -7,8 +7,11 @@ import { Position, codeFrame } from './utils';
 export class Node {
   readonly type: 'Func' | 'Assign' | 'BinOpExpr' | 'UnOpExpr' | 'Id' | 'Lit' | 'Expr' | 'Call' | 'Dot' | 'Expand';
 
-  constructor(type: Node['type']) {
+  readonly pos: Position;
+
+  constructor(type: Node['type'], loc: Position) {
     this.type = type;
+    this.pos = loc;
   }
 
   str() {
@@ -24,7 +27,7 @@ export class Call extends Node {
   readonly bracketR: scan.Token;
 
   constructor(bl: scan.Token, br: scan.Token, children: Node[]) {
-    super('Call');
+    super('Call', bl.pos);
     this.bracketL = bl;
     this.bracketR = br;
     this.children = children;
@@ -41,7 +44,7 @@ export class Expr extends Node {
   readonly dot?: Dot;
 
   constructor(expr: Expr['master'], dot?: Dot) {
-    super('Expr');
+    super('Expr', expr.pos);
     this.master = expr;
     this.dot = dot;
   }
@@ -55,7 +58,7 @@ export class Dot extends Node {
   readonly next?: Dot;
 
   constructor(dot: scan.Token, id: Id, next?: Dot) {
-    super('Dot');
+    super('Dot', dot.pos);
     this.dot = dot;
     this.id = id;
     this.next = next;
@@ -66,7 +69,7 @@ export class Id extends Node {
   readonly name: scan.Token;
 
   constructor(id: scan.Token) {
-    super('Id');
+    super('Id', id.pos);
     this.name = id;
   }
 }
@@ -79,7 +82,7 @@ export class Expand extends Node {
   readonly items: (scan.Token | Node)[];
 
   constructor(bl: scan.Token, br: scan.Token, items: Expand['items']) {
-    super('Expand');
+    super('Expand', bl.pos);
     this.bracketL = bl;
     this.bracketR = br;
     this.items = items;
@@ -94,7 +97,7 @@ export class Func extends Node {
   readonly body: Expr;
 
   constructor(slash: scan.Token, param: Func['param'], body: Expr) {
-    super('Func');
+    super('Func', slash.pos);
     this.slash = slash;
     this.param = param;
     this.body = body;
@@ -111,7 +114,7 @@ export class Assign extends Node {
   readonly dot?: Dot;
 
   constructor(eq: scan.Token, variable: Assign['variable'], expr: Expr, dot?: Dot) {
-    super('Assign');
+    super('Assign', eq.pos);
     this.eq = eq;
     this.variable = variable;
     this.assignment = expr;
@@ -123,7 +126,7 @@ export class Lit extends Node {
   readonly value: scan.Token;
 
   constructor(value: scan.Token) {
-    super('Lit');
+    super('Lit', value.pos);
     this.value = value;
   }
 }
@@ -134,7 +137,7 @@ export class UnOpExpr extends Node {
   readonly value: Expr;
 
   constructor(op: scan.Token, expr: Expr) {
-    super('UnOpExpr');
+    super('UnOpExpr', op.pos);
     this.op = op;
     this.value = expr;
   }
@@ -148,7 +151,7 @@ export class BinOpExpr extends Node {
   readonly rhs: Expr;
 
   constructor(op: scan.Token, lhs: Expr, rhs: Expr) {
-    super('BinOpExpr');
+    super('BinOpExpr', op.pos);
     this.op = op;
     this.lhs = lhs;
     this.rhs = rhs;
@@ -227,7 +230,9 @@ function parseOtherExprs(input: string, pos: Position) {
     case 'id':
       return parseId(input, pos);
     case 'str':
-    case 'num':
+    case 'hex':
+    case 'bin':
+    case 'dig':
     case 'bool':
       return parseLit(input, pos);
     case '-': // - can be [-1 0] or [- 1 0]
@@ -315,7 +320,7 @@ export function parseId(input: string, pos: Position) {
 }
 
 export function parseLit(input: string, pos: Position) {
-  const token = scan.expect(['str', 'num', 'bool'], input, pos);
+  const token = scan.expect(['str', 'dig', 'bin', 'hex', 'bool'], input, pos);
 
   return new Lit(token);
 }
