@@ -211,6 +211,8 @@ export function evalAssign(expr: parse.Assign, input: string, env: Env) {
   } else {
     evalExpand(expr.variable as parse.Expand, input, env)(...value);
   }
+
+  return value;
 }
 
 export function evalId(expr: parse.Id, input: string, env: Env) {

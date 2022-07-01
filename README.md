@@ -1,6 +1,6 @@
 # square
 
-A tiny lisp-like language written in js, aims to be both fun and productive.
+A toy lisp-like language written in js, aims to be both fun and expressive.
 
 [中文](./README-CN.md)
 

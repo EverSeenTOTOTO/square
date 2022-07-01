@@ -32,10 +32,6 @@ it('evaluate 2', () => {
 [/[] !true]
 [/[] [!true]]
 
-[= foo /[x y] [== x y]]
-
-[foo 1 2]
-
 [process.cwd]
 
 [/[] process.arch]
@@ -53,8 +49,6 @@ it('evaluate 2', () => {
   expect(result).toEqual([
     false,
     [false],
-    undefined,
-    false,
     process.cwd(),
     process.arch,
     undefined,
