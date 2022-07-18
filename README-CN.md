@@ -52,7 +52,6 @@
 ## 函数
 
 ```lisp
-
 [= foo /[] 2]
 
 [foo]
@@ -62,14 +61,13 @@
 [foo 'ignored' 0]
 
 [= fib /[n] [begin
-[console.log n]
-[match n 
-  [[< n 0] 0]
-  [[< n 2] 1]
-  [+ 
-    [fib [- n 1]] 
-    [fib [- n 2]]]]]]
-
+  [console.log n]
+  [match n 
+    [[< n 0] 0]
+    [[< n 2] 1]
+    [+ 
+      [fib [- n 1]] 
+      [fib [- n 2]]]]]]
 
 [console.log [[.. 1 10].map /[x] [fib x]]]
 
@@ -81,7 +79,17 @@
 
 [console.log [car ones]]
 [console.log [car [cdr [cdr ones]]]]
+```
 
+## 延续
+
+```lisp
+[= cc [call/cc /[cc] [cc cc]]
+
+[begin
+  [= start [cc]]
+  [console.log 'infinite loop']
+  [start start]]
 ```
 
 ## 数据结构

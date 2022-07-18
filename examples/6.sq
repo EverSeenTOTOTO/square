@@ -1,0 +1,28 @@
+[console.log [call/cc /[cc] [begin
+  [console.log 1]
+  [cc 2]
+  [console.log 3]]]]
+
+[= gen /[yield]
+  [[.. 1 4].map /[i]
+    [call/cc /[cc]
+      [yield [i cc]]]]]
+
+[= incc 0]
+
+[= next /[g]
+  [if [!= 0 incc]
+    [incc]
+    [begin
+      [= p [call/cc /[outcc] [g outcc]]]
+      [if p
+        [begin
+          [= [value incc] p]
+          value]]]]]
+
+[next gen]
+[next gen]
+[next gen]
+[next gen]
+[next gen]
+

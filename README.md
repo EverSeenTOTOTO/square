@@ -52,7 +52,6 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 ## Function
 
 ```lisp
-
 [= foo /[] 2]
 
 [foo]
@@ -62,13 +61,13 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 [foo 'ignored' 0]
 
 [= fib /[n] [begin
-[console.log n]
-[match n 
-  [[< n 0] 0]
-  [[< n 2] 1]
-  [+ 
-    [fib [- n 1]] 
-    [fib [- n 2]]]]]]
+  [console.log n]
+  [match n 
+    [[< n 0] 0]
+    [[< n 2] 1]
+    [+ 
+      [fib [- n 1]] 
+      [fib [- n 2]]]]]]
 
 [console.log [[.. 1 10].map /[x] [fib x]]]
 
@@ -80,7 +79,17 @@ A tiny lisp-like language written in js, aims to be both fun and productive.
 
 [console.log [car ones]]
 [console.log [car [cdr [cdr ones]]]]
+```
 
+## Continuation
+
+```lisp
+[= cc [call/cc /[cc] [cc cc]]
+
+[begin
+  [= start [cc]]
+  [console.log 'infinite loop']
+  [start start]]
 ```
 
 ## Structure
