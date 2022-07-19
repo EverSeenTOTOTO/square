@@ -18,10 +18,7 @@
   [start foo]]
 
 [= gen /[yield] [begin 
-  [callcc /[cc] [yield [1 cc]]]
-  [callcc /[cc] [yield [2 cc]]]
-  [callcc /[cc] [yield [3 cc]]]
-  [callcc /[cc] [yield [4 cc]]]]]
+  [[.. 1 10].forEach /[x] [callcc /[cc] [yield [x cc]]]]]]
 
 [begin 
   [= p [callcc /[outcc] [gen outcc]]]

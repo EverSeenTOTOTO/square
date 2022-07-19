@@ -90,6 +90,17 @@
   [= start [cc]]
   [console.log 'loop']
   [start start]]
+
+[= gen /[yield] [begin 
+  [[.. 1 10].forEach /[x] [callcc /[cc] [yield [x cc]]]]]]
+
+[begin 
+  [= p [callcc /[outcc] [gen outcc]]]
+  [if [Array.isArray p]
+    [begin
+      [= [value incc] p]
+      [console.log value]
+      [incc]]]]
 ```
 
 ## 数据结构

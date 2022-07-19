@@ -132,7 +132,7 @@ it('evalId', () => {
   expect(ep('x', env)).toBe(2);
   expect(ep('y', env)).toBe('y');
   expect(ep('z', env)).toBe('z');
-  expect(ep('x')).toBeUndefined();
+  expect(() => ep('x')).toThrow();
 });
 
 it('evalDot', () => {

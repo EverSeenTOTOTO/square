@@ -26,6 +26,10 @@ export class Env extends Map<string | symbol, unknown> {
     return { value, env: this };
   }
 
+  set(k: string | symbol, v: unknown) {
+    return super.set(k, v === undefined ? null : v); // avoid undefined value, which is used to distinguish undefined identifier
+  }
+
   obj(): Record<string, unknown> {
     const result: Record<string, unknown> = {};
 
@@ -75,7 +79,7 @@ export function evalExpr(expr: parse.Expr, input: string, env = new Env(), cont:
 export function evalSeq<T, R>(seq: T[], each: (t: T, c: Cont) => R, cont: Cont) {
   const result: R[] = [];
 
-  const helper = (s: T[]): any => {
+  const helper = (s: T[]): T[] => {
     const [first, ...rest] = s;
 
     return s.length > 0
@@ -292,9 +296,13 @@ export function evalAssign(expr: parse.Assign, input: string, env: Env, cont: Co
   });
 }
 
-export function evalId(expr: parse.Id, _input: string, env: Env, cont: Cont) {
+export function evalId(expr: parse.Id, input: string, env: Env, cont: Cont) {
   const id = expr.name.source;
   const { value } = env.lookup(id);
+
+  if (value === undefined) {
+    throw new Error(codeFrame(input, `Eval error, undefined identifier: ${id}`, expr.pos));
+  }
 
   return cont(value);
 }
