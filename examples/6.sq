@@ -1,28 +1,32 @@
-[console.log [call/cc /[cc] [begin
+[console.log [callcc /[cc] [begin
   [console.log 1]
   [cc 2]
   [console.log 3]]]]
 
-[= gen /[yield]
-  [[.. 1 4].map /[i]
-    [call/cc /[cc]
-      [yield [i cc]]]]]
+[= cc /[] [callcc /[cc] [cc cc]]]
 
-[= incc 0]
+; [begin 
+;   [= start [cc]]
+;   [console.log 'loop']
+;   [start start]]
 
-[= next /[g]
-  [if [!= 0 incc]
-    [incc]
+[= foo /[] [console.log 'foo']]
+  
+[begin 
+  [= start [cc]]
+  [console.log 'loop']
+  [start foo]]
+
+[= gen /[yield] [begin 
+  [callcc /[cc] [yield [1 cc]]]
+  [callcc /[cc] [yield [2 cc]]]
+  [callcc /[cc] [yield [3 cc]]]
+  [callcc /[cc] [yield [4 cc]]]]]
+
+[begin 
+  [= p [callcc /[outcc] [gen outcc]]]
+  [if [Array.isArray p]
     [begin
-      [= p [call/cc /[outcc] [g outcc]]]
-      [if p
-        [begin
-          [= [value incc] p]
-          value]]]]]
-
-[next gen]
-[next gen]
-[next gen]
-[next gen]
-[next gen]
-
+      [= [value incc] p]
+      [console.log value]
+      [incc]]]]

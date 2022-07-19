@@ -7,4 +7,4 @@
   /[child_process] [begin
                      [= o [Object]]
                      [= o.stdio 'inherit']
-                     [child_process.spawn 'node' ['cli.js' 'examples/1.sq'] o]]]
+                     [child_process.spawn 'node' ['cli.js' 'examples/3.sq'] o]]]

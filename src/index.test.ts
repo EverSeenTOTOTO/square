@@ -1,4 +1,9 @@
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import { evaluate, createGlobalEnv } from '.';
+import { Constants } from './utils';
+import { Env } from './eval';
 
 it('evaluate 01', () => {
   const code = `[= a 'foo']
@@ -12,7 +17,7 @@ it('evaluate 01', () => {
   [= h Object]
   `;
 
-  const env = createGlobalEnv();
+  const env = createGlobalEnv(fs);
 
   evaluate(code, env);
   expect(env.get('a')).toBe('foo');
@@ -38,7 +43,7 @@ it('evaluate 02', () => {
 [- [-0 -1] [- 0 -1]]
 `;
 
-  const result = evaluate(code, createGlobalEnv());
+  const result = evaluate(code, createGlobalEnv(fs));
   expect(result).toEqual([
     false,
     [false],
@@ -60,7 +65,7 @@ it('evaluate 03', () => {
 [and [or true false] 2]
 `;
 
-  const result = evaluate(code, createGlobalEnv());
+  const result = evaluate(code, createGlobalEnv(fs));
 
   expect(result).toEqual([
     true,
@@ -152,7 +157,7 @@ it('evaluate 08', () => {
 [o.a o.c]
 `;
 
-  const result = evaluate(code, createGlobalEnv());
+  const result = evaluate(code, createGlobalEnv(fs));
 
   expect(result[result.length - 1]).toEqual([1, 4]);
 });
@@ -174,6 +179,7 @@ it('evaluate 09', () => {
 [= v [1 2 3]]
 [= s [stack v]]
 [= x [s.pop]]
+[console.log s.pop [s.pop]]
 [s.clear]
 [s.push 1]
 [s.push 0]
@@ -182,7 +188,7 @@ it('evaluate 09', () => {
 [x y v]
     `;
 
-  const result = evaluate(code, createGlobalEnv());
+  const result = evaluate(code, createGlobalEnv(fs));
 
   expect(result[result.length - 1]).toEqual([3, 0, [1, 2, 3]]);
 });
@@ -201,7 +207,7 @@ it('evaluate 10', () => {
   [[.. 1 5].map /[x] [fib x]]]
     `;
 
-  const result = evaluate(code, createGlobalEnv());
+  const result = evaluate(code, createGlobalEnv(fs));
 
   expect(result).toEqual([[1, 2, 3, 5]]);
 });
@@ -216,7 +222,117 @@ it('evaluate 11', () => {
 
   [a b c d]
 `;
-  const result = evaluate(code, createGlobalEnv());
+  const result = evaluate(code, createGlobalEnv(fs));
 
   expect(result[result.length - 1]).toEqual([1, 2, 3, 4]);
+});
+
+it('evaluate 12', () => {
+  const code = `
+[process.cwd]
+[/[] process.arch]
+
+ [[import 'os'].cpus].length `;
+
+  const result = evaluate(code, createGlobalEnv(fs));
+  expect(result).toEqual([
+    process.cwd(),
+    process.arch,
+    os.cpus().length,
+  ]);
+});
+
+it('evaluate 13', async () => {
+  const code = `
+[[importDyn 'path'].then /[path] [path.resolve '.']]
+`;
+  const result = await Promise.all(evaluate(code, createGlobalEnv(fs)));
+
+  expect(result).toEqual([
+    path.resolve('.'),
+  ]);
+});
+
+it('evaluate 14', () => {
+  const code = `
+  [export a [begin [= a [Object]] [= a.x 1] a]]
+  [= b []]
+  [export b]
+  [= c b]
+  `;
+  const env = createGlobalEnv(fs);
+
+  evaluate(code, env);
+
+  const exports = env.get(Constants.EXPORTS) as Env;
+
+  expect(exports.obj()).toEqual({
+    a: {
+      x: 1,
+    },
+    b: [],
+  });
+  expect(exports.get('c')).toBeUndefined();
+
+  expect(() => evaluate('[begin [export x 2]]')).toThrow();
+  expect(() => evaluate('[export]')).toThrow();
+  expect(() => evaluate('[export 2]')).toThrow();
+  expect(() => evaluate('[= x [Object]] [= x.a 2] [export x.a]', createGlobalEnv(fs))).toThrow();
+  expect(() => evaluate('[= x [Object]] [= x.a 2] [export x]', createGlobalEnv(fs))).not.toThrow();
+});
+
+it('evaluate 14', () => {
+  const code = `
+    [ = test [import 'test.sq']]
+    [= os [import 'os']]
+    [test.a [os.cpus].length]
+  `;
+
+  const mockFs = {
+    readFileSync: jest.fn().mockImplementation((file: string) => {
+      expect(file).toBe('test.sq');
+
+      return `[export a [begin 
+                [= os [import 'os']] 
+                [os.cpus].length]]`;
+    }),
+  };
+
+  const result = evaluate(code, createGlobalEnv(mockFs));
+
+  expect(result[result.length - 1]).toEqual([
+    os.cpus().length,
+    os.cpus().length,
+  ]);
+});
+
+it('evaluate 15', () => {
+  const code = `
+  
+[+ 1 [callcc /[cc] [begin
+  [begin [begin [begin [cc 2]]]]
+  3]]]
+  `;
+
+  const result = evaluate(code, createGlobalEnv(fs));
+
+  expect(result).toEqual([
+    3,
+  ]);
+});
+
+it('evaluate 16', () => {
+  const code = `
+[= o [Object]]
+
+[+ 1 [callcc /[cc] [begin
+               [= o.foo cc]
+               3]]]
+
+[o.foo [o.foo 0]]
+  `;
+
+  const result = evaluate(code, createGlobalEnv(fs));
+
+  expect(result[result.length - 1]).toEqual(1);
 });

@@ -1,7 +1,8 @@
+/* eslint-disable no-param-reassign */
 /* eslint-disable prefer-arrow-callback */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-use-before-define */
-import { repeat, codeFrame } from './utils';
+import { repeat, codeFrame, Constants } from './utils';
 import * as parse from './parse';
 
 export class Env extends Map<string | symbol, unknown> {
@@ -38,10 +39,7 @@ export class Env extends Map<string | symbol, unknown> {
   }
 }
 
-export type Cont = {
-  continuation?: boolean,
-  (value?: any): any
-};
+type Cont = (value?: any) => any;
 
 const programCont: Cont = (x) => x;
 
@@ -108,11 +106,15 @@ export function evalCall(expr: parse.Call, input: string, env: Env, cont: Cont) 
         return evalMatch(expr, input, env, cont);
       case 'while':
         return evalWhile(expr, input, env, cont);
+      case 'export':
+        return evalExport(expr, input, env, cont);
       case 'regex':
       case 'and':
       case 'or':
       case 'in':
         return evalWordOp(expr, input, env, cont);
+      case 'callcc':
+        return evalCallCC(expr, input, env, cont);
       default:
         break;
     }
@@ -135,28 +137,43 @@ export function evalCall(expr: parse.Call, input: string, env: Env, cont: Cont) 
           return cont([caller, ...values]);
         }
 
-        // eslint-disable-next-line no-param-reassign
-        caller.continuation = cont;
+        if (caller[Constants.IS_SQUARE_FUNC]) { // square function call
+          caller[Constants.RUNTIME_CONTINUATION] = cont;
+          return caller(...values);
+        }
 
-        return caller.function
-          ? caller(...values)
-          : cont(caller(...values));
+        return caller[Constants.RUNTIME_CONTINUATION]
+          ? caller(...values) // continuation function call
+          : cont(caller(...values)); // js builtin function call, which won't call cont() automaticlly
       },
     );
   });
 }
+
+const wrapFn = (obj: any, key: string) => {
+  const child = obj[key];
+
+  if (typeof child === 'function') {
+    const fn = child.bind(obj);
+
+    // DON'T forget !!!
+    fn[Constants.RUNTIME_CONTINUATION] = child[Constants.RUNTIME_CONTINUATION];
+
+    return fn;
+  }
+
+  return child;
+};
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function evalDot(expr: parse.Dot, input: string, _env: Env, cont: Cont) {
   return (master: any, value?: any) => {
     let obj = master;
     let ptr = expr;
-    let key = ptr.id.name.source;
+    let key = ptr.id.name.source; // only for log
 
     while (Object(obj) === obj && obj !== null && ptr.next) {
-      const child = obj[ptr.id.name.source];
-
-      obj = typeof child === 'function' ? child.bind(obj) : child;
+      obj = wrapFn(obj, ptr.id.name.source);
       ptr = ptr.next;
       key += `.${ptr.id.name.source}`;
     }
@@ -167,12 +184,11 @@ export function evalDot(expr: parse.Dot, input: string, _env: Env, cont: Cont) {
 
     if (value !== undefined) {
       obj[ptr.id.name.source] = value;
+
       return cont(value);
     }
 
-    const result = obj[ptr.id.name.source];
-
-    return cont(typeof result === 'function' ? result.bind(obj) : result);
+    return cont(wrapFn(obj, ptr.id.name.source));
   };
 }
 
@@ -220,7 +236,7 @@ export function evalExpand(expr: parse.Expand, input: string, env: Env, cont: Co
 }
 
 export function evalFunc(expr: parse.Func, input: string, env: Env, defCont: Cont) {
-  function func(...params: any[]): any {
+  const func: any = (...params: any[]) => {
     const bodyEnv = new Env(env, 'func');
 
     if (expr.param.type === 'Expand') {
@@ -229,18 +245,16 @@ export function evalFunc(expr: parse.Func, input: string, env: Env, defCont: Con
         input,
         bodyEnv,
         function paramCont() {
-          return evalExpr(expr.body, input, bodyEnv, func.continuation);
+          return evalExpr(expr.body, input, bodyEnv, func[Constants.RUNTIME_CONTINUATION]);
         },
       )(...params);
     }// else expect no arguments
 
-    return evalExpr(expr.body, input, bodyEnv, func.continuation);
-  }
+    return evalExpr(expr.body, input, bodyEnv, func[Constants.RUNTIME_CONTINUATION]);
+  };
 
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  func.continuation = undefined; // runtime continuation will be set on calling
-  func.function = true;
+  func[Constants.RUNTIME_CONTINUATION] = undefined; // runtime continuation will be set on calling
+  func[Constants.IS_SQUARE_FUNC] = true; // mark is a square function
 
   return defCont(func);
 }
@@ -249,10 +263,9 @@ export function evalAssign(expr: parse.Assign, input: string, env: Env, cont: Co
   return evalExpr(expr.assignment, input, env, function assignmentCont(value) {
     if (expr.variable.type === 'Id') {
       const key = (expr.variable as parse.Id).name.source;
+      const record = env.lookup(key);
 
       if (expr.dot) {
-        const record = env.lookup(key);
-
         // set x.y = z
         return evalDot(
           expr.dot,
@@ -274,20 +287,14 @@ export function evalAssign(expr: parse.Assign, input: string, env: Env, cont: Co
       expr.variable as parse.Expand,
       input,
       env,
-      function expandCont() {
-        return cont(value);
-      },
+      cont,
     )(...value);
   });
 }
 
-export function evalId(expr: parse.Id, input: string, env: Env, cont: Cont) {
+export function evalId(expr: parse.Id, _input: string, env: Env, cont: Cont) {
   const id = expr.name.source;
   const { value } = env.lookup(id);
-
-  if (value === undefined) {
-    throw new Error(codeFrame(input, `Eval error, undefined identifier: ${id}`, expr.pos));
-  }
 
   return cont(value);
 }
@@ -570,5 +577,49 @@ export function evalWordOp(expr: parse.Call, input: string, env: Env, cont: Cont
           throw new Error(codeFrame(input, `Syntax error, expect reserved keywords, got ${keyword.name.source}`, keyword.pos));
       }
     });
+  });
+}
+
+function evalExport(expr: parse.Call, input: string, env: Env, cont: Cont) {
+  const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
+  const wrap = expr.children[1] as parse.Expr;
+  const id = wrap.master as parse.Id;
+  const assignment = expr.children[2] as parse.Expr;
+
+  if (wrap.dot) {
+    throw new Error(codeFrame(input, 'Syntax error, expect <id>, got <id><dot>', wrap.dot.pos));
+  }
+
+  if (id.type !== 'Id') {
+    throw new Error(codeFrame(input, `Syntax error, expect <id>, got ${id.type}`, keyword.pos));
+  }
+
+  if (env.type !== 'file') {
+    throw new Error(codeFrame(input, 'Eval error, can only export on top level', keyword.pos));
+  }
+
+  const exports = env.get(Constants.EXPORTS) as Env;
+
+  if (assignment) {
+    return evalExpr(assignment, input, env, function exportAssignCont(value) {
+      env.set(id.name.source, value);
+      exports.set(id.name.source, value);
+      return cont();
+    });
+  }
+
+  return evalId(id, input, env, function exportIdCont(value) {
+    exports.set(id.name.source, value);
+    return cont();
+  });
+}
+
+function evalCallCC(expr: parse.Call, input: string, env: Env, cont: Cont) {
+  return evalExpr(expr.children[1] as parse.Expr, input, env, (func) => {
+    func[Constants.RUNTIME_CONTINUATION] = cont;
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    cont[Constants.RUNTIME_CONTINUATION] = cont; // rhs is useless, just mark is a continuation call
+    return func(cont);
   });
 }

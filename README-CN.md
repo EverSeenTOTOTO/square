@@ -84,11 +84,11 @@
 ## 延续
 
 ```lisp
-[= cc [call/cc /[cc] [cc cc]]
+[= cc /[] [callcc /[cc] [cc cc]]]
 
-[begin
+[begin 
   [= start [cc]]
-  [console.log 'infinite loop']
+  [console.log 'loop']
   [start start]]
 ```
 
