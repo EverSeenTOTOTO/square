@@ -55,7 +55,3 @@ export const repeat = <T>(x: T, length: number): T[] => {
   // eslint-disable-next-line prefer-spread
   return Array.apply(null, { length }).map(() => x);
 };
-
-export const Constants = {
-  EXPORTS: Symbol('exports'),
-};

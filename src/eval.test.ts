@@ -2,7 +2,7 @@ import * as parse from './parse';
 import * as ev from './eval';
 import { Position } from './utils';
 
-const factory = (parseMethod: any, evalMethod: any) => (input: string, env = new ev.Env()) => evalMethod(parseMethod(input, new Position()), input, env);
+const factory = (parseMethod: any, evalMethod: any) => (input: string, env = new ev.Env()) => evalMethod(parseMethod(input, new Position()), input, env, (x: any) => x);
 
 it('evalLit', () => {
   const bool = 'false';
@@ -148,6 +148,26 @@ it('evalDot', () => {
 
   ep('.y.z')(obj, []);
   expect(obj.y.z).toEqual([]);
+});
+
+it('evalSeq', () => {
+  ev.evalSeq([1, 2, 3], (x, c) => { c(x + 1); }, (s) => expect(s).toEqual([2, 3, 4]));
+
+  const result = ev.evalSeq([1, 2, 3], (x, c) => c(x + 1), (x) => x[x.length - 1]);
+
+  expect(result).toBe(4);
+
+  const fn = jest.fn().mockImplementation((x) => {
+    expect(x).toBe(2);
+  });
+
+  ev.evalSeq([1, 2, 3], (x, c) => {
+    if (x === 2) {
+      fn(x); // stop at 2
+    } else {
+      c(x);
+    }
+  }, fn);
 });
 
 it('evalExpand', () => {

@@ -1,11 +1,6 @@
-import path from 'path';
-import fs from 'fs';
-import os from 'os';
 import { evaluate, createGlobalEnv } from '.';
-import { Env } from './eval';
-import { Constants } from './utils';
 
-it('evaluate 1', () => {
+it('evaluate 01', () => {
   const code = `[= a 'foo']
   [= b 2]
   [= c [.. 1 10]]
@@ -13,9 +8,11 @@ it('evaluate 1', () => {
   [= b -b]
   [= e 0b11.11]
   [= f 0xff.ff]
+  [= g [Object]]
+  [= h Object]
   `;
 
-  const env = new Env();
+  const env = createGlobalEnv();
 
   evaluate(code, env);
   expect(env.get('a')).toBe('foo');
@@ -25,53 +22,61 @@ it('evaluate 1', () => {
   expect(env.get('y')).toBe(3);
   expect(env.get('e')).toBe(3.75);
   expect(env.get('f')).toBe(16 * 15 + 15 + 16 ** -1 * 15 + 16 ** -2 * 15);
+  expect(typeof env.get('g')).toBe('object');
+  expect(Array.isArray(env.get('g'))).toBe(false); // [Object] will be Object() call
+  expect(env.get('h')).toBe(Object);
 });
 
-it('evaluate 2', () => {
+it('evaluate 02', () => {
   const code = `
 [/[] !true]
 [/[] [!true]]
 
-[process.cwd]
-
-[/[] process.arch]
-
-[console.log [/[] process].argv]
-
-[[import 'os'].cpus].length
 
 [!0 ![] !0]
 [- [+ [- 0 -1] 2] [% 13 4]]
 [- [-0 -1] [- 0 -1]]
 `;
 
-  const result = evaluate(code, createGlobalEnv(fs));
+  const result = evaluate(code, createGlobalEnv());
   expect(result).toEqual([
     false,
     [false],
-    process.cwd(),
-    process.arch,
-    undefined,
-    // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
-    os.cpus().length,
     [true, false, true],
     2,
     NaN,
   ]);
 });
 
-it('evaluate 3', async () => {
+it('evaluate 03', () => {
   const code = `
-[[importDyn 'path'].then /[path] [path.resolve '.']]
+[in 2 [1 2 3]]
+[in 's' 'str']
+[begin 
+  [= o [Object]]
+  [= o.x 2]
+  [[in 'x' o] [in 'y' o]]]
+[regex '^$' 'g'].source
+[and [or true false] 2]
 `;
-  const result = await Promise.all(evaluate(code, createGlobalEnv(fs)));
+
+  const result = evaluate(code, createGlobalEnv());
 
   expect(result).toEqual([
-    path.resolve('.'),
+    true,
+    true,
+    [true, false],
+    '^$',
+    true,
   ]);
+
+  expect(() => evaluate('[in 2]')).toThrow();
+  expect(() => evaluate('[in 2 2]')).toThrow();
+  expect(() => evaluate('[in 2 [2] 3]')).toThrow();
+  expect(() => evaluate('[regex 2]')).toThrow();
 });
 
-it('evaluate 4', () => {
+it('evaluate 04', () => {
   const code = `
 [if true true false]
 [if false true false]
@@ -90,7 +95,7 @@ it('evaluate 4', () => {
   expect(() => evaluate('[if true true false extra]')).toThrow();
 });
 
-it('evaluate 5', () => {
+it('evaluate 05', () => {
   const code = `
 [begin [= r [regex '^str|ing$' 'i']] [[r.test 'STR'] [r.test 'rts']]]
 [begin 1 2]
@@ -105,7 +110,7 @@ it('evaluate 5', () => {
   ]);
 });
 
-it('evaluate 6', () => {
+it('evaluate 06', () => {
   const code = `
 [begin [= i 1] [while [< i 4] [+= i 1]] i]
 `;
@@ -115,7 +120,7 @@ it('evaluate 6', () => {
   expect(() => evaluate('[while ]')).toThrow();
 });
 
-it('evaluate 7', () => {
+it('evaluate 07', () => {
   const code = `
 [match true]
 [begin 
@@ -136,7 +141,7 @@ it('evaluate 7', () => {
   expect(() => evaluate("[regex [] 'g']")).toThrow();
 });
 
-it('evaluate 8', () => {
+it('evaluate 08', () => {
   const code = `
 [= o [Object]]
 [= o.a 1]
@@ -147,12 +152,12 @@ it('evaluate 8', () => {
 [o.a o.c]
 `;
 
-  const result = evaluate(code, createGlobalEnv(fs));
+  const result = evaluate(code, createGlobalEnv());
 
   expect(result[result.length - 1]).toEqual([1, 4]);
 });
 
-it('evaluate 9', () => {
+it('evaluate 09', () => {
   const code = `
 [= stack /[vec] [begin 
   [= this [Object]]
@@ -177,22 +182,13 @@ it('evaluate 9', () => {
 [x y v]
     `;
 
-  const result = evaluate(code, createGlobalEnv(fs));
+  const result = evaluate(code, createGlobalEnv());
 
   expect(result[result.length - 1]).toEqual([3, 0, [1, 2, 3]]);
 });
 
 it('evaluate 10', () => {
   const code = `
-[in 2 [1 2 3]]
-[in 's' 'str']
-[begin 
-  [= o [Object]]
-  [= o.x 2]
-  [[in 'x' o] [in 'y' o]]]
-[regex '^$' 'g'].source
-[and [or true false] 2]
-
 [begin
   [= fib /[n] [begin
     ; [console.log n]
@@ -205,20 +201,9 @@ it('evaluate 10', () => {
   [[.. 1 5].map /[x] [fib x]]]
     `;
 
-  const result = evaluate(code, createGlobalEnv(fs));
+  const result = evaluate(code, createGlobalEnv());
 
-  expect(result).toEqual([
-    true,
-    true,
-    [true, false],
-    '^$',
-    true,
-    [1, 2, 3, 5]]);
-
-  expect(() => evaluate('[in 2]')).toThrow();
-  expect(() => evaluate('[in 2 2]')).toThrow();
-  expect(() => evaluate('[in 2 [2] 3]')).toThrow();
-  expect(() => evaluate('[regex 2]')).toThrow();
+  expect(result).toEqual([[1, 2, 3, 5]]);
 });
 
 it('evaluate 11', () => {
@@ -231,62 +216,7 @@ it('evaluate 11', () => {
 
   [a b c d]
 `;
-  const result = evaluate(code, createGlobalEnv(fs));
+  const result = evaluate(code, createGlobalEnv());
 
   expect(result[result.length - 1]).toEqual([1, 2, 3, 4]);
-});
-
-it('evaluate 12', () => {
-  const code = `
-  [export a [begin [= a [Object]] [= a.x 1] a]]
-
-  [= b []]
-  [export b]
-  [= c b]
-  `;
-  const env = createGlobalEnv(fs);
-
-  evaluate(code, env);
-
-  const exports = env.get(Constants.EXPORTS) as Env;
-
-  expect(exports.obj()).toEqual({
-    a: {
-      x: 1,
-    },
-    b: [],
-  });
-  expect(exports.get('c')).toBeUndefined();
-
-  expect(() => evaluate('[begin [export x 2]]')).toThrow();
-  expect(() => evaluate('[export]')).toThrow();
-  expect(() => evaluate('[export 2]')).toThrow();
-  expect(() => evaluate('[= x [Object]] [= x.a 2] [export x.a]', createGlobalEnv(fs))).toThrow();
-  expect(() => evaluate('[= x [Object]] [= x.a 2] [export x]', createGlobalEnv(fs))).not.toThrow();
-});
-
-it('evaluate 13', () => {
-  const code = `
-    [ = test [import 'test.sq']]
-    [= os [import 'os']]
-
-    [test.a [os.cpus].length]
-  `;
-
-  const mockFs = {
-    readFileSync: jest.fn().mockImplementation((file: string) => {
-      expect(file).toBe('test.sq');
-
-      return `[export a [begin 
-                [= os [import 'os']] 
-                [os.cpus].length]]`;
-    }),
-  };
-
-  const result = evaluate(code, createGlobalEnv(mockFs));
-
-  expect(result[result.length - 1]).toEqual([
-    os.cpus().length,
-    os.cpus().length,
-  ]);
 });
