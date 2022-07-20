@@ -6,4 +6,5 @@
       [fib [- n 1]] 
       [fib [- n 2]]]]]]
 
+; TODO: tail call optimization
 [console.log [[.. 1 9].map /[x] [fib x]]]
