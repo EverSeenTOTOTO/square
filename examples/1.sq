@@ -6,4 +6,4 @@
       [fib [- n 1]] 
       [fib [- n 2]]]]]]
 
-[console.log [[.. 1 8].map /[x] [fib x]]]
+[console.log [[.. 1 9].map /[x] [fib x]]]

@@ -179,7 +179,6 @@ it('evaluate 09', () => {
 [= v [1 2 3]]
 [= s [stack v]]
 [= x [s.pop]]
-[console.log s.pop [s.pop]]
 [s.clear]
 [s.push 1]
 [s.push 0]

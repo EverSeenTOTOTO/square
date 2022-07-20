@@ -1,8 +1,7 @@
-/* eslint-disable no-param-reassign */
 /* eslint-disable prefer-arrow-callback */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-use-before-define */
-import { repeat, codeFrame, Constants } from './utils';
+import { repeat, codeFrame, Constants, setProtoProp, reuseProto } from './utils';
 import * as parse from './parse';
 
 export class Env extends Map<string | symbol, unknown> {
@@ -141,12 +140,14 @@ export function evalCall(expr: parse.Call, input: string, env: Env, cont: Cont) 
           return cont([caller, ...values]);
         }
 
-        if (caller[Constants.IS_SQUARE_FUNC]) { // square function call
-          caller[Constants.RUNTIME_CONTINUATION] = cont;
+        const proto = Object.getPrototypeOf(caller);
+
+        if (proto[Constants.IS_SQUARE_FUNC]) { // square function call
+          proto[Constants.RUNTIME_CONTINUATION] = cont;
           return caller(...values);
         }
 
-        return caller[Constants.RUNTIME_CONTINUATION]
+        return proto[Constants.RUNTIME_CONTINUATION]
           ? caller(...values) // continuation function call
           : cont(caller(...values)); // js builtin function call, which won't call cont() automaticlly
       },
@@ -160,8 +161,7 @@ const wrapFn = (obj: any, key: string) => {
   if (typeof child === 'function') {
     const fn = child.bind(obj);
 
-    // DON'T forget !!!
-    fn[Constants.RUNTIME_CONTINUATION] = child[Constants.RUNTIME_CONTINUATION];
+    reuseProto(child, fn);
 
     return fn;
   }
@@ -240,25 +240,29 @@ export function evalExpand(expr: parse.Expand, input: string, env: Env, cont: Co
 }
 
 export function evalFunc(expr: parse.Func, input: string, env: Env, defCont: Cont) {
-  const func: any = (...params: any[]) => {
+  function func(...params: any[]) {
     const bodyEnv = new Env(env, 'func');
+    const proto = Object.getPrototypeOf(func);
+    const runtimeCont = proto[Constants.RUNTIME_CONTINUATION];
 
     if (expr.param.type === 'Expand') {
       return evalExpand(
         expr.param as parse.Expand,
         input,
         bodyEnv,
-        function paramCont() {
-          return evalExpr(expr.body, input, bodyEnv, func[Constants.RUNTIME_CONTINUATION]);
+        () => {
+          return evalExpr(expr.body, input, bodyEnv, runtimeCont);
         },
       )(...params);
     }// else expect no arguments
 
-    return evalExpr(expr.body, input, bodyEnv, func[Constants.RUNTIME_CONTINUATION]);
-  };
+    return evalExpr(expr.body, input, bodyEnv, runtimeCont);
+  }
 
-  func[Constants.RUNTIME_CONTINUATION] = undefined; // runtime continuation will be set on calling
-  func[Constants.IS_SQUARE_FUNC] = true; // mark is a square function
+  setProtoProp(func, {
+    [Constants.RUNTIME_CONTINUATION]: undefined, // runtime continuation will be set in evalCall
+    [Constants.IS_SQUARE_FUNC]: true,
+  });
 
   return defCont(func);
 }
@@ -624,10 +628,9 @@ function evalExport(expr: parse.Call, input: string, env: Env, cont: Cont) {
 
 function evalCallCC(expr: parse.Call, input: string, env: Env, cont: Cont) {
   return evalExpr(expr.children[1] as parse.Expr, input, env, (func) => {
-    func[Constants.RUNTIME_CONTINUATION] = cont;
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    cont[Constants.RUNTIME_CONTINUATION] = cont; // rhs is useless, just mark is a continuation call
+    setProtoProp(func, { [Constants.RUNTIME_CONTINUATION]: cont });
+    setProtoProp(cont, { [Constants.RUNTIME_CONTINUATION]: programCont });// useless, just mark is a continuation call
+
     return func(cont);
   });
 }

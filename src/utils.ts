@@ -61,3 +61,23 @@ export const Constants = {
   IS_SQUARE_FUNC: Symbol('is_square_func'),
   RUNTIME_CONTINUATION: Symbol('runtime_continuation'),
 };
+
+// 重用另一个对象的proto
+export const reuseProto = <T extends object>(source: T, target: T) => {
+  const proto = Object.getPrototypeOf(source);
+
+  Object.setPrototypeOf(target, proto);
+};
+
+// 在proto上添加属性
+export const setProtoProp = <T extends object, E extends object>(source: T, props: E) => {
+  let proto = Object.getPrototypeOf(source);
+
+  // avoid pollute builtin object
+  if (proto === Function.prototype || proto === Object.prototype) {
+    proto = Object.assign(Object.create(proto), proto);
+  }
+
+  Object.assign(proto, props);
+  Object.setPrototypeOf(source, proto);
+};
