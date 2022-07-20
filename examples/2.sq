@@ -17,8 +17,8 @@
 
 
 [setTimeout /[] [begin
-  [console.warn '---- NOW TURNING OFF SERVER ----']
-  [server.close]]
+  [server.close /[] [console.log 'Server closed.']]]
   4000]
 
-[server.listen 8080 /[] [console.log '---- SERVER LISTENING ON 8080 ----']]
+[= port 8080]
+[server.listen port /[] [console.log [.. 'Server listening on ' [String port]]]]
