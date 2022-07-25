@@ -1,6 +1,6 @@
 # square
 
-A toy lisp-like language written in js, aims to be both fun and productive.
+A toy lisp-like language written in js, aims to be both fun and expressive.
 
 [中文](./README-CN.md)
 
@@ -11,7 +11,7 @@ A toy lisp-like language written in js, aims to be both fun and productive.
     **Square** is a small language written in JS with a lisp-like grammer. The language's design goal is to use as few control keys like `<Ctrl>`, `<Shift>` as possible, so the code structure is determined by `.`, `[]`, `;` and `/`. In addition, there are builtin supports for expanding vectors using `...`, concat operator `..` and other elegant simple syntax, which tends to be more productive.
 
     **Square** is parsed by a recursive descent algorithm, the source code is less than 1000 lines so it's easy to read and extend. Square also has an embedded JS runtime that provides 70~80% JS functionality.
-  
+
 2. Why called **square**?
 
     **Square** use `[]` rather than `()` which appears in most lisp languages, so it looks really "square".
@@ -29,7 +29,6 @@ A toy lisp-like language written in js, aims to be both fun and productive.
 [= [... x] [1 2 3]] ; x = 3
 [= [. [x] ... y] [1 [2] 3 4]] ; x = 2, y = 4
 [= [. x . ... [y] ... [. z .]] [1, 2, 3, [4], [5, 6, 7]]] ; x = 2, y = 4, z = 6
-
 ```
 
 ## Control flow
@@ -42,7 +41,7 @@ A toy lisp-like language written in js, aims to be both fun and productive.
 [if true true]
 [if true true false]
 
-[begin 
+[begin
   [= i 0]
   [while [< i 10]
     [console.log i]
@@ -62,11 +61,11 @@ A toy lisp-like language written in js, aims to be both fun and productive.
 
 [= fib /[n] [begin
   [console.log n]
-  [match n 
+  [match n
     [[< n 0] 0]
     [[< n 2] 1]
-    [+ 
-      [fib [- n 1]] 
+    [+
+      [fib [- n 1]]
       [fib [- n 2]]]]]]
 
 [console.log [[.. 1 10].map /[x] [fib x]]]
@@ -86,15 +85,15 @@ A toy lisp-like language written in js, aims to be both fun and productive.
 ```lisp
 [= cc /[] [callcc /[cc] [cc cc]]]
 
-[begin 
+[begin
   [= start [cc]]
   [console.log 'loop']
   [start start]]
 
-[= gen /[yield] [begin 
+[= gen /[yield] [begin
   [[.. 1 10].forEach /[x] [callcc /[cc] [yield [x cc]]]]]]
 
-[begin 
+[begin
   [= p [callcc /[outcc] [gen outcc]]]
   [if [Array.isArray p]
     [begin
@@ -106,11 +105,11 @@ A toy lisp-like language written in js, aims to be both fun and productive.
 ## Structure
 
 ```lisp
-[= stack /[vec] [begin 
+[= stack /[vec] [begin
   [= this [Object]]
   [= this.vec [vec.slice 0]]
   [= this.clear /[] [= this.vec []]]
-  [= this.push /[x] [begin 
+  [= this.push /[x] [begin
     [= this.vec [.. this.vec [x]]]]]
   [= this.pop /[] [begin
     [= [... x] this.vec]
@@ -138,11 +137,11 @@ A toy lisp-like language written in js, aims to be both fun and productive.
 
 ## Module
 
-```lisp 
+```lisp
 [= http [import 'http']] ; actually require('http')
-[= squareModule [import 'module.sq']]
+[= demo [import 'module.sq']]
 
-[[importDyn 'path'].then /[path] [path.resolve '.']] ; dynamic import
+[[importDyn 'path'].then /[path] [path.resolve '.']] ; dynamic import()
 
 [export add /[a b] [+ a b]]
 
@@ -164,7 +163,7 @@ A toy lisp-like language written in js, aims to be both fun and productive.
 ; line comment
 ; line comment
 
-[= app /[req res] [begin 
+[= app /[req res] [begin
     [console.log ; inline comment ; req.url]
     [stream.on 'end' /[] [res.end]]
     [stream.pipe res]]]
@@ -193,12 +192,45 @@ A toy lisp-like language written in js, aims to be both fun and productive.
 
 <func> ::= '/' (<expand> | '['']') <expr>
 
-<unOpExpr> ::= <unOp> <expr> 
+<unOpExpr> ::= <unOp> <expr>
 
 <assign> ::= '[' '=' (<id> <dot>* | <expand>) <expr> ']'
 
 <binOpExpr> ::= '[' <binOp> <expr> <expr> ']'
-<call> ::= '[' <expr>* ']' 
+<call> ::= '[' <expr>* ']'
 
 <expr> ::= (<id> | <lit> | <func> | <assign> | <binOpExpr> | <unOpExpr> | <call>) <dot>*
 ```
+
+## ISA
+
+Square is first compiled to a custom assemble code before it is executed. The assemble code is than directly evaluated rather than got translate to a binary format, so the assemble format is actually not a real instruction set but a simulation.
+
+The "ISA" has only 7 instructions:
+
+| instructions | format | description | example |
+| ---- | ---- | ---- | ---- |
+| `reg` | `reg <reg>` | get the value at `[<reg>]` in stack or continuation chain, only available for `sp`, `fp` and `cp` | `reg sp` |
+| `move` | `move <$1> <$2>` | move the value of `$2` to `$1`, `$1` must be a register while `$2` can be a register or an immediate value | `move t0 ra` |
+| `save` | `save <reg>` | push the content of `reg` into stack | `save t0` |
+| `load` | `load <reg>` | pop stack and save the value into `reg` | `load t0` |
+| `test` | `test <$1> <$2> <label>` |  if `$2` is not equal to `$1`, jump to `label`, `$1` and `$2` can be either a register or an immediate value | `test t0 t1 'loop'`
+| `jump` | `jump <label>` | jump to `label` | `jump 'done'` |
+| `perform` | `perform ...` | perform an external call, this allows us to take the advantage of js runtime without implementing a full emulator | `perform t1 t2` |
+
+> If you have read _Structure and Implemention of Computer Programs_, you may find these instructions familiar.
+
+There are 10 visible registers and one invisible register `pc`:
+
++ `pc`: Program Counter
++ `sp`: Stack pointer, in our simulated machine, the stack is a tuple, so `sp` is an array index instead of a memory address
++ `fp`: Frame pointer, also an array index
++ `cp`: Continuation chain pointer, mainly used for `callcc`
++ `ra`: Return address, also used to save return value
++ `a0~a1`: Function arguments, used in order, as well as `t0~t1`, `s0-s1`
++ `t0~t1`: Temporaries
++ `s0-s1`: Save register
+
+Temporary registers are always first considered in callee procedure, if not enough, save registers will be used to save temporary values. But before that, the **callee** procedure must save the previous value of a save register in stack, and restore them when it is done. If the caller used temporary registers before calling the callee, then it is the caller's own responsibility to save temporary registers state before that call.
+
+The number of registers is very small, because square's aim is not to be efficient, but to be educational, so an overflow of registers might be more typical.
