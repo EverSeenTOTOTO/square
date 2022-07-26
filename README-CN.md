@@ -25,11 +25,10 @@
 [= e 0b11.11]
 [= f 0xff.ff]
 [= [x] [1 2]]
-[= [. x] [1 2 3]] ; x = 2
-[= [... x] [1 2 3]] ; x = 3
-[= [. [x] ... y] [1 [2] 3 4]] ; x = 2, y = 4
-[= [. x . ... [y] ... [. z .]] [1, 2, 3, [4], [5, 6, 7]]] ; x = 2, y = 4, z = 6
-
+[= [. x] [vec 1 2 3]] ; x = 2
+[= [... x] [vec 1 2 3]] ; x = 3
+[= [. [x] ... y] [vec 1 [vec 2] 3 4]] ; x = 2, y = 4
+[= [. x . ... [y] ... [. z .]] [vec 1 2 3 [vec 4] [vec 5 6 7]]] ; x = 2, y = 4, z = 6
 ```
 
 ## 控制流
@@ -37,12 +36,12 @@
 ```lisp
 [match a
   [[and [> q a] [< p a]] foo]
-  [[[regex '[a-z]+' 'g'].test a] [bar]]]
+  [[[regex '[a-z]+' 'gi'].test a] [bar]]]
 
 [if true true]
 [if true true false]
 
-[begin 
+[begin
   [= i 0]
   [while [< i 10]
     [console.log i]
@@ -62,11 +61,11 @@
 
 [= fib /[n] [begin
   [console.log n]
-  [match n 
+  [match n
     [[< n 0] 0]
     [[< n 2] 1]
-    [+ 
-      [fib [- n 1]] 
+    [+
+      [fib [- n 1]]
       [fib [- n 2]]]]]]
 
 [console.log [[.. 1 10].map /[x] [fib x]]]
@@ -86,15 +85,15 @@
 ```lisp
 [= cc /[] [callcc /[cc] [cc cc]]]
 
-[begin 
+[begin
   [= start [cc]]
   [console.log 'loop']
   [start start]]
 
-[= gen /[yield] [begin 
+[= gen /[yield] [begin
   [[.. 1 10].forEach /[x] [callcc /[cc] [yield [x cc]]]]]]
 
-[begin 
+[begin
   [= p [callcc /[outcc] [gen outcc]]]
   [if [Array.isArray p]
     [begin
@@ -106,11 +105,11 @@
 ## 数据结构
 
 ```lisp
-[= stack /[vec] [begin 
-  [= this [Object]]
+[= stack /[vec] [begin
+  [= this [obj]]
   [= this.vec [vec.slice 0]]
   [= this.clear /[] [= this.vec []]]
-  [= this.push /[x] [begin 
+  [= this.push /[x] [begin
     [= this.vec [.. this.vec [x]]]]]
   [= this.pop /[] [begin
     [= [... x] this.vec]
@@ -118,7 +117,7 @@
     x]]
   this]]
 
-[= v [1 2 3]]
+[= v [vec 1 2 3]]
 [= s [stack v]]
 [= x [s.pop]]
 [s.clear]
@@ -138,11 +137,11 @@
 
 ## 模块
 
-```lisp 
+```lisp
 [= http [import 'http']] ; actually require('http')
-[= squareModule [import 'module.sq']]
+[= demo [import 'module.sq']]
 
-[[importDyn 'path'].then /[path] [path.resolve '.']] ; dynamic import
+[[importDyn 'path'].then /[path] [path.resolve '.']] ; dynamic import()
 
 [export add /[a b] [+ a b]]
 
@@ -151,7 +150,7 @@
 [export sub]
 ```
 
-## 示例 
+## 示例
 
 ```lisp
 [= http [import'http']]
@@ -164,13 +163,12 @@
 ; line comment
 ; line comment
 
-[= app /[req res] [begin 
+[= app /[req res] [begin
     [console.log ; inline comment ; req.url]
     [stream.on 'end' /[] [res.end]]
     [stream.pipe res]]]
 
 [= server [http.createServer app]]
-
 
 [setTimeout /[] [begin
   [console.warn '---- NOW TURNING OFF SERVER ----']
@@ -180,7 +178,7 @@
 [server.listen 8080 /[] [console.log '---- SERVER LISTENING ON 8080 ----']]
 ```
 
-## BNF
+## BNF范式
 
 ```bnf
 <lit> ::= <num> | <str> | <bool>
@@ -193,7 +191,7 @@
 
 <func> ::= '/' (<expand> | '['']') <expr>
 
-<unOpExpr> ::= <unOp> <expr> 
+<unOpExpr> ::= '[' <unOp> <expr>  ']'
 
 <assign> ::= '[' '=' (<id> <dot>* | <expand>) <expr> ']'
 
@@ -202,3 +200,50 @@
 
 <expr> ::= (<id> | <lit> | <func> | <assign> | <binOpExpr> | <unOpExpr> | <call>) <dot>*
 ```
+
+## 中间代码
+
+square 使用一个简化的三地址码作为中间代码格式，可用的指令有：
+
+| IR 指令 | 描述 | 示例 |
+| ---- | ---- | ---- |
+| `x = y op z` | 二元操作 | `t0 = a + b` |
+| `x = op y` | 一元操作 | `t1 = !t0` |
+| `x = y` | 赋值 | `x = y` |
+| `jump L` | 无条件转移 | `jump 'L1'` |
+| `test x L` | 条件转移 | `test x 'L2'` |
+| `param x` | 参数传递 | `param y1` |
+| `call p, n` | 使用`n`个参数调用过程`p` | `call p, 2` |
+| `ret` | 返回 | `ret r0` |
+
+## 指令集架构
+
+Square 首先被翻译为IR然后再被翻译为汇编格式。其汇编代码将被直接求值而非是转译为某种二进制格式，因此所谓的汇编部分并非真实的指令集，仅仅是一种模拟。
+
+其“指令集”一共只有7种指令：
+
+| 指令 | 格式 | 描述 | 示例 |
+| ---- | ---- | ---- | ---- |
+| `move` | `move <$1> <$2>` | 将 `$2` 的内容赋给 `$1`, `$1` 必须是寄存器而 `$2` 可以是寄存器或立即数 | `move t0 ra` |
+| `save` | `save <reg>` | 将 `reg` 内容入栈 | `save t0` |
+| `load` | `load <reg>` | 将栈顶内容弹入 `reg` | `load t0` |
+| `label` | `label <string>` | 创建一个名为 `<string>` 的`label` | `label 'loop'` |
+| `test` | `test <$1> <$2> <label>` |  如果 `$2` 等于 `$1`，跳转至 `label`， `$1` 和 `$2` 既可以是寄存器名也可以是立即数 | `test t0 t1 'loop'`
+| `jump` | `jump <label>` | 跳转至 `label` | `jump 'done'` |
+| `perform` | `perform <op> ...` | 调用外部函数`<op>`，这允许我们直接利用js运行时而非实现完整的模拟器 | `perform t1 t2` |
+
+> 如果你看过《SICP》的话，也许会对这些指令感到熟悉。
+
+一共有10个可见寄存器和1个不可见寄存器`pc`：
+
++ `pc`: 程序计数器
++ `fp`: 帧指针
++ `ra`: 返回地址，也用于存放返回值
++ `a0~a1`: 函数参数
++ `t0~t2`: 临时寄存器
++ `s0-s2`: 保存寄存器
+
+在子过程中始终优先考虑临时寄存器，如果不够用，则会使用保存寄存器来存放局部变量。但在那之前，子过程会将保存寄存器之前的值暂存到栈里，并在过程调用结束时恢复。如果父过程此前使用了临时寄存器，则在调用子过程之前保存临时寄存器的状态是父过程的责任。（和MIPS类似）
+
+寄存器的数量很少，因为square的目的不在于多高效，而在于学习实践，因此制造一个寄存器溢出的典型场景也许更有意义。
+

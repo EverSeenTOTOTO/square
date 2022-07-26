@@ -5,7 +5,7 @@ import * as scan from './scan';
 import { Position, codeFrame } from './utils';
 
 export class Node {
-  readonly type: 'Func' | 'Assign' | 'BinOpExpr' | 'UnOpExpr' | 'Id' | 'Lit' | 'Expr' | 'Call' | 'Dot' | 'Expand';
+  readonly type: 'Func' | 'Assign' | 'BinOpExpr' | 'UnOpExpr' | 'Id' | 'Lit' | 'Expr' | 'Call' | 'Dot' | 'Expand' | 'Label' | 'Immediate';
 
   readonly pos: Position;
 
@@ -62,6 +62,19 @@ export class Dot extends Node {
     this.dot = dot;
     this.id = id;
     this.next = next;
+  }
+
+  key() {
+    let key = '';
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    let ptr: Dot | undefined = this;
+
+    while (ptr) {
+      key += `.${ptr.id.name.source}`;
+      ptr = ptr.next;
+    }
+
+    return key;
   }
 }
 
@@ -220,10 +233,12 @@ function parseOtherExprs(input: string, pos: Position) {
     case '%=':
     case '==':
     case '!=':
+    case 'instanceof':
       return parseBinOpExpr(input, pos);
     case '=':
       return parseAssign(input, pos);
     case '!':
+    case 'typeof':
       return parseUnOpExpr(input, pos);
     case '/[':
       return parseFunc(input, pos);
