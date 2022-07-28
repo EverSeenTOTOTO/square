@@ -91,7 +91,7 @@ A toy lisp-like language written in js, aims to be both fun and expressive.
   [start start]]
 
 [= gen /[yield] [begin
-  [[.. 1 10].forEach /[x] [callcc /[cc] [yield [x cc]]]]]]
+  [[.. 1 10].forEach /[x] [callcc /[cc] [yield [vec x cc]]]]]]
 
 [begin
   [= p [callcc /[outcc] [gen outcc]]]
@@ -125,7 +125,7 @@ A toy lisp-like language written in js, aims to be both fun and expressive.
 [s.push 0]
 [= y [s.pop]]
 
-[x y v] ; [3 0 [1 2 3]]
+[vec x y v] ; [3 0 [1 2 3]]
 ```
 
 ## Comment
@@ -212,9 +212,10 @@ Square use a simplified three address code as IR. The instructions can be:
 | `x = y` | assignment | `x = y` |
 | `jump L` | jump without condition | `jump 'L1'` |
 | `test x L` | jump with condition | `test x 'L2'` |
-| `param x` | pass parameters | `param y1` |
+| `param x` | pass or use parameters | `param y1` |
 | `call p, n` | call procedure `p` with `n` arguments | `call p, 2` |
 | `ret` | return | `ret r0` |
+| `perform f ...` | perform JS external operation | `perform typeof x` |
 
 ## ISA
 
@@ -230,7 +231,7 @@ The "instruction set" has only 7 instructions:
 | `label` | `label <string>` | create a label named `<string>` | `label 'loop'` |
 | `test` | `test <$1> <$2> <label>` |  if `$2` is equal to `$1`, jump to `label`, `$1` and `$2` can be either a register or an immediate value | `test t0 t1 'loop'`
 | `jump` | `jump <label>` | jump to `label` | `jump 'done'` |
-| `perform` | `perform <op> ...` | perform an external call `<op>`, this allows to take the advantage of js runtime without implementing a full emulator | `perform t1 t2` |
+| `perform` | `perform <op> ...` | perform JS external call `<op>`, this allows to take the advantage of js runtime without implementing a full emulator | `perform t1 t2` |
 
 > If you have read _Structure and Implemention of Computer Programs_, you may find these instructions familiar.
 

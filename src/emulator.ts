@@ -10,7 +10,7 @@ type TestInstruction = ['test', PrimitiveValue, PrimitiveValue, string];
 type JumpInstruction = ['jump', string];
 type PerformInstruction = ['perform', PrimitiveValue, ...PrimitiveValue[]];
 
-type Instructions =
+export type Instructions =
   | MoveInstruction
   | SaveInstruction
   | LoadInstruction
@@ -33,7 +33,7 @@ const fetchPrimitive = (prim: PrimitiveValue, emulator: Emulator) => {
     case 'imm':
       return value;
     default:
-      throw new Error(`Unknown primitive type: ${type}`);
+      throw new Error(`Runtime error, unknown primitive type: ${type}`);
   }
 };
 
@@ -82,7 +82,7 @@ const compilePerform = (inst: PerformInstruction, emulator: Emulator) => () => {
   const func = fetchPrimitive(op, emulator);
 
   if (typeof func !== 'function') {
-    throw new Error(`Unable to perform operation, op: ${op}`);
+    throw new Error(`Runtime error, not a function: ${JSON.stringify(inst)}`);
   }
 
   return func(...params.map((each) => fetchPrimitive(each, emulator)));
@@ -107,6 +107,18 @@ export class Register<T> {
   }
 }
 
+export class ALU extends Map<string, (...params: unknown[]) => unknown> {
+  calc(name: string, ...params: unknown[]) {
+    const action = this.get(name);
+
+    if (typeof action !== 'function') {
+      throw new Error(`Runtime error, no a function: ${name}`);
+    }
+
+    return action(...params);
+  }
+}
+
 export class Emulator {
   protected readonly pc: Register<number>;
 
@@ -118,11 +130,14 @@ export class Emulator {
 
   protected stack: Array<unknown> = [];
 
-  protected labels: Map<string, number> = new Map<string, number>();
+  protected readonly labels: Map<string, number> = new Map<string, number>();
 
   protected instructions: CompiledInstructions = [];
 
-  constructor() {
+  protected readonly alu: ALU;
+
+  constructor(alu = new ALU()) {
+    this.alu = alu;
     this.pc = new Register<number>('pc', 0);
     this.fp = new Register<number>('fp', 0);
     this.ra = new Register<number>('ra');
@@ -196,6 +211,7 @@ export class Emulator {
     this.setRegister('pc', 0);
     this.setRegister('fp', 0);
     this.stack = [];
+    this.instructions = [];
     this.labels.clear();
   }
 

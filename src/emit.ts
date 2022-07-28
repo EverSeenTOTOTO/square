@@ -40,8 +40,18 @@ class Immediate extends parse.Node {
   }
 }
 
-type WordOps = 'in' | 'and' | 'or' | 'regex' | 'vec' | 'obj' | 'instanceof' | 'typeof';
-type ExternalOps = Token['type'] | WordOps;
+const WordOperandLen = {
+  in: 2, // in x y
+  and: -1, // and ...
+  or: -1, // or ...
+  regex: 2, // regex pattern flag
+  vec: -1, // vec ...
+  obj: 1, // obj x
+  instanceof: 1, // instanceof x
+  typeof: 1, // typeof x
+};
+
+type ExternalOps = Token['type'] | keyof typeof WordOperandLen;
 type Operand = Immediate | Label | parse.Id;
 
 type BinOpIR = [parse.Id, ExternalOps, Operand, Operand];
@@ -49,10 +59,10 @@ type UnOpIR = [parse.Id, ExternalOps, Operand];
 type AssignIR = [parse.Id, Operand];
 type JumpIR = ['jump', Label];
 type TestIR = ['test', Operand, Label];
-type ParamIR = ['param', Operand];
-type CallIR = [parse.Id, 'call', Operand, number] | ['call', Operand, number];
+type ParamIR = ['param', Operand] | [parse.Id, 'param_tuple'];
+type CallIR = [parse.Id, 'call', Operand, number];
 type RetIR = ['ret', Operand];
-type PerformIR = [parse.Id, 'perform', ...unknown[]] | ['perform', ...unknown[]]; // shortcut! perform JS external calls
+type PerformIR = [parse.Id, 'perform', ...unknown[]]; // shortcut! perform JS external calls
 
 export type ThreeAddressCode =
   | BinOpIR
@@ -104,6 +114,8 @@ export function emitExpr(expr: parse.Expr, input: string, emit: Emit) {
       return cont(emitBinOp(expr.master as parse.BinOpExpr, input, emit));
     case 'UnOpExpr':
       return cont(emitUnOp(expr.master as parse.UnOpExpr, input, emit));
+    case 'Assign':
+      return cont(emitAssign(expr.master as parse.Assign, input, emit));
     case 'Func':
       return cont(emitFunc(expr.master as parse.Func, input, emit));
     case 'Id':
@@ -117,16 +129,6 @@ export function emitExpr(expr: parse.Expr, input: string, emit: Emit) {
   }
 }
 
-function emitDot(expr: parse.Dot, _input: string, emit: Emit) {
-  return (x: Operand) => {
-    const result = new Temp('r');
-
-    emit([result, 'perform', 'dot', x, expr]);
-
-    return result;
-  };
-}
-
 export function emitCall(expr: parse.Call, input: string, emit: Emit): Operand {
   if (expr.isEmpty()) return new Immediate([]);
 
@@ -135,7 +137,9 @@ export function emitCall(expr: parse.Call, input: string, emit: Emit): Operand {
 
   // aims to be plugable
   if (master.type === 'Id') {
-    switch ((master as parse.Id).name.source) {
+    const reserved = (master as parse.Id).name.source;
+
+    switch (reserved) {
       case 'begin':
         return emitBegin(expr, input, emit);
       case 'if':
@@ -144,16 +148,12 @@ export function emitCall(expr: parse.Call, input: string, emit: Emit): Operand {
         return emitMatch(expr, input, emit);
       case 'while':
         return emitWhile(expr, input, emit);
-      case 'regex':
-      case 'vec':
-      case 'obj':
-      case 'and':
-      case 'or':
-      case 'in':
-      case 'instanceof':
-      case 'typeof':
-        return emitWordOp(expr, input, emit);
       default:
+        // keyword operators
+        if (Object.keys(WordOperandLen).indexOf(reserved) !== -1) {
+          return emitWordOp(expr, input, emit);
+        }
+
         break;
     }
   }
@@ -169,14 +169,78 @@ export function emitCall(expr: parse.Call, input: string, emit: Emit): Operand {
   const result = new Temp('r');
 
   // caller(...rest)
-  rest.forEach((temp) => emit(['param', temp]));
+  rest.forEach((temp) => emit(['param', temp])); // pass param
   emit([result, 'call', caller, rest.length]);
 
   return result;
 }
 
-export function emitExpand(expr: parse.Expand, input: string, emit: Emit) {
-  // TODO
+function emitDot(expr: parse.Dot, _input: string, emit: Emit) {
+  return (x: Operand) => {
+    const result = new Temp('r');
+
+    emit([result, 'perform', 'get', x, expr]);
+
+    return result;
+  };
+}
+
+function emitExpand(expr: parse.Expand, input: string, emit: Emit) {
+  return (value: Operand) => {
+    const cursor = new Temp();
+
+    emit([cursor, new Immediate(0)]);
+
+    expr.items.forEach((item, idx) => {
+      switch (item.type) {
+        case '.':
+          emit([cursor, '+', cursor, new Immediate(1)]); // cursor++
+          break;
+        case 'Id':
+          emit([item as parse.Id, 'perform', 'at', value, cursor]);
+          emit([cursor, '+', cursor, new Immediate(1)]); // cursor++
+          break;
+        case 'Expand': {
+          const temp = new Temp();
+
+          emit([temp, 'perform', 'at', value, cursor]);
+          emitExpand(item as parse.Expand, input, emit)(temp);
+          emit([cursor, '+', cursor, new Immediate(1)]); // cursor++
+          break;
+        }
+        case '...': {
+          const count = expr.items.slice(idx + 1).filter((it) => it.type === '...').length; // '...' placeholder can be nothing
+          const remaining = new Temp();
+          const total = new Temp();
+
+          emit([total, 'perform', 'len', value]);
+          emit([remaining, new Immediate((expr.items.length - idx - 1) - count)]); // ... is greedy
+          emit([cursor, '-', total, remaining]);
+          break;
+        }
+        default:
+          throw new Error(codeFrame(input, `Eval error, expect <expand>, got ${item.type}`, expr.pos));
+      }
+    });
+  };
+}
+
+export function emitAssign(expr: parse.Assign, input: string, emit: Emit): Operand {
+  const value = emitExpr(expr.assignment, input, emit);
+
+  if (expr.variable.type === 'Id') {
+    const id = expr.variable as parse.Id;
+
+    if (expr.dot) {
+      emit([new Temp(), 'perform', 'set', id, expr.dot, value]);
+    } else {
+      emit([id, value]);
+    }
+  } else {
+    emitExpand(expr.variable as parse.Expand, input, emit)(value);
+  }
+
+  return value;
 }
 
 export function emitFunc(expr: parse.Func, input: string, emit: Emit) {
@@ -187,7 +251,10 @@ export function emitFunc(expr: parse.Func, input: string, emit: Emit) {
   emit([label]);
 
   if (expr.param.type === 'Expand') {
-    emitExpand(expr.param as parse.Expand, input, emit);
+    const pt = new Temp();
+
+    emit([pt, 'param_tuple']); // shortcut! get all parameters
+    emitExpand(expr.param as parse.Expand, input, emit)(pt);
   }
 
   emit(['ret', emitExpr(expr.body, input, emit)]);
@@ -213,12 +280,16 @@ export function emitBinOp(expr: parse.BinOpExpr, input: string, emit: Emit): par
       throw new Error(codeFrame(input, `Emit error, expect lvalue, got ${typeof lhs}`, expr.op.pos));
     }
 
-    emit([lhs, expr.op.type, lhs, rhs]);
+    // i = i + 1
+    emit([lhs, expr.op.type.slice(0, 1) as '-', lhs, rhs]);
 
     return lhs;
   }
+
   const result = new Temp('r');
+
   emit([result, expr.op.type, lhs, rhs]); // t0 = i + 1
+
   return result;
 }
 
@@ -363,15 +434,16 @@ export function emitWhile(expr: parse.Call, input: string, emit: Emit) {
 export function emitWordOp(expr: parse.Call, input: string, emit: Emit) {
   const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
   const lhs = emitExpr(expr.children[1] as parse.Expr, input, emit);
-  const rhs = expr.children[2] && emitExpr(expr.children[2] as parse.Expr, input, emit);
+  const len = WordOperandLen[keyword.name.source as keyof typeof WordOperandLen];
 
-  if (expr.children.length > 3) {
-    throw new Error(codeFrame(input, `Syntax error, extra statements for ${keyword.name.source}`, keyword.pos));
+  if (len !== -1 && expr.children.length - 1 !== len) {
+    throw new Error(codeFrame(input, `Syntax error, wrong argument length for ${keyword.name.source}`, keyword.pos));
   }
 
+  const rhs = expr.children.slice(2).map((e) => emitExpr(e as parse.Expr, input, emit));
   const result = new Temp('r');
 
-  emit([result, 'perform', keyword.name.source, lhs, rhs]);
+  emit([result, 'perform', keyword.name.source, lhs, ...rhs]);
 
   return result;
 }
