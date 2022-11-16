@@ -320,18 +320,18 @@ it('evaluate 15', () => {
   ]);
 });
 
-it('evaluate 16', () => {
-  const code = `
-[= o [Object]]
-
-[+ 1 [callcc /[cc] [begin
-               [= o.foo cc]
-               3]]]
-
-[o.foo [o.foo 0]]
-  `;
-
-  const result = evaluate(code, createGlobalEnv(fs));
-
-  expect(result[result.length - 1]).toEqual(1);
-});
+// it('evaluate 16', () => {
+//   const code = `
+// [= o [Object]]
+//
+// [+ 1 [callcc /[cc] [begin
+//                [= o.foo cc]
+//                3]]]
+//
+// [o.foo [o.foo 0]]
+//   `;
+//
+//   const result = evaluate(code, createGlobalEnv(fs));
+//
+//   expect(result[result.length - 1]).toEqual(1);
+// });

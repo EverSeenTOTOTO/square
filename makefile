@@ -27,10 +27,10 @@ start: build
 .PHONY: start
 
 test:
-	npx jest --coverage --silent
+	npx jest --silent
 .PHONY: test
 
 debug:
-	node --inspect-brk node_modules/jest/bin/jest.js --coverage --runInBand
+	node --inspect-brk node_modules/jest/bin/jest.js --runInBand
 .PHONY: debug
 

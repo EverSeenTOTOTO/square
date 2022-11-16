@@ -27,3 +27,6 @@
       [= [value incc] p]
       [console.log value]
       [incc]]]]
+
+[sleep 1000]
+[console.log 42]

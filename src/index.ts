@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Env, evalExpr } from './eval';
+import { Env, evalExpr, evalSeq } from './eval';
 import { parseExpr, Expr } from './parse';
 import { lookahead } from './scan';
 import { Constants, Position } from './utils';
@@ -15,21 +15,26 @@ export const parse = (input: string, pos = new Position()) => {
 };
 
 export const evaluate = (input: string, env = new Env(), pos = new Position()) => {
-  return parse(input, pos).map((e) => evalExpr(e, input, env));
+  const exprs = parse(input, pos);
+
+  return evalSeq(
+    exprs,
+    (e, c) => {
+      return evalExpr(e as Expr, input, env, c);
+    },
+    (x) => x, // program level continuation
+  );
 };
 
 // TODO: module cache
 const createImportMethod = (global: Env, fs: any, lazy = false) => (pkg: string) => {
   if (/\.sq(uare)?$/g.test(pkg)) {
-    const env = new Env(global, 'file');
+    const fileEnv = new Env(global, 'file');
 
-    env.set(Constants.EXPORTS, new Env());
+    fileEnv.set(Constants.EXPORTS, new Env());
+    evaluate(fs.readFileSync(pkg, 'utf8'), fileEnv);// 1. evaluate module
 
-    // 1. evaluate module
-    evaluate(fs.readFileSync(pkg, 'utf8'), env);
-
-    // 2. get module exports
-    const value = (env.get(Constants.EXPORTS) as Env).obj();
+    const value = (fileEnv.get(Constants.EXPORTS) as Env).obj();// 2. get module exports
 
     return lazy ? Promise.resolve(value) : value;
   }
@@ -39,18 +44,18 @@ const createImportMethod = (global: Env, fs: any, lazy = false) => (pkg: string)
 };
 
 export const createGlobalEnv = (fs: any) => {
-  const env = new Env(undefined, 'global');
+  const globalEnv = new Env(undefined, 'global');
 
   for (const key of Object.getOwnPropertyNames(globalThis)) {
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
-    env.set(key, globalThis[key]);
+    globalEnv.set(key, globalThis[key]);
   }
 
-  env.set('import', createImportMethod(env, fs));
-  env.set('importDyn', createImportMethod(env, fs, true));
+  globalEnv.set('import', createImportMethod(globalEnv, fs));
+  globalEnv.set('importDyn', createImportMethod(globalEnv, fs, true));
 
-  const fileEnv = new Env(env, 'file');
+  const fileEnv = new Env(globalEnv, 'file');
 
   fileEnv.set(Constants.EXPORTS, new Env());
 

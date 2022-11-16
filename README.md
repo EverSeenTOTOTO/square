@@ -171,13 +171,11 @@ A toy lisp-like language written in js, aims to be both fun and expressive.
 
 [= server [http.createServer app]]
 
-
-[setTimeout /[] [begin
-  [console.warn '---- NOW TURNING OFF SERVER ----']
-  [server.close]]
-  4000]
-
 [server.listen 8080 /[] [console.log '---- SERVER LISTENING ON 8080 ----']]
+
+[sleep 4000]
+[console.warn '---- NOW TURNING OFF SERVER ----']
+[server.close /[] [exit -1]]
 ```
 
 ## BNF

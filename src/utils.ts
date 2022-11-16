@@ -60,6 +60,7 @@ export const Constants = {
   EXPORTS: Symbol('exports'),
   IS_SQUARE_FUNC: Symbol('is_square_func'),
   RUNTIME_CONTINUATION: Symbol('runtime_continuation'),
+  MAX_STACK_DEPTH: 200,
 };
 
 // 重用另一个对象的proto

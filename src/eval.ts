@@ -44,9 +44,7 @@ export class Env extends Map<string | symbol, unknown> {
 
 type Cont = (value?: any) => any;
 
-const programCont: Cont = (x) => x;
-
-export function evalExpr(expr: parse.Expr, input: string, env = new Env(), cont: Cont = programCont): any {
+export function evalExpr(expr: parse.Expr, input: string, env = new Env(), cont: Cont = (x) => x): any {
   const exprCont = (value: any) => {
     if (expr.dot) {
       return evalDot(expr.dot, input, env, cont)(value);
@@ -111,11 +109,14 @@ export function evalCall(expr: parse.Call, input: string, env: Env, cont: Cont) 
         return evalWhile(expr, input, env, cont);
       case 'export':
         return evalExport(expr, input, env, cont);
+      case 'sleep':
+      case 'exit':
+        return evalUnaryWordOp(expr, input, env, cont);
       case 'regex':
       case 'and':
       case 'or':
       case 'in':
-        return evalWordOp(expr, input, env, cont);
+        return evalBinaryWordOp(expr, input, env, cont);
       case 'callcc':
         return evalCallCC(expr, input, env, cont);
       default:
@@ -143,7 +144,7 @@ export function evalCall(expr: parse.Call, input: string, env: Env, cont: Cont) 
         const proto = Object.getPrototypeOf(caller);
 
         if (proto[Constants.IS_SQUARE_FUNC]) { // square function call
-          proto[Constants.RUNTIME_CONTINUATION] = cont;
+          proto[Constants.RUNTIME_CONTINUATION] = cont; // save cc to prototype
           return caller(...values);
         }
 
@@ -174,7 +175,7 @@ export function evalDot(expr: parse.Dot, input: string, _env: Env, cont: Cont) {
   return (master: any, value?: any) => {
     let obj = master;
     let ptr = expr;
-    let key = ptr.id.name.source; // only for log
+    let key = ptr.id.name.source; // only for debug
 
     while (Object(obj) === obj && obj !== null && ptr.next) {
       obj = wrapFn(obj, ptr.id.name.source);
@@ -208,7 +209,6 @@ export function evalExpand(expr: parse.Expand, input: string, env: Env, cont: Co
         }
 
         const idx = expr.items.indexOf(item);
-
         switch (item.type) {
           case '.':
             cursor++;
@@ -260,7 +260,7 @@ export function evalFunc(expr: parse.Func, input: string, env: Env, defCont: Con
   }
 
   setProtoProp(func, {
-    [Constants.RUNTIME_CONTINUATION]: undefined, // runtime continuation will be set in evalCall
+    [Constants.RUNTIME_CONTINUATION]: undefined, // runtimeCont will be set in evalCall
     [Constants.IS_SQUARE_FUNC]: true,
   });
 
@@ -555,7 +555,34 @@ export function evalMatch(expr: parse.Call, input: string, env: Env, cont: Cont)
   });
 }
 
-export function evalWordOp(expr: parse.Call, input: string, env: Env, cont: Cont) {
+export function evalUnaryWordOp(expr: parse.Call, input: string, env: Env, cont: Cont) {
+  const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
+
+  return evalExpr(expr.children[1] as parse.Expr, input, env, function lhsCont(lhs) {
+    switch (keyword.name.source) {
+      case 'sleep':
+        if (typeof lhs !== 'number' || lhs < 0) {
+          throw new Error(codeFrame(input, `Eval error, invalid argument of sleep, expect unsigned, got ${lhs}`, keyword.pos));
+        }
+
+        setTimeout(cont, lhs);
+        break;
+      case 'exit':
+        if (typeof lhs !== 'number') {
+          throw new Error(codeFrame(input, `Eval error, invalid argument of exit, expect number, got ${lhs}`, keyword.pos));
+        }
+
+        if (lhs !== 0) {
+          console.warn(`Promgram exit with code ${lhs}.`);
+        }
+        break;
+      default:
+        throw new Error(codeFrame(input, `Syntax error, expect reserved keywords, got ${keyword.name.source}`, keyword.pos));
+    }
+  });
+}
+
+export function evalBinaryWordOp(expr: parse.Call, input: string, env: Env, cont: Cont) {
   const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
 
   return evalExpr(expr.children[1] as parse.Expr, input, env, function lhsCont(lhs) {
@@ -629,7 +656,7 @@ function evalExport(expr: parse.Call, input: string, env: Env, cont: Cont) {
 function evalCallCC(expr: parse.Call, input: string, env: Env, cont: Cont) {
   return evalExpr(expr.children[1] as parse.Expr, input, env, (func) => {
     setProtoProp(func, { [Constants.RUNTIME_CONTINUATION]: cont });
-    setProtoProp(cont, { [Constants.RUNTIME_CONTINUATION]: programCont });// useless, just mark is a continuation call
+    setProtoProp(cont, { [Constants.RUNTIME_CONTINUATION]: (x: unknown) => x });// useless, just mark is a continuation call
 
     return func(cont);
   });

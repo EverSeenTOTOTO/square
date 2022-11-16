@@ -29,8 +29,6 @@ if (files.length === 0) {
     }
   });
 } else {
-  const errors = [];
-
   for (const file of files) {
     try {
       const content = fs.readFileSync(file, 'utf8');
@@ -38,9 +36,6 @@ if (files.length === 0) {
       evaluate(content, createGlobalEnv(fs));
     } catch (e) {
       console.error(e);
-      errors.push(e instanceof Error ? e : new Error(`Read and eval ${file} failed.`));
     }
   }
-
-  console.log(`\n${files.length} scripts evaluated, ${files.length - errors.length} success, ${errors.length} fail.\n`);
 }
