@@ -1,7 +1,13 @@
 /* eslint-disable prefer-arrow-callback */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-use-before-define */
-import { repeat, codeFrame, Constants, setProtoProp, reuseProto } from './utils';
+import {
+  repeat,
+  Position,
+  codeFrame,
+  setProtoProp,
+  SQUARE_FUNC,
+  RUNTIME_CONTINUATION,
+} from './utils';
 import * as parse from './parse';
 
 export class Env extends Map<string | symbol, unknown> {
@@ -42,9 +48,41 @@ export class Env extends Map<string | symbol, unknown> {
   }
 }
 
-type Cont = (value?: any) => any;
+const wrapNaiveFunc = (obj: any, key: string) => {
+  const child = obj[key];
 
-export function evalExpr(expr: parse.Expr, input: string, env = new Env(), cont: Cont = (x) => x): any {
+  if (typeof child === 'function') {
+    const fn = new Proxy(child, {
+      set(_, p, v, r) {
+        return Reflect.set(child, p, v, r);
+      },
+      get(_, p, r) {
+        return Reflect.get(child, p, r);
+      },
+      apply(_t, _o, a) {
+        return Reflect.apply(child, obj, a);
+      },
+    });
+
+    return fn;
+  }
+
+  return child;
+};
+
+export const createGlobalEnv = (global = globalThis) => {
+  const globalEnv = new Env(undefined, 'global');
+
+  for (const key of Object.getOwnPropertyNames(global)) {
+    globalEnv.set(key, wrapNaiveFunc(global, key));
+  }
+
+  return new Env(globalEnv, 'file');
+};
+
+type Cont = (...param: any[]) => any;
+
+export function evalExpr(expr: parse.Expr, input: string, env: Env, /* for evalFunc test case */ cont: Cont = (x) => x): any {
   const exprCont = (value: any) => {
     if (expr.dot) {
       return evalDot(expr.dot, input, env, cont)(value);
@@ -74,20 +112,17 @@ export function evalExpr(expr: parse.Expr, input: string, env = new Env(), cont:
 
 // evaluate a sequence, continuation passing style
 export function evalSeq<T, R>(seq: T[], each: (t: T, c: Cont) => R, cont: Cont) {
-  const result: R[] = [];
-
-  const helper = (s: T[]): T[] => {
+  const helper = (s: T[], results: R[]): ReturnType<Cont> => {
     const [first, ...rest] = s;
 
     return s.length > 0
       ? each(first, function eachCont(value) {
-        result.push(value);
-        return helper(rest);
+        return helper(rest, [...results, value]);
       })
-      : cont(result);
+      : cont(results);
   };
 
-  return helper(seq);
+  return helper(seq, []);
 }
 
 export function evalCall(expr: parse.Call, input: string, env: Env, cont: Cont) {
@@ -107,16 +142,14 @@ export function evalCall(expr: parse.Call, input: string, env: Env, cont: Cont) 
         return evalMatch(expr, input, env, cont);
       case 'while':
         return evalWhile(expr, input, env, cont);
-      case 'export':
-        return evalExport(expr, input, env, cont);
-      case 'sleep':
-      case 'exit':
-        return evalUnaryWordOp(expr, input, env, cont);
       case 'regex':
       case 'and':
       case 'or':
       case 'in':
         return evalBinaryWordOp(expr, input, env, cont);
+      case 'sleep':
+      case 'exit':
+        return evalUnaryWordOp(expr, input, env, cont);
       case 'callcc':
         return evalCallCC(expr, input, env, cont);
       default:
@@ -143,32 +176,17 @@ export function evalCall(expr: parse.Call, input: string, env: Env, cont: Cont) 
 
         const proto = Object.getPrototypeOf(caller);
 
-        if (proto[Constants.IS_SQUARE_FUNC]) { // square function call
-          proto[Constants.RUNTIME_CONTINUATION] = cont; // save cc to prototype
-          return caller(...values);
+        if (proto[SQUARE_FUNC]) {
+          proto[RUNTIME_CONTINUATION] = cont;
         }
 
-        return proto[Constants.RUNTIME_CONTINUATION]
-          ? caller(...values) // continuation function call
-          : cont(caller(...values)); // js builtin function call, which won't call cont() automaticlly
+        return proto[RUNTIME_CONTINUATION]
+          ? caller(...values)
+          : cont((caller(...values)));
       },
     );
   });
 }
-
-const wrapFn = (obj: any, key: string) => {
-  const child = obj[key];
-
-  if (typeof child === 'function') {
-    const fn = child.bind(obj);
-
-    reuseProto(child, fn);
-
-    return fn;
-  }
-
-  return child;
-};
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function evalDot(expr: parse.Dot, input: string, _env: Env, cont: Cont) {
@@ -178,7 +196,7 @@ export function evalDot(expr: parse.Dot, input: string, _env: Env, cont: Cont) {
     let key = ptr.id.name.source; // only for debug
 
     while (Object(obj) === obj && obj !== null && ptr.next) {
-      obj = wrapFn(obj, ptr.id.name.source);
+      obj = wrapNaiveFunc(obj, ptr.id.name.source);
       ptr = ptr.next;
       key += `.${ptr.id.name.source}`;
     }
@@ -193,7 +211,7 @@ export function evalDot(expr: parse.Dot, input: string, _env: Env, cont: Cont) {
       return cont(value);
     }
 
-    return cont(wrapFn(obj, ptr.id.name.source));
+    return cont(wrapNaiveFunc(obj, ptr.id.name.source));
   };
 }
 
@@ -239,11 +257,11 @@ export function evalExpand(expr: parse.Expand, input: string, env: Env, cont: Co
   };
 }
 
-export function evalFunc(expr: parse.Func, input: string, env: Env, defCont: Cont) {
+export function evalFunc(expr: parse.Func, input: string, env: Env, defineCont: Cont) {
   function func(...params: any[]) {
     const bodyEnv = new Env(env, 'func');
     const proto = Object.getPrototypeOf(func);
-    const runtimeCont = proto[Constants.RUNTIME_CONTINUATION];
+    const runtimeCont = proto[RUNTIME_CONTINUATION];
 
     if (expr.param.type === 'Expand') {
       return evalExpand(
@@ -260,11 +278,10 @@ export function evalFunc(expr: parse.Func, input: string, env: Env, defCont: Con
   }
 
   setProtoProp(func, {
-    [Constants.RUNTIME_CONTINUATION]: undefined, // runtimeCont will be set in evalCall
-    [Constants.IS_SQUARE_FUNC]: true,
+    [SQUARE_FUNC]: true, // distinguish with JS naive functions
   });
 
-  return defCont(func);
+  return defineCont(func);
 }
 
 export function evalAssign(expr: parse.Assign, input: string, env: Env, cont: Cont) {
@@ -619,45 +636,23 @@ export function evalBinaryWordOp(expr: parse.Call, input: string, env: Env, cont
   });
 }
 
-function evalExport(expr: parse.Call, input: string, env: Env, cont: Cont) {
-  const keyword = (expr.children[0] as parse.Expr).master as parse.Id;
-  const wrap = expr.children[1] as parse.Expr;
-  const id = wrap.master as parse.Id;
-  const assignment = expr.children[2] as parse.Expr;
-
-  if (wrap.dot) {
-    throw new Error(codeFrame(input, 'Syntax error, expect <id>, got <id><dot>', wrap.dot.pos));
-  }
-
-  if (id.type !== 'Id') {
-    throw new Error(codeFrame(input, `Syntax error, expect <id>, got ${id.type}`, keyword.pos));
-  }
-
-  if (env.type !== 'file') {
-    throw new Error(codeFrame(input, 'Eval error, can only export on top level', keyword.pos));
-  }
-
-  const exports = env.get(Constants.EXPORTS) as Env;
-
-  if (assignment) {
-    return evalExpr(assignment, input, env, function exportAssignCont(value) {
-      env.set(id.name.source, value);
-      exports.set(id.name.source, value);
-      return cont();
-    });
-  }
-
-  return evalId(id, input, env, function exportIdCont(value) {
-    exports.set(id.name.source, value);
-    return cont();
-  });
-}
-
 function evalCallCC(expr: parse.Call, input: string, env: Env, cont: Cont) {
   return evalExpr(expr.children[1] as parse.Expr, input, env, (func) => {
-    setProtoProp(func, { [Constants.RUNTIME_CONTINUATION]: cont });
-    setProtoProp(cont, { [Constants.RUNTIME_CONTINUATION]: (x: unknown) => x });// useless, just mark is a continuation call
+    setProtoProp(func, { [RUNTIME_CONTINUATION]: cont });
+    setProtoProp(cont, { [RUNTIME_CONTINUATION]: (x: unknown) => x });
 
     return func(cont);
   });
 }
+
+export const evaluate = (input: string, env = createGlobalEnv(), pos = new Position()) => {
+  const exprs = parse.parse(input, pos);
+
+  return evalSeq(
+    exprs,
+    (e, c) => {
+      return evalExpr(e as parse.Expr, input, env, c);
+    },
+    (x) => x, // program level continuation
+  );
+};

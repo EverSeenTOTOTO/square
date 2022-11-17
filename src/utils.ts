@@ -56,19 +56,10 @@ export const repeat = <T>(x: T, length: number): T[] => {
   return Array.apply(null, { length }).map(() => x);
 };
 
-export const Constants = {
-  EXPORTS: Symbol('exports'),
-  IS_SQUARE_FUNC: Symbol('is_square_func'),
-  RUNTIME_CONTINUATION: Symbol('runtime_continuation'),
-  MAX_STACK_DEPTH: 200,
-};
 
-// 重用另一个对象的proto
-export const reuseProto = <T extends object>(source: T, target: T) => {
-  const proto = Object.getPrototypeOf(source);
-
-  Object.setPrototypeOf(target, proto);
-};
+export const EXPORTS = Symbol('exports');
+export const SQUARE_FUNC = Symbol('square_func');
+export const RUNTIME_CONTINUATION = Symbol('runtime_continuation');
 
 // 在proto上添加属性
 export const setProtoProp = <T extends object, E extends object>(source: T, props: E) => {

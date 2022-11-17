@@ -23,6 +23,7 @@ module.exports = {
   rules: {
     'max-len': 'off',
     'no-console': 'off',
+    'no-constant-condition': 'off',
     'no-plusplus': 'off',
     'no-nested-ternary': 'off',
     'no-restricted-syntax': 'off',
@@ -30,6 +31,7 @@ module.exports = {
     'object-curly-newline': 'off',
     'import/prefer-default-export': 'off',
     'import/no-extraneous-dependencies': 'warn',
+    '@typescript-eslint/no-explicit-any': 'off',
     '@typescript-eslint/explicit-module-boundary-types': 'off',
   },
 };

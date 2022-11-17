@@ -5,20 +5,28 @@
 
 [= cc /[] [callcc /[cc] [cc cc]]]
 
-; [begin 
+; [begin
 ;   [= start [cc]]
+;   [sleep 1000]
 ;   [console.log 'loop']
 ;   [start start]]
 
 [= foo /[] [console.log 'foo']]
-  
-[begin 
+
+[begin
   [= start [cc]]
   [console.log 'loop']
   [start foo]]
 
-[= gen /[yield] [begin 
-  [[.. 1 10].forEach /[x] [callcc /[cc] [yield [x cc]]]]]]
+; [= gen /[yield] [begin
+;   [= i 0]
+;   [while [< i 10]
+;     [callcc /[cc]
+;       [begin
+;         [sleep 1000]
+;         [yield [[+= i 1] cc]]]]]]]
+
+[= gen /[yield] [[.. 1 10].forEach /[x] [callcc /[cc] [begin [sleep 1000] [yield [x cc]]]]]]
 
 [begin 
   [= p [callcc /[outcc] [gen outcc]]]
@@ -27,6 +35,3 @@
       [= [value incc] p]
       [console.log value]
       [incc]]]]
-
-[sleep 1000]
-[console.log 42]

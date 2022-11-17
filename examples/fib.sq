@@ -1,10 +1,8 @@
 [= fib /[n] [begin
-  ; [console.log n]
   [match n 
     [[< n 2] 1]
     [+ 
       [fib [- n 1]] 
       [fib [- n 2]]]]]]
 
-; TODO: tail call optimization
-[console.log [[.. 1 9].map /[x] [fib x]]]
+[console.log [fib 8]]

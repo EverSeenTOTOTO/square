@@ -17,6 +17,10 @@ export class Node {
   str() {
     return JSON.stringify(this, null, 2);
   }
+
+  source(input: string) {
+    return codeFrame(input, 'You are here', this.pos);
+  }
 }
 
 export class Call extends Node {
@@ -360,3 +364,13 @@ export function parseBinOpExpr(input: string, pos: Position) {
 
   return new BinOpExpr(op, lhs, rhs);
 }
+
+export const parse = (input: string, pos = new Position()) => {
+  const nodes: Expr[] = [];
+
+  while (scan.lookahead(input, pos).type !== 'eof') {
+    nodes.push(parseExpr(input, pos));
+  }
+
+  return nodes;
+};

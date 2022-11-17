@@ -1,8 +1,6 @@
 import * as parse from './parse';
 import * as ev from './eval';
-import { Position, Constants } from './utils';
-
-Constants.MAX_STACK_DEPTH = 999;
+import { Position } from './utils';
 
 const factory = (parseMethod: any, evalMethod: any) => (input: string, env = new ev.Env()) => evalMethod(parseMethod(input, new Position()), input, env, (x: any) => x);
 

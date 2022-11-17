@@ -14,7 +14,7 @@ if (files.length === 0) {
     output: process.stdout,
     prompt: 'sq> ',
   });
-  const env = createGlobalEnv(fs);
+  const env = createGlobalEnv();
 
   rl.prompt();
   rl.on('line', (line) => {
@@ -33,7 +33,7 @@ if (files.length === 0) {
     try {
       const content = fs.readFileSync(file, 'utf8');
 
-      evaluate(content, createGlobalEnv(fs));
+      evaluate(content, createGlobalEnv());
     } catch (e) {
       console.error(e);
     }
