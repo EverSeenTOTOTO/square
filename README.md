@@ -17,25 +17,20 @@ A toy lisp-like language written in Rust, aims to be both fun and expressive.
 ## Variable
 
 ```lisp
-[= a 'foo']
-[= b 2]
-[= c [.. 1 10]]
-[= e 0b11.11]
-[= f 0xff.ff]
-[= [x] [1 2]]
+[= x 2]
+[= x [.. 1 10]]
+[= [x y] [1 2]] ; x = 1, y = 2
 [= [. x] [1 2 3]] ; x = 2
 [= [... x] [1 2 3]] ; x = 3
-[= [. [x] ... y] [1 [2] 3 4]] ; x = 2, y = 4
-[= [. x . ... [y] ... [. z .]] [1, 2, 3, [4], [5, 6, 7]]] ; x = 2, y = 4, z = 6
-
+[= [. [x] ... y] [1 [2] 3 4 5]] ; x = 2, y = 5
 ```
 
 ## Control flow
 
 ```lisp
-[match a
-  [[and [> q a] [< p a]] foo]
-  [[[regex '[a-z]+' 'gi'].test a] [bar]]]
+[match expr
+  [[and [> q .] [< p .]] foo]
+  [[[regex '[a-z]+' 'gi'].test .] bar]]
 
 [if true true]
 [if true true false]
@@ -43,10 +38,8 @@ A toy lisp-like language written in Rust, aims to be both fun and expressive.
 [begin 
   [= i 0]
   [while [< i 10]
-    [console.log i]
+    [print i]
     [+= i 1]]]
-
-[co.resume [co.create /[x] [begin [co.yield x]]]]
 ```
 
 ## Function
@@ -56,35 +49,39 @@ A toy lisp-like language written in Rust, aims to be both fun and expressive.
 
 [foo]
 
-[= foo /[. z] [console.log [.. z 4]]
+[= foo /[. z] [print [.. z 4]]
 
 [foo 'ignored' 0]
 
 [= fib /[n] [begin
-  [console.log n]
-  [match n 
-    [[< n 2] 1]
-    [+ 
+  [print n]
+  [match n
+    [[< . 2] 1]
+    [+
       [fib [- n 1]] 
       [fib [- n 2]]]]]]
 
-[console.log [[.. 1 10].map /[x] [fib x]]]
+[print [[.. 1 10].map /[x] [fib x]]]
+```
 
-[= cons /[x g] /[f] [f x g]]
-[= car /[pair] [pair /[x .] x]]
-[= cdr /[pair] [pair /[. g] [g]]]
+## Coroutine
 
-[= ones [cons 1 /[] ones]]
+```lisp
+[= genFib /[n]
+  [co.wrap /[]
+    [= [a b] [1 1]]
+    [while [<= a n]
+      [co.yield a]
+      [= [a b] [b [+ a b]]]]]]
 
-[console.log [car ones]]
-[console.log [car [cdr [cdr ones]]]]
+[[genFib 100].forEach print]
 ```
 
 ## Structure
 
 ```lisp
 [= stack /[vec] [begin 
-  [= this [Object]]
+  [= this [obj]]
   [= this.vec [vec.slice 0]]
   [= this.clear /[] [= this.vec []]]
   [= this.push /[x] [begin 
@@ -122,16 +119,16 @@ A toy lisp-like language written in Rust, aims to be both fun and expressive.
 <dot> ::= '.' <id> <dot>
 
 <expandItem> ::= '.' | '...' | <id> | <expand>
-<expand> ::= '[' <expandItem>+ ']'
+<expand> ::= '[' <expandItem>* ']'
 
-<func> ::= '/' (<expand> | '['']') <expr>
+<func> ::= '/' <expand> <expr>
 
 <unOpExpr> ::= <unOp> <expr> 
 
 <assign> ::= '[' '=' (<id> <dot>* | <expand>) <expr> ']'
 
 <binOpExpr> ::= '[' <binOp> <expr> <expr> ']'
-<call> ::= '[' <expr>* ']' 
 
 <expr> ::= (<id> | <lit> | <func> | <assign> | <binOpExpr> | <unOpExpr> | <call>) <dot>*
+<call> ::= '[' <expr>* ']' 
 ```
