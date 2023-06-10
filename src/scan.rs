@@ -1,7 +1,11 @@
+use crate::errors::*;
+
 use lazy_static::lazy_static;
 use regex::Regex;
 
-#[derive(Debug)]
+type RaiseResult<'a> = Result<Token<'a>, ParseError<'a>>;
+
+#[derive(Debug, Clone)]
 pub struct Position {
     pub line: usize,
     pub column: usize,
@@ -10,15 +14,11 @@ pub struct Position {
 
 impl Position {
     pub fn new(line: usize, column: usize, cursor: usize) -> Self {
-        return Position {
+        Self {
             line,
             column,
             cursor,
-        };
-    }
-
-    pub fn clone(&self) -> Position {
-        return Position::new(self.line, self.column, self.cursor);
+        }
     }
 }
 
@@ -30,6 +30,7 @@ pub enum TokenName {
     NUM,
     OP,
     STR,
+    COMMENT,
     WHITESPACE,
 }
 
@@ -42,11 +43,11 @@ pub struct Token<'a> {
 
 impl<'a> Token<'a> {
     pub fn new(name: TokenName, source: &'a str, position: Position) -> Self {
-        return Token {
+        Self {
             name,
             source,
             position,
-        };
+        }
     }
 }
 
@@ -56,71 +57,172 @@ pub fn make_token<'a>(name: TokenName, source: &'a str, pos: &mut Position) -> T
     pos.column += source.len();
     pos.cursor += source.len();
 
-    return Token::new(name, source, snapshot);
+    Token::new(name, source, snapshot)
 }
 
-pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> Token<'a> {
+pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     if pos.cursor >= input.len() {
-        return make_token(TokenName::EOF, "", pos);
+        return Ok(make_token(TokenName::EOF, "", pos));
     }
-
-    let pivot = &input[pos.cursor..1];
 
     lazy_static! {
         static ref STRING_PIVOT: Regex = Regex::new("'").unwrap();
         static ref NUMBER_PIVOT: Regex = Regex::new("[0-9]").unwrap();
         static ref IDENT_PIVOT: Regex = Regex::new("[a-zA-Z_]").unwrap();
-        static ref OP_PIVOT: Regex = Regex::new(r"\.|=|!|\+|-|\*|/|<|>|\^|%").unwrap();
+        static ref OP_PIVOT: Regex = Regex::new(r"[.,=!+\-*/<>^%]").unwrap();
         static ref WHITESPACE_PIVOT: Regex = Regex::new(r"\s+").unwrap();
     }
 
-    if STRING_PIVOT.is_match(pivot) {
-        return raise_string(input, pos);
-    }
+    let pivot = &input[pos.cursor..=pos.cursor];
 
-    if NUMBER_PIVOT.is_match(pivot) {
-        return raise_number(input, pos);
+    match pivot {
+        "'" => raise_string(input, pos),
+        _ if NUMBER_PIVOT.is_match(pivot) => raise_number(input, pos),
+        _ if IDENT_PIVOT.is_match(pivot) => raise_ident(input, pos),
+        _ if OP_PIVOT.is_match(pivot) => raise_operator(input, pos),
+        _ if WHITESPACE_PIVOT.is_match(pivot) => raise_whitespace(input, pos),
+        _ => todo!(),
     }
-
-    if IDENT_PIVOT.is_match(pivot) {
-        return raise_ident(input, pos);
-    }
-
-    if OP_PIVOT.is_match(pivot) {
-        return raise_operator(input, pos);
-    }
-
-    if WHITESPACE_PIVOT.is_match(pivot) {
-        return raise_whitespace(input, pos);
-    }
-
-    todo!();
 }
 
 lazy_static! {
-    static ref STRING_PATTERN: Regex = Regex::new(r"^'([^']|\\')*'").unwrap();
+    static ref STRING_PATTERN: Regex = Regex::new(r"'(?:\\'|[^'])*'").unwrap();
 }
 
-pub fn raise_string<'a>(input: &'a str, pos: &mut Position) -> Token<'a> {
-    if let Some(caps) = STRING_PATTERN.captures(input) {
-        return make_token(TokenName::STR, caps.get(0).unwrap().as_str(), pos);
+pub fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    let source = STRING_PATTERN
+        .find(input)
+        .ok_or_else(|| ParseError::InvalidToken(input, pos.clone()))?
+        .as_str();
+    Ok(make_token(TokenName::STR, source, &mut pos.clone()))
+}
+
+lazy_static! {
+    static ref NUMBER_PATTERN: Regex = Regex::new("[0-9]+").unwrap();
+}
+
+pub fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    let source = NUMBER_PATTERN
+        .find(input)
+        .ok_or_else(|| ParseError::InvalidToken(input, pos.clone()))?
+        .as_str();
+    Ok(make_token(TokenName::NUM, source, &mut pos.clone()))
+}
+
+lazy_static! {
+    static ref ID_PATTERN: Regex = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
+    static ref BOOL_PATTERN: Regex = Regex::new(r#"^(?:true|false)$"#).unwrap();
+}
+
+pub fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    if let Some(matched) = ID_PATTERN.find(&input[pos.cursor..]) {
+        let text = matched.as_str();
+        return if BOOL_PATTERN.is_match(text) {
+            Ok(Token::new(TokenName::BOOL, text, pos.clone()))
+        } else {
+            Ok(Token::new(TokenName::ID, text, pos.clone()))
+        };
     }
 
-    todo!();
+    Err(ParseError::InvalidToken(input, pos.clone()))
 }
 
-fn raise_number<'a>(input: &'a str, pos: &mut Position) -> Token<'a> {
-    todo!()
+lazy_static! {
+    static ref OP_PATTERN: Regex =
+        Regex::new(r#"^(\.\.?\.?|\/\[|(=|!|-|\+|\*|\/|<|>|\^|%)=?) "#).unwrap();
 }
 
-fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> Token<'a> {
-    todo!()
+pub fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    let source = OP_PATTERN
+        .find(input)
+        .ok_or_else(|| ParseError::InvalidToken(input, pos.clone()))?
+        .as_str();
+
+    Ok(make_token(TokenName::OP, source, &mut pos.clone()))
 }
 
-fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> Token<'a> {
-    todo!()
+lazy_static! {
+    static ref COMMENT_REGEX: Regex = Regex::new(r#";([^;\\\r\n]|\\;)*;?"#).unwrap();
 }
 
-fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> Token<'a> {
-    todo!()
+pub fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    let source = COMMENT_REGEX
+        .find(input)
+        .ok_or_else(|| ParseError::InvalidToken(input, pos.clone()))?
+        .as_str();
+    Ok(make_token(TokenName::COMMENT, source, &mut pos.clone()))
+}
+
+pub fn is_whitespace<'a>(input: &'a str, index: usize) -> bool {
+    if let Some(c) = input.chars().nth(index) {
+        return c.is_whitespace();
+    }
+    return false;
+}
+
+pub fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    let mut backup = pos.clone();
+
+    while is_whitespace(&input, pos.cursor) {
+        if &input[pos.cursor..pos.cursor + 1] == "\n" {
+            pos.line += 1;
+            pos.column = 0;
+        } else {
+            pos.column += 1;
+        }
+        pos.cursor += 1;
+    }
+
+    if pos.cursor == backup.cursor {
+        return Err(ParseError::InvalidToken(input, backup));
+    }
+
+    Ok(make_token(
+        TokenName::WHITESPACE,
+        &input[backup.cursor..pos.cursor],
+        &mut backup,
+    ))
+}
+
+pub fn skip_whitespace<'a>(input: &'a str, mut pos: &mut Position) -> Result<(), ParseError<'a>> {
+    loop {
+        if let Some(c) = input.chars().nth(pos.cursor) {
+            if c.is_whitespace() {
+                raise_whitespace(input, &mut pos)?;
+            } else if c == ';' {
+                raise_comment(input, &mut pos)?;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn lookahead<'a>(input: &'a str, pos: &mut Position, count: usize) -> RaiseResult<'a> {
+    let backup = pos.clone();
+    let mut token = raise_token(input, pos);
+
+    for _ in 1..count {
+        token = raise_token(input, pos)
+    }
+
+    *pos = backup;
+
+    return token;
+}
+
+pub fn expect<'a>(expected: &'a str, input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    let token = raise_token(input, pos)?;
+
+    if token.source != expected {
+        *pos = token.position;
+
+        return Err(ParseError::InvalidToken(input, pos.clone()));
+    }
+
+    Ok(token)
 }

@@ -16,10 +16,28 @@ fn test_make_token() {
 }
 
 #[test]
+fn test_raise_string() {
+    let mut pos = Position::new(0, 0, 0);
+    let token = raise_string("'str'", &mut pos).unwrap();
+
+    assert_eq!(token.name, TokenName::STR);
+    assert_eq!(token.source, "'str'");
+}
+
+#[test]
 fn test_raise_string_empty() {
     let mut pos = Position::new(0, 0, 0);
-    let token = raise_string("''", &mut pos);
+    let token = raise_string("''", &mut pos).unwrap();
 
     assert_eq!(token.name, TokenName::STR);
     assert_eq!(token.source, "''");
+}
+
+#[test]
+fn test_raise_string_slash() {
+    let mut pos = Position::new(0, 0, 0);
+    let token = raise_string("'\\'\\\\'", &mut pos).unwrap();
+
+    assert_eq!(token.name, TokenName::STR);
+    assert_eq!(token.source, "'\\'\\\\'");
 }
