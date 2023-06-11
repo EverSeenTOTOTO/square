@@ -1,4 +1,4 @@
-OUT = target/debug/rustdemo
+OUT = target/debug/sq
 
 .PHONY: lint
 lint:
@@ -23,7 +23,3 @@ test:
 .PHONY: debug
 debug: build
 	gdb --quiet --args ${OUT}
-
-.PHONY: wasm
-wasm:
-	rustc src/main.rs --target wasm32-unknown-unknown
