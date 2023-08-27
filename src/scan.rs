@@ -7,40 +7,6 @@ use regex::Regex;
 
 type RaiseResult<'a> = Result<Token<'a>, ParseError<'a>>;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Position {
-    pub line: usize,
-    pub column: usize,
-    pub cursor: usize,
-}
-
-impl Position {
-    pub fn new(line: usize, column: usize, cursor: usize) -> Self {
-        Self {
-            line,
-            column,
-            cursor,
-        }
-    }
-
-    pub fn default() -> Self {
-        Self {
-            line: 1,
-            column: 1,
-            cursor: 0,
-        }
-    }
-}
-
-impl fmt::Display for Position {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "line {}, column {}, cursor {}",
-            self.line, self.column, self.cursor
-        )
-    }
-}
 
 #[derive(Debug, PartialEq)]
 pub enum TokenName {

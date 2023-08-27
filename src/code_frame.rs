@@ -1,6 +1,37 @@
-use console::style;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Position {
+    pub line: usize,
+    pub column: usize,
+    pub cursor: usize,
+}
 
-use crate::scan::Position;
+impl Position {
+    pub fn new(line: usize, column: usize, cursor: usize) -> Self {
+        Self {
+            line,
+            column,
+            cursor,
+        }
+    }
+
+    pub fn default() -> Self {
+        Self {
+            line: 1,
+            column: 1,
+            cursor: 0,
+        }
+    }
+}
+
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "line {}, column {}, cursor {}",
+            self.line, self.column, self.cursor
+        )
+    }
+}
 
 fn first_non_whitespace_index(s: &str) -> usize {
     for (i, c) in s.char_indices() {
@@ -24,6 +55,7 @@ pub fn code_frame(source_code: &str, start: Position, end: Position) -> String {
 
         if line_number == start.line {
             if start.line == end.line {
+                // same line
                 hl_codes.push_str(&hl_cursor(line_number, start.column, end.column));
             } else {
                 hl_codes.push_str(&hl_cursor(line_number, start.column, line.len()));
@@ -31,9 +63,7 @@ pub fn code_frame(source_code: &str, start: Position, end: Position) -> String {
         } else if line_number > start.line && line_number < end.line {
             hl_codes.push_str(&hl_cursor(line_number, start_col, line.len()));
         } else if line_number == end.line {
-            if start.line != end.line {
-                hl_codes.push_str(&hl_cursor(line_number, start_col, end.column));
-            }
+            hl_codes.push_str(&hl_cursor(line_number, start_col, end.column));
         }
 
         // Update the current position
@@ -52,6 +82,6 @@ fn hl_cursor(_line_number: usize, start_column: usize, end_column: usize) -> Str
         "{:>4} | {}{}\n",
         " ",
         " ".repeat(start_column - 1),
-        &style("^".repeat(end_column - start_column + 1)).red()
+        "^".repeat(end_column - start_column + 1)
     )
 }

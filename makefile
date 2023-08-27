@@ -8,18 +8,14 @@ lint:
 clean:
 	cargo clean
 
-.PHONY: start
-start:
-	cargo run
-
 .PHONY: build
 build:
-	cargo build
+	cargo build --release
+	mv target/wasm32-unknown-unknown/release/sq.wasm .
+
+.PHONY: start
+start: build
 
 .PHONY: test 
 test:
 	cargo test
-
-.PHONY: debug
-debug: build
-	gdb --quiet --args ${OUT}
