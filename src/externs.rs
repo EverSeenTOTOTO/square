@@ -9,7 +9,6 @@ pub mod wasm {
         extern "C" {
             pub fn get_stack_base() -> usize;
             pub fn get_heap_base() -> usize;
-            pub fn get_data_end() -> usize;
         }
     }
 
@@ -19,10 +18,6 @@ pub mod wasm {
 
     pub fn get_heap_base() -> usize {
         unsafe { inner::get_heap_base() }
-    }
-
-    pub fn get_data_end() -> usize {
-        unsafe { inner::get_data_end() }
     }
 }
 

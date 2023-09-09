@@ -28,6 +28,17 @@ impl Position {
             cursor: 0,
         }
     }
+
+    pub fn advance(&mut self) {
+        self.column += 1;
+        self.cursor += 1;
+    }
+
+    pub fn advance_newline(&mut self) {
+        self.column = 1;
+        self.cursor += 1;
+        self.line += 1;
+    }
 }
 
 impl fmt::Display for Position {
@@ -49,28 +60,28 @@ fn first_non_whitespace_index(s: &str) -> usize {
     return 0;
 }
 
-pub fn code_frame(source_code: &str, start: Position, end: Position) -> String {
+pub fn code_frame<'a>(source_code: &str, start: &'a Position, end: &'a Position) -> String {
     let mut lines = source_code.lines().enumerate();
     let mut current_pos = Position::new(1, 1, 0);
     let mut hl_codes = String::new();
 
-    while let Some((ln, line)) = lines.next() {
-        let line_number = ln + 1;
+    while let Some((line_number, line)) = lines.next() {
+        let ln = line_number + 1;
         let start_col = cmp::max(1, first_non_whitespace_index(line) + 1);
 
-        hl_codes.push_str(&hl_line(line_number, line));
+        hl_codes.push_str(&hl_line(ln, line));
 
-        if line_number == start.line {
+        if ln == start.line {
             if start.line == end.line {
                 // same line
-                hl_codes.push_str(&hl_cursor(line_number, start.column, end.column));
+                hl_codes.push_str(&hl_cursor(ln, start.column, end.column));
             } else {
-                hl_codes.push_str(&hl_cursor(line_number, start.column, line.len()));
+                hl_codes.push_str(&hl_cursor(ln, start.column, line.len()));
             }
-        } else if line_number > start.line && line_number < end.line {
-            hl_codes.push_str(&hl_cursor(line_number, start_col, line.len()));
-        } else if line_number == end.line {
-            hl_codes.push_str(&hl_cursor(line_number, start_col, end.column));
+        } else if ln > start.line && ln < end.line {
+            hl_codes.push_str(&hl_cursor(ln, start_col, line.len()));
+        } else if ln == end.line {
+            hl_codes.push_str(&hl_cursor(ln, start_col, end.column));
         }
 
         // Update the current position
