@@ -1,7 +1,5 @@
-use std::fmt;
-
-use crate::code_frame::code_frame;
-use crate::scan::Position;
+use crate::code_frame::{code_frame, Position};
+use core::fmt;
 
 #[derive(Debug, PartialEq)]
 pub enum ParseError<'a> {
@@ -22,5 +20,3 @@ impl<'a> fmt::Display for ParseError<'a> {
         }
     }
 }
-
-impl<'a> std::error::Error for ParseError<'a> {}

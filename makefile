@@ -18,4 +18,4 @@ start: build
 
 .PHONY: test 
 test:
-	cargo test
+	cargo test --target=x86_64-unknown-linux-gnu

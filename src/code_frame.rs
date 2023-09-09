@@ -1,3 +1,10 @@
+#[cfg(not(test))]
+use alloc::{format, string::String};
+#[cfg(test)]
+use std::{format, string::String};
+
+use core::{cmp, fmt};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Position {
     pub line: usize,
@@ -49,7 +56,7 @@ pub fn code_frame(source_code: &str, start: Position, end: Position) -> String {
 
     while let Some((ln, line)) = lines.next() {
         let line_number = ln + 1;
-        let start_col = std::cmp::max(1, first_non_whitespace_index(line) + 1);
+        let start_col = cmp::max(1, first_non_whitespace_index(line) + 1);
 
         hl_codes.push_str(&hl_line(line_number, line));
 

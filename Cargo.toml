@@ -20,6 +20,3 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
-
-[dev-dependencies]
-wasmtime = "12.0.1"
