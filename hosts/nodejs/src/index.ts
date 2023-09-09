@@ -28,6 +28,9 @@ const readUtf8String = (memory: WebAssembly.Memory, offset: number, length: numb
       get_heap_base() {
         return (instance.exports.__heap_base as WebAssembly.Global).value;
       },
+      get_stack_base() {
+        return (instance.exports.memory as WebAssembly.Memory).buffer.byteLength;
+      },
     },
   });
 
@@ -38,13 +41,22 @@ const readUtf8String = (memory: WebAssembly.Memory, offset: number, length: numb
     main(): number
   };
 
+  const dataEnd = exports.__data_end.value;
+  const heapBase = exports.__heap_base.value;
+  const stackBase = exports.memory.buffer.byteLength;
+  const heapSize = stackBase - heapBase;
+
   console.log(
-    `Page size: ${exports.memory.buffer.byteLength / 64 / 1024}`,
+    `Page count: ${exports.memory.buffer.byteLength / 64 / 1024}, data end: ${dataEnd}, heap base: ${heapBase}, max heap size: ${heapSize}B`,
   );
 
-  exports.main();
+  try {
+    exports.main();
+  } catch {
+    // ...
+  }
 
-  const view = new DataView(exports.memory.buffer, exports.__heap_base.value);
+  const view = new DataView(exports.memory.buffer);
 
-  console.log(view.getInt32(0, true));
+  console.log(view.getInt32(heapBase, true));
 })();

@@ -10,7 +10,7 @@ clean:
 
 .PHONY: build
 build:
-	cargo build --release
+	RUSTFLAGS="-C link-arg=-zstack-size=65536" cargo build --release
 	mv target/wasm32-unknown-unknown/release/sq.wasm .
 
 .PHONY: start

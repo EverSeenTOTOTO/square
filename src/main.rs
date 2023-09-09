@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 
 use crate::allocator::ALLOCATOR;
 
@@ -12,7 +12,7 @@ mod externs;
 
 #[panic_handler]
 fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
-    println!("{}", panic);
+    println!("panic: {}", panic);
     core::arch::wasm32::unreachable()
 }
 
@@ -20,9 +20,7 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
 pub fn main() -> i32 {
     unsafe { ALLOCATOR.lock().init() };
 
-    let x = Box::new(42);
-
-    println!("{}", x);
+    let val = Box::new(42);
 
     return 0;
 }

@@ -7,9 +7,14 @@ pub mod wasm {
     mod inner {
         #[link(wasm_import_module = "wasm")]
         extern "C" {
+            pub fn get_stack_base() -> usize;
             pub fn get_heap_base() -> usize;
             pub fn get_data_end() -> usize;
         }
+    }
+
+    pub fn get_stack_base() -> usize {
+        unsafe { inner::get_stack_base() }
     }
 
     pub fn get_heap_base() -> usize {
