@@ -74,43 +74,31 @@ pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
 
 pub fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     let mut chars = input[pos.cursor..].chars().peekable();
-
     let start_pos = pos.clone();
 
     chars.next(); // skip first \'
     pos.advance();
 
-    loop {
-        match chars.next() {
-            Some('\'') => {
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' => {
                 pos.advance();
                 break; // terminate
             }
-            Some('\n') => {
+            '\n' => {
                 return Err(ParseError::UnexpectedToken(
                     input,
                     "unterminated string, found newline".to_string(),
                     pos.clone(),
                 ))
             }
-            Some('\\') => {
+            '\\' => {
                 pos.advance();
 
                 match chars.peek() {
-                    Some('\'') => {
-                        chars.next();
-                        pos.advance();
-                    }
-                    Some('\\') => {
-                        chars.next();
-                        pos.advance();
-                    }
                     Some(_) => {
-                        if let Some(ch) = chars.next() {
-                            pos.advance();
-                        } else {
-                            unreachable!()
-                        }
+                        chars.next();
+                        pos.advance();
                     }
                     None => {
                         return Err(ParseError::UnexpectedToken(
@@ -121,19 +109,11 @@ pub fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                     }
                 }
             }
-            Some(_) => {
+            _ => {
                 pos.advance();
-            }
-            None => {
-                return Err(ParseError::UnexpectedToken(
-                    input,
-                    "unterminated string".to_string(),
-                    pos.clone(),
-                ))
             }
         }
     }
-
     Ok(Token::new(TokenName::STR, start_pos, pos.clone()))
 }
 
@@ -178,7 +158,6 @@ fn test_raise_string_unterminated() {
 
 pub fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     let mut chars = input[pos.cursor..].chars().peekable();
-
     let start_pos = pos.clone();
 
     while let Some(ch) = chars.peek() {
@@ -186,9 +165,8 @@ pub fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
             break;
         }
 
-        if let Some(ch) = chars.next() {
-            pos.advance();
-        }
+        chars.next();
+        pos.advance();
     }
 
     Ok(Token::new(TokenName::NUM, start_pos, pos.clone()))
@@ -204,7 +182,6 @@ fn test_raise_number() {
 
 pub fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     let mut chars = input[pos.cursor..].chars().peekable();
-
     let start_pos = pos.clone();
 
     while let Some(ch) = chars.peek() {
@@ -212,9 +189,8 @@ pub fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
             break;
         }
 
-        if let Some(eat) = chars.next() {
-            pos.advance();
-        }
+        chars.next();
+        pos.advance();
     }
 
     Ok(Token::new(TokenName::ID, start_pos, pos.clone()))
@@ -230,11 +206,11 @@ fn test_raise_id() {
 
 pub fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     let mut chars = input[pos.cursor..].chars().peekable();
-
     let start_pos = pos.clone();
 
     if let Some(ch) = chars.next() {
         pos.advance();
+
         match ch {
             '[' | ']' => {}
             '+' | '-' | '*' | '^' | '%' | '&' | '|' | '=' | '!' => match chars.peek() {
@@ -245,11 +221,7 @@ pub fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a>
                 _ => {}
             },
             '/' => match chars.peek() {
-                Some('[') => {
-                    chars.next();
-                    pos.advance();
-                }
-                Some('=') => {
+                Some('[') | Some('=') => {
                     chars.next();
                     pos.advance();
                 }
@@ -399,7 +371,6 @@ fn test_raise_comment_newline() {
 
 pub fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     let mut chars = input[pos.cursor..].chars().peekable();
-
     let start_pos = pos.clone();
 
     if let Some(ch) = chars.next() {
@@ -416,18 +387,24 @@ pub fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'
     Ok(Token::new(TokenName::WHITESPACE, start_pos, pos.clone()))
 }
 
-pub fn skip_whitespace<'a>(input: &'a str, pos: &mut Position) -> Result<(), ParseError<'a>> {
+pub fn skip_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    let mut token: RaiseResult<'a> = Err(ParseError::UnexpectedToken(
+        input,
+        "expect whitespace".to_string(),
+        pos.clone(),
+    ));
+
     while let Some(c) = input.chars().nth(pos.cursor) {
         if c.is_whitespace() {
-            raise_whitespace(input, pos)?;
+            token = raise_whitespace(input, pos);
         } else if c == ';' {
-            raise_comment(input, pos)?;
+            token = raise_comment(input, pos);
         } else {
             break;
         }
     }
 
-    Ok(())
+    token
 }
 
 #[test]
