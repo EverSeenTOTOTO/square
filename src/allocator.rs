@@ -2,6 +2,7 @@ use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr;
 
 use crate::externs::wasm::{get_heap_base, get_stack_base};
+use crate::utils::Locked;
 
 pub struct BumpAllocator {
     heap_start: usize,
@@ -27,22 +28,6 @@ impl BumpAllocator {
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
-}
-
-pub struct Locked<A> {
-    inner: spin::Mutex<A>,
-}
-
-impl<A> Locked<A> {
-    pub const fn new(inner: A) -> Self {
-        Locked {
-            inner: spin::Mutex::new(inner),
-        }
-    }
-
-    pub fn lock(&self) -> spin::MutexGuard<A> {
-        self.inner.lock()
-    }
 }
 
 unsafe impl GlobalAlloc for Locked<BumpAllocator> {

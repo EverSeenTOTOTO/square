@@ -7,6 +7,7 @@ use alloc::boxed::Box;
 
 extern crate alloc;
 
+mod utils;
 #[cfg(not(test))]
 mod allocator;
 

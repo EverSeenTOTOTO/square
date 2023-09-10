@@ -63,32 +63,32 @@ fn first_non_whitespace_index(s: &str) -> usize {
 pub fn code_frame<'a>(source_code: &str, start: &'a Position, end: &'a Position) -> String {
     let mut lines = source_code.lines().enumerate();
     let mut current_pos = Position::new(1, 1, 0);
-    let mut hl_codes = String::new();
+    let mut codes = String::new();
 
     while let Some((line_number, line)) = lines.next() {
         let ln = line_number + 1;
         let start_col = cmp::max(1, first_non_whitespace_index(line) + 1);
 
-        hl_codes.push_str(&hl_line(ln, line));
+        codes.push_str(&hl_line(ln, line));
 
         if ln == start.line {
             if start.line == end.line {
                 // same line
-                hl_codes.push_str(&hl_cursor(ln, start.column, end.column));
+                codes.push_str(&hl_cursor(ln, start.column, end.column));
             } else {
-                hl_codes.push_str(&hl_cursor(ln, start.column, line.len()));
+                codes.push_str(&hl_cursor(ln, start.column, line.len()));
             }
         } else if ln > start.line && ln < end.line {
-            hl_codes.push_str(&hl_cursor(ln, start_col, line.len()));
+            codes.push_str(&hl_cursor(ln, start_col, line.len()));
         } else if ln == end.line {
-            hl_codes.push_str(&hl_cursor(ln, start_col, end.column));
+            codes.push_str(&hl_cursor(ln, start_col, end.column));
         }
 
         // Update the current position
         current_pos.line += 1;
     }
 
-    return hl_codes;
+    return codes;
 }
 
 fn hl_line(line_number: usize, line: &str) -> String {
