@@ -1,40 +1,49 @@
 # square
 
-A toy lisp-like language written in Rust, aims to be both fun and expressive.
+A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 
 ## Q & A
 
-1. What's this?
+1.  What's this?
 
-    **Square** is a small language written in Rust with a lisp-like grammer. The language's design goal is to use as few control keys like `<Ctrl>`, `<Shift>` as possible, so the code structure is determined by `.`, `[]`, `;` and `/`. In addition, there are builtin supports for expanding vectors using `...`, concat operator `..` and other elegant simple syntax, which tends to be more productive.
+    **Square** is a neat Lisp-inspired language, crafted with Rust. It's all about simplicity and cleanliness, aiming to reduce the reliance on control keys like `<Ctrl>` and `<Shift>`. That's why it employs symbols like `.`, `[]`, `;`, and `/` to structure the code.
 
-    **Square** is parsed by a recursive descent algorithm, the source code is less than 1000 lines so it's easy to read and extend.
-  
-2. Why called **square**?
+    **Square** is parsed by a recursive descent algorithm, compiled to a custom instruction set, and operates on a stack-based virtual machine. The source code, written with a Rust `no_std` environment, spans less than 3000 lines and can be compiled to a incredibly lightweight wasm file.
 
-    **Square** use `[]` rather than `()` which appears in most lisp languages, so it looks really "square".
+2.  Why called **square**?
+
+    **Square** use `[]` rather than `()` which is adopted in most lisp languages, giving it a truly "square" aesthetic that matches its name.
 
 ## Variable
 
 ```lisp
-[= x 2]
-[= x [.. 1 10]]
+; basic
+[= x 2] ; x = 2
+[= x [.. 1 4]] ; x = [1 2 3 4]
+
+; expansion
 [= [x y] [1 2]] ; x = 1, y = 2
 [= [. x] [1 2 3]] ; x = 2
-[= [... x] [1 2 3]] ; x = 3
+
+; placehoders
+[= [... x] [.. 1 10]] ; x = 10
+[= [x ... y] [1]] ; x = 1, y = 1
 [= [. [x] ... y] [1 [2] 3 4 5]] ; x = 2, y = 5
 ```
 
 ## Control flow
 
 ```lisp
-[match expr
-  [[and [> q .] [< p .]] foo]
-  [[[regex '[a-z]+' 'gi'].test .] bar]]
+; match
+[match x
+  [[> 42 x] foo]
+  [[[regex '[a-z]+' 'gi'].test x] bar]]
 
+; branch
 [if true true]
 [if true true false]
 
+; block
 [begin 
   [= i 0]
   [while [< i 10]
@@ -45,10 +54,12 @@ A toy lisp-like language written in Rust, aims to be both fun and expressive.
 ## Function
 
 ```lisp
+; function starts with /[ as it looks like λ
 [= foo /[] 2]
 
 [foo]
 
+; expansion available in parameters
 [= foo /[. z] [print [.. z 4]]
 
 [foo 'ignored' 0]
@@ -67,6 +78,7 @@ A toy lisp-like language written in Rust, aims to be both fun and expressive.
 ## Coroutine
 
 ```lisp
+; similar to Lua coroutine
 [= genFib /[n]
   [co.wrap /[]
     [= [a b] [1 1]]
@@ -80,27 +92,25 @@ A toy lisp-like language written in Rust, aims to be both fun and expressive.
 ## Structure
 
 ```lisp
+; use built-in function `obj` to create an object
 [= stack /[vec] [begin 
-  [= this [obj]]
-  [= this.vec [vec.slice 0]]
+  [= this [obj]] ; `this` is just a variable name
+  [= this.vec [... vec]]
   [= this.clear /[] [= this.vec []]]
   [= this.push /[x] [begin 
     [= this.vec [.. this.vec [x]]]]]
   [= this.pop /[] [begin
     [= [... x] this.vec]
-    [this.vec.splice [- this.vec.length 1] 1]
+    [= this.vec [this.vec.slice 0 -1]]
     x]]
   this]]
 
 [= v [1 2 3]]
 [= s [stack v]]
-[= x [s.pop]]
+[= x [s.pop]] ; x = 3
 [s.clear]
-[s.push 1]
-[s.push 0]
-[= y [s.pop]]
-
-[x y v] ; [3 0 [1 2 3]]
+[s.push 42]
+[= y [s.pop]] ; y = 42
 ```
 
 ## Comment
@@ -113,22 +123,4 @@ A toy lisp-like language written in Rust, aims to be both fun and expressive.
 ## BNF
 
 ```bnf
-<lit> ::= <num> | <str> | <bool>
-<unOp> ::= '!' | '-'
-<binOp> ::= '-' | '..' | '/' | '+' | '*' | '>' | '<' | '%' | '^' | '==' | '!=' | ...
-<dot> ::= '.' <id> <dot>
-
-<expandItem> ::= '.' | '...' | <id> | <expand>
-<expand> ::= '[' <expandItem>* ']'
-
-<func> ::= '/' <expand> <expr>
-
-<unOpExpr> ::= <unOp> <expr> 
-
-<assign> ::= '[' '=' (<id> <dot>* | <expand>) <expr> ']'
-
-<binOpExpr> ::= '[' <binOp> <expr> <expr> ']'
-
-<expr> ::= (<id> | <lit> | <func> | <assign> | <binOpExpr> | <unOpExpr> | <call>) <dot>*
-<call> ::= '[' <expr>* ']' 
 ```

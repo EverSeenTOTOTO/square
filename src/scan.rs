@@ -333,7 +333,6 @@ pub fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> 
                 break;
             }
             '\n' => {
-                pos.advance_newline();
                 break;
             }
             _ => {
@@ -366,7 +365,7 @@ fn test_raise_comment_newline() {
     let input = ";123\n456";
     let token = raise_comment(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), ";123\n");
+    assert_eq!(token.source(input), ";123");
 }
 
 pub fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
@@ -484,4 +483,15 @@ fn test_expect() {
     let _ = skip_whitespace(input, &mut pos);
 
     assert_eq!(expect("[", input, &mut pos).unwrap().source(input), "[");
+
+    let mut test_pos = Position::new(1, 8, 7);
+
+    assert_eq!(
+        Err(ParseError::UnexpectedToken(
+            input,
+            "expect /, got /[".to_string(),
+            test_pos.clone()
+        )),
+        expect("/", input, &mut test_pos)
+    );
 }

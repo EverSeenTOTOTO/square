@@ -21,13 +21,28 @@ pub mod wasm {
     }
 }
 
-pub mod console {
+pub mod memory {
     use core::fmt;
 
     mod inner {
-        #[link(wasm_import_module = "console")]
+        #[link(wasm_import_module = "memory")]
         extern "C" {
             pub fn write(str: *const u8, len: usize);
+        }
+    }
+
+    // write to memory and read by host
+    pub fn write(message: &str) {
+        unsafe { inner::write(message.as_ptr(), message.len()) };
+    }
+
+    // host write to memory and read by us
+    pub fn read<'a>(addr: usize, len: usize) -> &'a str {
+        unsafe {
+            let slice = core::slice::from_raw_parts(addr as *const u8, len);
+            let string = core::str::from_utf8_unchecked(slice);
+
+            return string;
         }
     }
 
@@ -35,14 +50,20 @@ pub mod console {
 
     impl fmt::Write for Writer {
         fn write_str(&mut self, message: &str) -> fmt::Result {
-            unsafe { inner::write(message.as_ptr(), message.len()) };
+            write(message);
             Ok(())
         }
     }
 }
 
 lazy_static! {
-    static ref WRITER: Mutex<console::Writer> = Mutex::new(console::Writer {});
+    static ref WRITER: Mutex<memory::Writer> = Mutex::new(memory::Writer {});
+}
+
+#[doc(hidden)]
+pub fn extern_write(args: fmt::Arguments) {
+    use core::fmt::Write;
+    WRITER.lock().write_fmt(args).unwrap();
 }
 
 #[macro_export]
@@ -54,10 +75,4 @@ macro_rules! print {
 macro_rules! println {
     () => ($crate::print!("\n"));
     ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
-}
-
-#[doc(hidden)]
-pub fn extern_write(args: fmt::Arguments) {
-    use core::fmt::Write;
-    WRITER.lock().write_fmt(args).unwrap();
 }

@@ -1,15 +1,16 @@
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
 
-#[cfg(not(test))]
-use crate::allocator::ALLOCATOR;
 use alloc::boxed::Box;
+
+#[cfg(not(test))]
+use crate::externs::{memory, wasm};
 
 extern crate alloc;
 
-mod utils;
 #[cfg(not(test))]
 mod allocator;
+mod utils;
 
 mod code_frame;
 mod errors;
@@ -29,11 +30,14 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
 pub fn main() -> i32 {
     #[cfg(not(test))]
     unsafe {
-        ALLOCATOR.lock().init()
+        crate::allocator::ALLOCATOR.lock().init()
     };
 
-    let val = Box::new(42);
-    println!("{}", val);
+    let string = memory::read(wasm::get_heap_base(), 12);
+
+    println!("{}", string);
+
+    let _ = Box::new(42);
 
     return 0;
 }

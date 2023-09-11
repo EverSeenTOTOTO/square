@@ -2,10 +2,14 @@
 import fs from 'fs';
 import path from 'path';
 
+const encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder('utf-8');
 const readUtf8String = (memory: WebAssembly.Memory, offset: number, length: number) => {
   const array = new Uint8Array(memory.buffer, offset, length);
   return utf8Decoder.decode(array);
+};
+const writeUtf8String = (memory: WebAssembly.Memory, offset: number, string: string) => {
+  encoder.encodeInto(string, new Uint8Array(memory.buffer, offset, string.length));
 };
 
 (async () => {
@@ -14,7 +18,7 @@ const readUtf8String = (memory: WebAssembly.Memory, offset: number, length: numb
   );
 
   const { instance } = await WebAssembly.instantiate(wasm, {
-    console: {
+    memory: {
       write: (offset: number, length: number) => {
         const message = readUtf8String(instance.exports.memory as WebAssembly.Memory, offset, length);
 
@@ -51,6 +55,7 @@ const readUtf8String = (memory: WebAssembly.Memory, offset: number, length: numb
   );
 
   try {
+    writeUtf8String(exports.memory, heapBase, 'Hello, world!');
     exports.main();
   } catch {
     // ...
