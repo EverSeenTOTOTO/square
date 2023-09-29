@@ -42,7 +42,7 @@ impl Token {
     }
 
     pub fn source<'a>(&self, input: &'a str) -> &'a str {
-        return &input[self.start_pos.cursor..self.end_pos.cursor];
+        &input[self.start_pos.cursor..self.end_pos.cursor]
     }
 }
 
@@ -58,7 +58,7 @@ pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         Some(';') => raise_comment(input, pos),
         Some(ch) => match ch {
             _ if ch.is_alphabetic() || *ch == '_' => raise_ident(input, pos),
-            _ if ch.is_digit(10) => raise_number(input, pos),
+            _ if ch.is_ascii_digit() => raise_integer(input, pos),
             _ if ch.is_whitespace() => raise_whitespace(input, pos),
             _ => raise_operator(input, pos),
         },
@@ -156,12 +156,12 @@ fn test_raise_string_unterminated() {
     );
 }
 
-pub fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+pub fn raise_integer<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     let mut chars = input[pos.cursor..].chars().peekable();
     let start_pos = pos.clone();
 
     while let Some(ch) = chars.peek() {
-        if !ch.is_digit(10) {
+        if !ch.is_ascii_digit() {
             break;
         }
 
@@ -173,9 +173,9 @@ pub fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
 }
 
 #[test]
-fn test_raise_number() {
-    let input = "012'34";
-    let token = raise_number(input, &mut Position::default()).unwrap();
+fn test_raise_integer() {
+    let input = "012.34";
+    let token = raise_integer(input, &mut Position::default()).unwrap();
 
     assert_eq!(token.source(input), "012");
 }
@@ -387,23 +387,15 @@ pub fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'
 }
 
 pub fn skip_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    let mut token: RaiseResult<'a> = Err(ParseError::UnexpectedToken(
-        input,
-        "expect whitespace".to_string(),
-        pos.clone(),
-    ));
+    let mut token = raise_token(input, pos)?;
 
-    while let Some(c) = input.chars().nth(pos.cursor) {
-        if c.is_whitespace() {
-            token = raise_whitespace(input, pos);
-        } else if c == ';' {
-            token = raise_comment(input, pos);
-        } else {
-            break;
-        }
+    while token.name == TokenName::WHITESPACE || token.name == TokenName::COMMENT {
+        token = raise_token(input, pos)?;
     }
 
-    token
+    *pos = token.start_pos.clone();
+
+    Ok(token)
 }
 
 #[test]
@@ -416,32 +408,14 @@ fn test_skip_whitespace() {
     assert_eq!(pos, Position::new(3, 4, input.len()));
 }
 
-pub fn lookahead<'a>(input: &'a str, pos: &mut Position, count: usize) -> RaiseResult<'a> {
-    let backup = pos.clone();
-    let mut token = raise_token(input, pos);
-
-    for _ in 1..count {
-        token = raise_token(input, pos);
-    }
-
-    *pos = backup;
-
-    return token;
-}
-
 #[test]
-fn test_lookahead() {
-    let input = "[= fib /[n] [+ n [- n 1]]]";
+fn test_skip_whitespace_empty() {
+    let input = "[ ;comment; ]";
     let mut pos = Position::default();
 
-    let mut token = lookahead(input, &mut pos, 1).unwrap();
-    assert_eq!(token.source(input), "[");
+    let _ = skip_whitespace(input, &mut pos);
 
-    token = lookahead(input, &mut pos, 2).unwrap();
-    assert_eq!(token.source(input), "=");
-
-    token = lookahead(input, &mut pos, 11).unwrap();
-    assert_eq!(token.source(input), "+");
+    assert_eq!(pos, Position::default());
 }
 
 pub fn expect<'a>(expected: &'a str, input: &'a str, pos: &mut Position) -> RaiseResult<'a> {

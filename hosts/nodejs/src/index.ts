@@ -48,10 +48,9 @@ const writeUtf8String = (memory: WebAssembly.Memory, offset: number, string: str
   const dataEnd = exports.__data_end.value;
   const heapBase = exports.__heap_base.value;
   const stackBase = exports.memory.buffer.byteLength;
-  const heapSize = stackBase - heapBase;
 
   console.log(
-    `Page count: ${exports.memory.buffer.byteLength / 64 / 1024}, data end: ${dataEnd}, heap base: ${heapBase}, max heap size: ${heapSize}B`,
+    `Page count: ${exports.memory.buffer.byteLength / 64 / 1024}, data end: ${dataEnd}, heap base: ${heapBase}, stackBase: ${stackBase}`,
   );
 
   try {

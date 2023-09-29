@@ -19,14 +19,14 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 ```lisp
 ; basic
 [= x 2] ; x = 2
-[= x [.. 1 4]] ; x = [1 2 3 4]
+[= x [.. 1 4]] ; x = [1 2 3 4]; `..` can concat strings, ranges and vectors
 
 ; expansion
 [= [x y] [1 2]] ; x = 1, y = 2
-[= [. x] [1 2 3]] ; x = 2
+[= [. x] [1 2 3]] ; x = 2; `.` is a placehoder that must occupy one position
 
-; placehoders
-[= [... x] [.. 1 10]] ; x = 10
+; convenient placehoders in expansion
+[= [... x] [.. 1 10]] ; x = 10; `...` is a placehoder that can occupy zero or as many positions as possible
 [= [x ... y] [1]] ; x = 1, y = 1
 [= [. [x] ... y] [1 [2] 3 4 5]] ; x = 2, y = 5
 ```
@@ -59,7 +59,7 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 
 [foo]
 
-; expansion available in parameters
+; expansion in parameter
 [= foo /[. z] [print [.. z 4]]
 
 [foo 'ignored' 0]
@@ -95,14 +95,19 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 ; use built-in function `obj` to create an object
 [= stack /[vec] [begin 
   [= this [obj]] ; `this` is just a variable name
-  [= this.vec [... vec]]
+
+  [= this.vec vec]
+
   [= this.clear /[] [= this.vec []]]
+
   [= this.push /[x] [begin 
     [= this.vec [.. this.vec [x]]]]]
+
   [= this.pop /[] [begin
     [= [... x] this.vec]
     [= this.vec [this.vec.slice 0 -1]]
     x]]
+
   this]]
 
 [= v [1 2 3]]
@@ -122,5 +127,15 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 
 ## BNF
 
-```bnf
+```
+expand -> '[' ('.' | '..' | '...' | id | expand)+ ']'
+fn -> '/' (expand | '[' ']') call
+
+assign -> '=' (id |expand) expr
+op -> operator expr+
+
+call -> '[' assign | op | expr* ']'
+
+dot -> (id | call) (. id)*
+expr -> fn | dot
 ```

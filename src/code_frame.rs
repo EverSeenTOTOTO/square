@@ -57,7 +57,7 @@ fn first_non_whitespace_index(s: &str) -> usize {
             return i;
         }
     }
-    return 0;
+    0
 }
 
 pub fn code_frame<'a>(source_code: &str, start: &'a Position, end: &'a Position) -> String {
@@ -65,7 +65,7 @@ pub fn code_frame<'a>(source_code: &str, start: &'a Position, end: &'a Position)
     let mut current_pos = Position::new(1, 1, 0);
     let mut codes = String::new();
 
-    while let Some((line_number, line)) = lines.next() {
+    for (line_number, line) in lines {
         let ln = line_number + 1;
         let start_col = cmp::max(1, first_non_whitespace_index(line) + 1);
 
@@ -88,7 +88,7 @@ pub fn code_frame<'a>(source_code: &str, start: &'a Position, end: &'a Position)
         current_pos.line += 1;
     }
 
-    return codes;
+    codes
 }
 
 fn hl_line(line_number: usize, line: &str) -> String {

@@ -1,5 +1,8 @@
+#![feature(asm_experimental_arch)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
+
+use core::arch::asm;
 
 use alloc::boxed::Box;
 
@@ -17,6 +20,7 @@ mod errors;
 #[cfg(not(test))]
 mod externs;
 mod scan;
+mod parse;
 
 #[cfg(not(test))]
 #[panic_handler]

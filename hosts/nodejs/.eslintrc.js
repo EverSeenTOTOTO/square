@@ -23,6 +23,7 @@ module.exports = {
   rules: {
     'max-len': 'off',
     'no-console': 'off',
+    'no-plusplus': 'off',
     'no-nested-ternary': 'off',
     'arrow-body-style': 'off',
     'object-curly-newline': 'off',
