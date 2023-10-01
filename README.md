@@ -128,15 +128,15 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 ## BNF
 
     expand -> '[' ('.' | '..' | '...' | id | expand)+ ']'
-    fn -> '/' expand call
+    fn -> '/' expand expr
 
     assign -> '=' (id |expand) expr
 
-    unary_op -> operator expr
-    binary_op -> operator expr expr
-    op -> binary_op | unary_op
+    op -> op expr expr*
 
     call -> '[' assign | op | expr* ']'
 
-    dot -> (id | call) (. id)*
+    lit -> num | str
+
+    dot -> (lit | id | call) (. id)*
     expr -> fn | dot

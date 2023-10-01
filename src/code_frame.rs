@@ -61,7 +61,7 @@ fn first_non_whitespace_index(s: &str) -> usize {
 }
 
 pub fn code_frame<'a>(source_code: &str, start: &'a Position, end: &'a Position) -> String {
-    let mut lines = source_code.lines().enumerate();
+    let lines = source_code.lines().enumerate();
     let mut current_pos = Position::new(1, 1, 0);
     let mut codes = String::new();
 

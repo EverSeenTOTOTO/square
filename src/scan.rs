@@ -2,17 +2,16 @@ use crate::{code_frame::Position, errors::*};
 
 #[cfg(not(test))]
 use alloc::{
-    boxed::Box,
     format,
     string::{String, ToString},
 };
 
 #[cfg(test)]
-use std::{boxed::Box, string::String};
+use std::string::String;
 
-use core::{fmt, str::Chars};
+use core::fmt;
 
-type RaiseResult<'a> = Result<Token, ParseError<'a>>;
+pub type RaiseResult<'a> = Result<Token, SquareError<'a>>;
 
 #[derive(Debug, PartialEq)]
 pub enum TokenName {
@@ -77,7 +76,7 @@ pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
             _ => raise_operator(input, pos),
         },
         None => {
-            return Err(ParseError::UnexpectedToken(
+            return Err(SquareError::UnexpectedToken(
                 input,
                 "early eof".to_string(),
                 pos.clone(),
@@ -100,7 +99,7 @@ fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                 break; // terminate
             }
             '\n' => {
-                return Err(ParseError::UnexpectedToken(
+                return Err(SquareError::UnexpectedToken(
                     input,
                     "unterminated string, found newline".to_string(),
                     pos.clone(),
@@ -115,7 +114,7 @@ fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                         pos.advance();
                     }
                     None => {
-                        return Err(ParseError::UnexpectedToken(
+                        return Err(SquareError::UnexpectedToken(
                             input,
                             "bad escape".to_string(),
                             pos.clone(),
@@ -158,7 +157,7 @@ fn test_raise_string_escaped2() {
 #[test]
 fn test_raise_string_unterminated() {
     let input = "'he\nllo";
-    let expected_output = Err(ParseError::UnexpectedToken(
+    let expected_output = Err(SquareError::UnexpectedToken(
         input,
         "unterminated string, found newline".to_string(),
         Position::new(1, 4, 3),
@@ -250,7 +249,7 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                 _ => {}
             },
             _ => {
-                return Err(ParseError::UnexpectedToken(
+                return Err(SquareError::UnexpectedToken(
                     input,
                     format!("expect operator, got '{}'", ch),
                     pos.clone(),
@@ -319,7 +318,7 @@ fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                         pos.advance();
                     }
                     None => {
-                        return Err(ParseError::UnexpectedToken(
+                        return Err(SquareError::UnexpectedToken(
                             input,
                             "bad escape".to_string(),
                             pos.clone(),
@@ -409,7 +408,7 @@ fn test_skip_whitespace() {
 
 #[test]
 fn test_skip_whitespace_empty() {
-    let input = "[ ;comment; ]";
+    let input = "[ ;abaaba; ]";
     let mut pos = Position::default();
 
     let _ = skip_whitespace(input, &mut pos);
@@ -429,9 +428,17 @@ pub fn lookahead<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
 fn test_lookahead() {
     let input = "[= fib /[n] [+ n [- n 1]]]";
     let mut pos = Position::default();
-    let token = lookahead(input, &mut pos).unwrap();
+    let mut token = lookahead(input, &mut pos).unwrap();
 
     assert_eq!(token.source(input), "[");
+    assert_eq!(token.source(input), "[");
+
+    raise_token(input, &mut pos).unwrap();
+
+    token = lookahead(input, &mut pos).unwrap();
+
+    assert_eq!(token.source(input), "=");
+    assert_eq!(token.source(input), "=");
 }
 
 type TokenPredicate<'a> = dyn Fn(&Token) -> bool + 'a;
@@ -448,7 +455,7 @@ fn expect<'a>(
     if !pred(&token) {
         *pos = token.start_pos.clone();
 
-        return Err(ParseError::UnexpectedToken(
+        return Err(SquareError::UnexpectedToken(
             input,
             make_msg(&token),
             pos.clone(),

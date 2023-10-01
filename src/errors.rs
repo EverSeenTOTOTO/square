@@ -6,19 +6,19 @@ use core::fmt;
 use std::string::String;
 
 #[derive(Debug, PartialEq)]
-pub enum ParseError<'a> {
+pub enum SquareError<'a> {
     UnexpectedToken(&'a str, String, Position),
     SyntaxError(&'a str, String, Position, Option<Position>),
 }
 
-impl<'a> fmt::Display for ParseError<'a> {
+impl<'a> fmt::Display for SquareError<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::UnexpectedToken(source, msg, pos) => {
+            SquareError::UnexpectedToken(source, msg, pos) => {
                 let frame = code_frame(source, pos, pos);
                 write!(f, "Unexpected token at {:?}, {}:\n{}", pos, msg, frame)
             }
-            ParseError::SyntaxError(source, msg, start, end) => {
+            SquareError::SyntaxError(source, msg, start, end) => {
                 let frame = code_frame(source, start, end.as_ref().unwrap_or(start));
                 write!(f, "Syntax error at {:?}, {}: \n {}", start, msg, frame)
             }

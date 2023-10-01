@@ -2,8 +2,6 @@
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
 
-use core::arch::asm;
-
 use alloc::boxed::Box;
 
 #[cfg(not(test))]
@@ -19,8 +17,8 @@ mod code_frame;
 mod errors;
 #[cfg(not(test))]
 mod externs;
-mod scan;
 mod parse;
+mod scan;
 
 #[cfg(not(test))]
 #[panic_handler]
