@@ -20,7 +20,7 @@ impl<'a> fmt::Display for SquareError<'a> {
             }
             SquareError::SyntaxError(source, msg, start, end) => {
                 let frame = code_frame(source, start, end.as_ref().unwrap_or(start));
-                write!(f, "Syntax error at {:?}, {}: \n {}", start, msg, frame)
+                write!(f, "Syntax error at {:?}, {}:\n{}", start, msg, frame)
             }
         }
     }

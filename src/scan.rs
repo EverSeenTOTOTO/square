@@ -41,27 +41,23 @@ impl fmt::Display for TokenName {
 #[derive(Debug, PartialEq)]
 pub struct Token {
     pub name: TokenName,
-    pub start_pos: Position,
-    pub end_pos: Position,
+    pub pos: Position,
+    pub source: String,
 }
 
-impl Token {
-    pub fn new(name: TokenName, start_pos: Position, end_pos: Position) -> Self {
-        Self {
-            name,
-            start_pos,
-            end_pos,
-        }
-    }
-
-    pub fn source<'a>(&self, input: &'a str) -> &'a str {
-        &input[self.start_pos.cursor..self.end_pos.cursor]
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}({})", self.name, self.source)
     }
 }
 
 pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     if pos.cursor >= input.len() {
-        return Ok(Token::new(TokenName::EOF, pos.clone(), pos.clone()));
+        return Ok(Token {
+            name: TokenName::EOF,
+            pos: pos.clone(),
+            source: "".to_string(),
+        });
     }
 
     let mut chars = input[pos.cursor..].chars().peekable();
@@ -127,7 +123,14 @@ fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
             }
         }
     }
-    Ok(Token::new(TokenName::STR, start_pos, pos.clone()))
+
+    let source = input[start_pos.cursor..pos.cursor].to_string();
+
+    Ok(Token {
+        name: TokenName::STR,
+        pos: start_pos,
+        source,
+    })
 }
 
 #[test]
@@ -135,7 +138,7 @@ fn test_raise_string() {
     let input = "'hello'";
     let token = raise_string(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "'hello'");
+    assert_eq!(token.source, "'hello'");
 }
 
 #[test]
@@ -143,7 +146,7 @@ fn test_raise_string_escaped() {
     let input = "'he\\'llo'";
     let token = raise_string(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "'he\\'llo'");
+    assert_eq!(token.source, "'he\\'llo'");
 }
 
 #[test]
@@ -151,7 +154,7 @@ fn test_raise_string_escaped2() {
     let input = "'he\\\\'llo'";
     let token = raise_string(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "'he\\\\'");
+    assert_eq!(token.source, "'he\\\\'");
 }
 
 #[test]
@@ -182,7 +185,13 @@ fn raise_integer<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         pos.advance();
     }
 
-    Ok(Token::new(TokenName::NUM, start_pos, pos.clone()))
+    let source = input[start_pos.cursor..pos.cursor].to_string();
+
+    Ok(Token {
+        name: TokenName::NUM,
+        pos: start_pos,
+        source,
+    })
 }
 
 #[test]
@@ -190,7 +199,7 @@ fn test_raise_integer() {
     let input = "012.34";
     let token = raise_integer(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "012");
+    assert_eq!(token.source, "012");
 }
 
 fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
@@ -206,7 +215,13 @@ fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         pos.advance();
     }
 
-    Ok(Token::new(TokenName::ID, start_pos, pos.clone()))
+    let source = input[start_pos.cursor..pos.cursor].to_string();
+
+    Ok(Token {
+        name: TokenName::ID,
+        pos: start_pos,
+        source,
+    })
 }
 
 #[test]
@@ -214,7 +229,7 @@ fn test_raise_id() {
     let input = "_demo";
     let token = raise_ident(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "_demo");
+    assert_eq!(token.source, "_demo");
 }
 
 fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
@@ -258,7 +273,13 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         }
     }
 
-    Ok(Token::new(TokenName::OP, start_pos, pos.clone()))
+    let source = input[start_pos.cursor..pos.cursor].to_string();
+
+    Ok(Token {
+        name: TokenName::OP,
+        pos: start_pos,
+        source,
+    })
 }
 
 #[test]
@@ -266,7 +287,7 @@ fn test_raise_op() {
     let input = "/+";
     let token = raise_operator(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "/");
+    assert_eq!(token.source, "/");
 }
 
 #[test]
@@ -274,7 +295,7 @@ fn test_raise_eq() {
     let input = "-==";
     let token = raise_operator(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "-=");
+    assert_eq!(token.source, "-=");
 }
 
 #[test]
@@ -282,7 +303,7 @@ fn test_raise_dot() {
     let input = ".+";
     let token = raise_operator(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), ".");
+    assert_eq!(token.source, ".");
 }
 
 #[test]
@@ -290,7 +311,7 @@ fn test_raise_dot2() {
     let input = "..+";
     let token = raise_operator(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "..");
+    assert_eq!(token.source, "..");
 }
 
 #[test]
@@ -298,7 +319,7 @@ fn test_raise_dot3() {
     let input = "....";
     let token = raise_operator(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), "...");
+    assert_eq!(token.source, "...");
 }
 
 fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
@@ -339,7 +360,13 @@ fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         }
     }
 
-    Ok(Token::new(TokenName::COMMENT, start_pos, pos.clone()))
+    let source = input[start_pos.cursor..pos.cursor].to_string();
+
+    Ok(Token {
+        name: TokenName::COMMENT,
+        pos: start_pos,
+        source,
+    })
 }
 
 #[test]
@@ -347,7 +374,7 @@ fn test_raise_comment() {
     let input = ";123;456";
     let token = raise_comment(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), ";123;");
+    assert_eq!(token.source, ";123;");
 }
 
 #[test]
@@ -355,7 +382,7 @@ fn test_raise_comment_escape() {
     let input = ";123\\;456;";
     let token = raise_comment(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), ";123\\;456;");
+    assert_eq!(token.source, ";123\\;456;");
 }
 
 #[test]
@@ -363,7 +390,7 @@ fn test_raise_comment_newline() {
     let input = ";123\n456";
     let token = raise_comment(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(input), ";123");
+    assert_eq!(token.source, ";123");
 }
 
 fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
@@ -381,7 +408,13 @@ fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         }
     }
 
-    Ok(Token::new(TokenName::WHITESPACE, start_pos, pos.clone()))
+    let source = input[start_pos.cursor..pos.cursor].to_string();
+
+    Ok(Token {
+        name: TokenName::WHITESPACE,
+        pos: start_pos,
+        source,
+    })
 }
 
 pub fn skip_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
@@ -391,7 +424,7 @@ pub fn skip_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a
         token = raise_token(input, pos)?;
     }
 
-    *pos = token.start_pos.clone();
+    *pos = token.pos.clone();
 
     Ok(token)
 }
@@ -430,15 +463,15 @@ fn test_lookahead() {
     let mut pos = Position::default();
     let mut token = lookahead(input, &mut pos).unwrap();
 
-    assert_eq!(token.source(input), "[");
-    assert_eq!(token.source(input), "[");
+    assert_eq!(token.source, "[");
+    assert_eq!(token.source, "[");
 
     raise_token(input, &mut pos).unwrap();
 
     token = lookahead(input, &mut pos).unwrap();
 
-    assert_eq!(token.source(input), "=");
-    assert_eq!(token.source(input), "=");
+    assert_eq!(token.source, "=");
+    assert_eq!(token.source, "=");
 }
 
 type TokenPredicate<'a> = dyn Fn(&Token) -> bool + 'a;
@@ -453,7 +486,7 @@ fn expect<'a>(
     let token = raise_token(input, pos)?;
 
     if !pred(&token) {
-        *pos = token.start_pos.clone();
+        *pos = token.pos.clone();
 
         return Err(SquareError::UnexpectedToken(
             input,
@@ -466,22 +499,14 @@ fn expect<'a>(
 }
 
 pub fn expect_source<'a>(source: &'a str, input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    return expect(
-        &|token| token.source(input) == source,
-        input,
-        pos,
-        &|token| format!("expect {}, got '{}'", source, token.source(input)),
-    );
+    return expect(&|token| token.source == source, input, pos, &|token| {
+        format!("expect {}, got '{}'", source, token.source)
+    });
 }
 
 pub fn expect_name<'a>(name: TokenName, input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     return expect(&|token| token.name == name, input, pos, &|token| {
-        format!(
-            "expect {}, got {}: '{}'",
-            name,
-            token.name,
-            token.source(input)
-        )
+        format!("expect {}, got {}: '{}'", name, token.name, token.source)
     });
 }
 
@@ -497,19 +522,14 @@ fn test_expect() {
     assert_eq!(
         expect(&|_| true, input, &mut pos, &|_| "".to_string())
             .unwrap()
-            .source(input),
+            .source,
         "["
     );
-    assert_eq!(
-        expect_source("=", input, &mut pos).unwrap().source(input),
-        "="
-    );
+    assert_eq!(expect_source("=", input, &mut pos).unwrap().source, "=");
 
     let _ = skip_whitespace(input, &mut pos);
     assert_eq!(
-        expect_name(TokenName::ID, input, &mut pos)
-            .unwrap()
-            .source(input),
+        expect_name(TokenName::ID, input, &mut pos).unwrap().source,
         "fib"
     );
 }
