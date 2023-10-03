@@ -1,4 +1,10 @@
-use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
+use alloc::{
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 use core::fmt;
 
@@ -14,21 +20,24 @@ type ParseResult<'a> = Result<Box<Node>, SquareError<'a>>;
 #[derive(Debug, PartialEq)]
 pub enum Node {
     Empty(),
-    Token(Token),                                  // literal
-    Expand(Token, Token, Vec<Box<Node>>),          // '[', ']', placeholders*
-    Fn(Token, Box<Node>, Box<Node>),               // '/', params, body
-    Assign(Token, Box<Node>, Box<Node>),           // '=', expansion, expression
-    Op(Token, Vec<Box<Node>>),                     // operator, expressions+
-    Call(Token, Token, Box<Node>, Vec<Box<Node>>), // '[', ']', caller, callee*
-    Dot(Box<Node>, Vec<Box<Node>>),                // instance, (dot property)*
+    Token(Token),                         // literal
+    Expand(Token, Token, Vec<Box<Node>>), // '[', ']', placeholders*
+    Fn(Token, Box<Node>, Box<Node>),      // '/', params, body
+    Assign(Token, Box<Node>, Box<Node>),  // '=', expansion, expression
+    Op(Token, Vec<Box<Node>>),            // operator, expressions+
+    Call(Token, Token, Vec<Box<Node>>),   // '[', ']', expressions+
+    Dot(Box<Node>, Vec<Box<Node>>),       // instance, (dot property)*
 }
 
 fn nodevec_to_string(vector: &Vec<Box<Node>>) -> String {
-    return vector
-        .iter()
-        .map(|node| format!("{}", node))
-        .collect::<Vec<String>>()
-        .join(", ");
+    return match vector.is_empty() {
+        true => "Empty".to_string(),
+        _ => vector
+            .iter()
+            .map(|node| format!("{}", node))
+            .collect::<Vec<String>>()
+            .join(", "),
+    };
 }
 
 impl fmt::Display for Node {
@@ -45,9 +54,11 @@ impl fmt::Display for Node {
             Node::Assign(_, expansion, expression) => {
                 write!(f, "Assign({} {})", expansion, expression)
             }
-            Node::Op(_, expressions) => write!(f, "Op({})", nodevec_to_string(expressions)),
-            Node::Call(_, _, caller, callee) => {
-                write!(f, "Call({}, {})", caller, nodevec_to_string(callee))
+            Node::Op(operator, expressions) => {
+                write!(f, "Op({}, {})", operator, nodevec_to_string(expressions))
+            }
+            Node::Call(_, _, expressions) => {
+                write!(f, "Call({})", nodevec_to_string(expressions))
             }
             Node::Dot(instance, properties) => {
                 write!(f, "Dot({} {})", instance, nodevec_to_string(properties))
@@ -331,12 +342,20 @@ fn test_parse_fn_high_order() {
                     }
                 }
 
-                if let Node::Call(_, _, caller, ref callee) = *z_body {
-                    if let Node::Token(plus) = *caller {
+                // println!("{}", z_body);
+
+                if let Node::Call(_, _, expressions) = *z_body {
+                    if let Node::Token(ref plus) = *expressions[0] {
                         assert_eq!(plus.source, "+");
                     }
 
-                    return;
+                    if let Node::Call(_, _, ref exprs) = *expressions[2] {
+                        if let Node::Token(ref z) = *exprs[2] {
+                            assert_eq!(z.source, "z");
+
+                            return;
+                        }
+                    }
                 }
             }
         }
@@ -424,7 +443,7 @@ pub fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let mut leading = wrap(lookahead(input, pos))?;
     let mut nodes = vec![];
 
-    let caller = if leading.source == "=" {
+    let expr = if leading.source == "=" {
         parse_assign(input, pos)?
     } else if leading.name == TokenName::OP {
         parse_op(input, pos)?
@@ -446,12 +465,22 @@ pub fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
 
     let right_bracket = wrap(expect_source("]", input, pos))?;
 
-    Ok(Box::new(Node::Call(
-        left_bracket,
-        right_bracket,
-        caller,
-        nodes,
-    )))
+    if let Node::Assign(eq, expansion, expression) = *expr {
+        nodes.insert(0, Box::new(Node::Token(eq)));
+        nodes.push(expansion);
+        nodes.push(expression);
+
+        Ok(Box::new(Node::Call(left_bracket, right_bracket, nodes)))
+    } else if let Node::Op(op, mut expressions) = *expr {
+        expressions.insert(0, Box::new(Node::Token(op)));
+        Ok(Box::new(Node::Call(
+            left_bracket,
+            right_bracket,
+            expressions,
+        )))
+    } else {
+        Ok(Box::new(Node::Call(left_bracket, right_bracket, nodes)))
+    }
 }
 
 pub fn parse_lit<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {

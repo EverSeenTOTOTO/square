@@ -22,5 +22,6 @@ test:
 	cargo test -- --nocapture
 else
 test:
-	cargo test --target=x86_64-unknown-linux-gnu
+	cargo test --target=x86_64-unknown-linux-gnu -- --nocapture
+
 endif
