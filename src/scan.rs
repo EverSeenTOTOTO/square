@@ -241,10 +241,26 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
 
         match ch {
             '[' | ']' => {}
-            '+' | '-' | '*' | '/' | '^' | '%' | '&' | '|' | '=' | '!' => match chars.peek() {
+            '+' | '*' | '/' | '^' | '%' | '&' | '|' | '=' | '!' | '>' | '<' => match chars.peek() {
                 Some('=') => {
                     chars.next();
                     pos.advance();
+                }
+                _ => {}
+            },
+            '-' => match chars.peek() {
+                Some('=') => {
+                    chars.next();
+                    pos.advance();
+                }
+                Some(num) => {
+                    if num.is_ascii_digit() {
+                        let mut val = raise_integer(input, pos)?;
+
+                        val.source.insert(0, ch);
+
+                        return Ok(val);
+                    }
                 }
                 _ => {}
             },
@@ -299,6 +315,15 @@ fn test_raise_eq() {
 }
 
 #[test]
+fn test_raise_minus() {
+    let input = "-42";
+    let token = raise_operator(input, &mut Position::default()).unwrap();
+
+    assert_eq!(token.name, TokenName::NUM);
+    assert_eq!(token.source, "-42");
+}
+
+#[test]
 fn test_raise_dot() {
     let input = ".+";
     let token = raise_operator(input, &mut Position::default()).unwrap();
@@ -348,10 +373,12 @@ fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                 }
             }
             ';' => {
+                // inline comment
                 pos.advance();
                 break;
             }
             '\n' => {
+                pos.advance_newline();
                 break;
             }
             _ => {
@@ -390,7 +417,7 @@ fn test_raise_comment_newline() {
     let input = ";123\n456";
     let token = raise_comment(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source, ";123");
+    assert_eq!(token.source, ";123\n");
 }
 
 fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
@@ -500,13 +527,13 @@ fn expect<'a>(
 
 pub fn expect_source<'a>(source: &'a str, input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     return expect(&|token| token.source == source, input, pos, &|token| {
-        format!("expect {}, got '{}'", source, token.source)
+        format!("expect {}, got {}({})", source, token.name, token.source)
     });
 }
 
 pub fn expect_name<'a>(name: TokenName, input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     return expect(&|token| token.name == name, input, pos, &|token| {
-        format!("expect {}, got {}: '{}'", name, token.name, token.source)
+        format!("expect {}, got {}({})", name, token.name, token.source)
     });
 }
 

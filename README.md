@@ -19,14 +19,14 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 ```lisp
 ; basic
 [= x 2] ; x = 2
-[= x [.. 1 4]] ; x = [1 2 3 4]; `..` can concat strings, ranges and vectors
+[= x [.. 1 4]] ; x = [1 2 3 4], `..` can concat strings, ranges and vectors
 
 ; expansion
 [= [x y] [1 2]] ; x = 1, y = 2
-[= [. x] [1 2 3]] ; x = 2; `.` is a placehoder that must occupy one position
+[= [. x] [1 2 3]] ; x = 2, `.` is a placehoder that must occupy one position
 
 ; convenient placehoders in expansion
-[= [... x] [.. 1 10]] ; x = 10; `...` is a placehoder that can occupy zero or as many positions as possible
+[= [... x] [.. 1 10]] ; x = 10, `...` is a placehoder that can occupy zero or as many positions as possible
 [= [x ... y] [1]] ; x = 1, y = 1
 [= [. [x] ... y] [1 [2] 3 4 5]] ; x = 2, y = 5
 ```
@@ -60,14 +60,14 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 [foo]
 
 ; expansion in parameter
-[= foo /[. z] [print [.. z 4]]
+[= foo /[. z] [print [.. z 4]]]
 
 [foo 'ignored' 0]
 
 [= fib /[n] [begin
   [print n]
   [match n
-    [[< . 2] 1]
+    [[< n 2] 1]
     [+
       [fib [- n 1]] 
       [fib [- n 2]]]]]]
@@ -130,13 +130,13 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
     expand -> '[' ('.' | '..' | '...' | id | expand)+ ']'
     fn -> '/' expand expr
 
-    assign -> '=' (id |expand) expr
+    prop ->  . id
+    assign -> '=' (id prop* | expand) expr
 
     op -> op expr expr*
 
     call -> '[' assign | op | expr* ']'
 
-    lit -> num | str
+    dot -> (id | call) prop*
 
-    dot -> (lit | id | call) (. id)*
-    expr -> fn | dot
+    expr -> fn | num | str | dot
