@@ -384,12 +384,13 @@ fn parse_prop_chain<'a>(
     pos: &mut Position,
 ) -> Result<Vec<Box<Node>>, SquareError<'a>> {
     let wrap = create_wrapper("parse_prop_chain");
-
     let mut nodes = vec![];
 
     loop {
         let backup = pos.clone();
+
         wrap(skip_whitespace(input, pos))?;
+
         let dot = wrap(lookahead(input, pos))?;
 
         if dot.source != "." {
@@ -498,7 +499,7 @@ fn test_parse_assign_expand() {
     panic!();
 }
 
-pub fn is_binary_operator<'a>(op: &'a str) -> bool {
+fn is_binary_operator<'a>(op: &'a str) -> bool {
     match op {
         "+" | "-" | "*" | "/" | "+=" | "-=" | "*=" | "/=" | "^" | "%" | "&" | "|" | "^=" | "%="
         | "&=" | "|=" | "==" | "!=" | ">" | "<" | ">=" | "<=" | ".." => true,
@@ -735,12 +736,16 @@ fn test_parse_variable() {
 [= [. [x] ... y] [1 [2] 3 4 5]] ; x = 2, y = 5
 "#;
     let mut pos = Position::default();
-    let _ = parse(input, &mut pos)
+    let ast = parse(input, &mut pos)
         .map_err(|err| {
             println!("{}", err);
             err
         })
         .unwrap();
+
+    for node in ast {
+        println!("{}", node);
+    }
 }
 
 #[test]
@@ -763,12 +768,16 @@ fn test_parse_control_flow() {
     [+= i 1]]]
 "#;
     let mut pos = Position::default();
-    let _ = parse(input, &mut pos)
+    let ast = parse(input, &mut pos)
         .map_err(|err| {
             println!("{}", err);
             err
         })
         .unwrap();
+
+    for node in ast {
+        println!("{}", node);
+    }
 }
 
 #[test]
@@ -795,13 +804,18 @@ fn test_parse_function() {
 [print [[.. 1 10].map /[x] [fib x]]]
 "#;
     let mut pos = Position::default();
-    let _ = parse(input, &mut pos)
+    let ast = parse(input, &mut pos)
         .map_err(|err| {
             println!("{}", err);
             err
         })
         .unwrap();
+
+    for node in ast {
+        println!("{}", node);
+    }
 }
+
 #[test]
 fn test_parse_conroutine() {
     let input = r#"
@@ -816,12 +830,16 @@ fn test_parse_conroutine() {
 [[genFib 100].forEach print]
 "#;
     let mut pos = Position::default();
-    let _ = parse(input, &mut pos)
+    let ast = parse(input, &mut pos)
         .map_err(|err| {
             println!("{}", err);
             err
         })
         .unwrap();
+
+    for node in ast {
+        println!("{}", node);
+    }
 }
 
 #[test]
@@ -853,10 +871,14 @@ fn test_parse_structure() {
 [= y [s.pop]] ; y = 42
 "#;
     let mut pos = Position::default();
-    let _ = parse(input, &mut pos)
+    let ast = parse(input, &mut pos)
         .map_err(|err| {
             println!("{}", err);
             err
         })
         .unwrap();
+
+    for node in ast {
+        println!("{}", node);
+    }
 }

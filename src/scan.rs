@@ -491,24 +491,20 @@ fn test_lookahead() {
     let mut token = lookahead(input, &mut pos).unwrap();
 
     assert_eq!(token.source, "[");
-    assert_eq!(token.source, "[");
 
     raise_token(input, &mut pos).unwrap();
-
     token = lookahead(input, &mut pos).unwrap();
 
     assert_eq!(token.source, "=");
-    assert_eq!(token.source, "=");
 }
 
-type TokenPredicate<'a> = dyn Fn(&Token) -> bool + 'a;
-type TokenMessage<'a> = dyn Fn(&Token) -> String + 'a;
+type TokenFn<'a, R> = dyn Fn(&Token) -> R + 'a;
 
 fn expect<'a>(
-    pred: &TokenPredicate,
+    pred: &TokenFn<bool>,
     input: &'a str,
     pos: &mut Position,
-    make_msg: &TokenMessage,
+    make_msg: &TokenFn<String>,
 ) -> RaiseResult<'a> {
     let token = raise_token(input, pos)?;
 

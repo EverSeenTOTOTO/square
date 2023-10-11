@@ -19,9 +19,8 @@ start: build
 .PHONY: test 
 ifeq ($(shell uname -s), Darwin)
 test:
-	cargo test -- --nocapture
+	cargo test # -- --nocapture
 else
 test:
-	cargo test --target=x86_64-unknown-linux-gnu -- --nocapture
-
+	cargo test --target=x86_64-unknown-linux-gnu # -- --nocapture
 endif
