@@ -1,15 +1,12 @@
 use crate::{code_frame::Position, errors::*};
 
-#[cfg(not(test))]
 use alloc::{
     format,
     string::{String, ToString},
+    vec::Vec,
 };
 
-#[cfg(test)]
-use std::string::String;
-
-use core::fmt;
+use core::{fmt, iter::Peekable};
 
 pub type RaiseResult<'a> = Result<Token, SquareError<'a>>;
 
@@ -52,7 +49,9 @@ impl fmt::Display for Token {
 }
 
 pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    if pos.cursor >= input.len() {
+    let input_chars: Vec<char> = input.chars().collect();
+
+    if pos.cursor >= input_chars.len() {
         return Ok(Token {
             name: TokenName::EOF,
             pos: pos.clone(),
@@ -60,14 +59,14 @@ pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         });
     }
 
-    let mut chars = input[pos.cursor..].chars().peekable();
+    let mut chars = input_chars[pos.cursor..].iter().peekable();
 
     match chars.peek() {
         Some('\'') => raise_string(input, pos),
         Some(';') => raise_comment(input, pos),
         Some(ch) => match ch {
-            _ if ch.is_alphabetic() || *ch == '_' => raise_ident(input, pos),
-            _ if ch.is_ascii_digit() => raise_integer(input, pos),
+            _ if ch.is_alphabetic() || **ch == '_' => raise_ident(input, pos),
+            _ if **ch == '-' || ch.is_ascii_digit() => raise_number(input, pos),
             _ if ch.is_whitespace() => raise_whitespace(input, pos),
             _ => raise_operator(input, pos),
         },
@@ -81,8 +80,27 @@ pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     }
 }
 
+fn eat_n_hex<'a>(
+    chars: &mut Peekable<core::slice::Iter<'_, char>>,
+    pos: &mut Position,
+    n: usize,
+) -> Option<bool> {
+    if n == 0 {
+        return Some(true);
+    }
+
+    return chars
+        .next()
+        .filter(|ch| ch.is_ascii_hexdigit())
+        .and_then(|_| {
+            pos.advance();
+            eat_n_hex(chars, pos, n - 1)
+        });
+}
+
 fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    let mut chars = input[pos.cursor..].chars().peekable();
+    let input_chars: Vec<char> = input.chars().collect();
+    let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
 
     chars.next(); // skip first \'
@@ -94,7 +112,7 @@ fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                 pos.advance();
                 break; // terminate
             }
-            '\n' => {
+            '\r' | '\n' => {
                 return Err(SquareError::UnexpectedToken(
                     input,
                     "unterminated string, found newline".to_string(),
@@ -105,11 +123,44 @@ fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                 pos.advance();
 
                 match chars.peek() {
-                    Some(_) => {
+                    Some('x') => {
+                        chars.next();
+                        pos.advance();
+                        if !eat_n_hex(&mut chars, pos, 2).is_some() {
+                            return Err(SquareError::UnexpectedToken(
+                                input,
+                                format!(
+                                    "invalid ascii code, expect \\x{{hex}}{{2}}, got {}",
+                                    input_chars[start_pos.cursor..pos.cursor]
+                                        .iter()
+                                        .collect::<String>(),
+                                ),
+                                pos.clone(),
+                            ));
+                        }
+                    }
+                    Some('u') => {
+                        chars.next();
+                        pos.advance();
+                        if !eat_n_hex(&mut chars, pos, 4).is_some() {
+                            return Err(SquareError::UnexpectedToken(
+                                input,
+                                format!(
+                                    "invalid unicode, expect \\u{{hex}}{{4}}, got {}",
+                                    input_chars[start_pos.cursor..pos.cursor]
+                                        .iter()
+                                        .collect::<String>(),
+                                ),
+                                pos.clone(),
+                            ));
+                        }
+                    }
+                    Some('\'') | Some('\\') | Some('b') | Some('f') | Some('n') | Some('r')
+                    | Some('t') | Some('v') => {
                         chars.next();
                         pos.advance();
                     }
-                    None => {
+                    _ => {
                         return Err(SquareError::UnexpectedToken(
                             input,
                             "bad escape".to_string(),
@@ -124,7 +175,7 @@ fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         }
     }
 
-    let source = input[start_pos.cursor..pos.cursor].to_string();
+    let source = input_chars[start_pos.cursor..pos.cursor].iter().collect();
 
     Ok(Token {
         name: TokenName::STR,
@@ -158,6 +209,21 @@ fn test_raise_string_escaped2() {
 }
 
 #[test]
+fn test_raise_string_escape_error() {
+    let input = "'he\\allo'";
+    let expected_output = Err(SquareError::UnexpectedToken(
+        input,
+        "bad escape".to_string(),
+        Position::new(1, 5, 4),
+    ));
+
+    assert_eq!(
+        raise_string(input, &mut Position::default()),
+        expected_output
+    );
+}
+
+#[test]
 fn test_raise_string_unterminated() {
     let input = "'he\nllo";
     let expected_output = Err(SquareError::UnexpectedToken(
@@ -172,10 +238,55 @@ fn test_raise_string_unterminated() {
     );
 }
 
-fn raise_integer<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    let mut chars = input[pos.cursor..].chars().peekable();
-    let start_pos = pos.clone();
+#[test]
+fn test_raise_string_ascii() {
+    let input = r#"'\x61\x62\x630'"#;
+    let token = raise_string(input, &mut Position::default()).unwrap();
 
+    assert_eq!(token.source, "'\\x61\\x62\\x630'");
+}
+
+#[test]
+fn test_raise_string_ascii_error() {
+    let input = "'\\x6g'";
+
+    let expected_output = Err(SquareError::UnexpectedToken(
+        input,
+        "invalid ascii code, expect \\x{hex}{2}, got '\\x6".to_string(),
+        Position::new(1, 5, 4),
+    ));
+
+    assert_eq!(
+        raise_string(input, &mut Position::default()),
+        expected_output
+    );
+}
+
+#[test]
+fn test_raise_string_unicode() {
+    let input = r#"'\u4f60\u597d\u3041\ud83e\udd7a'"#;
+    let token = raise_string(input, &mut Position::default()).unwrap();
+
+    assert_eq!(token.source, "'\\u4f60\\u597d\\u3041\\ud83e\\udd7a'");
+}
+
+#[test]
+fn test_raise_string_unicode_error() {
+    let input = "'\\u123g'";
+
+    let expected_output = Err(SquareError::UnexpectedToken(
+        input,
+        "invalid unicode, expect \\u{hex}{4}, got '\\u123".to_string(),
+        Position::new(1, 7, 6),
+    ));
+
+    assert_eq!(
+        raise_string(input, &mut Position::default()),
+        expected_output
+    );
+}
+
+fn eat_digits(chars: &mut Peekable<core::slice::Iter<'_, char>>, pos: &mut Position) {
     while let Some(ch) = chars.peek() {
         if !ch.is_ascii_digit() {
             break;
@@ -184,8 +295,70 @@ fn raise_integer<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         chars.next();
         pos.advance();
     }
+}
 
-    let source = input[start_pos.cursor..pos.cursor].to_string();
+fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+    let input_chars: Vec<char> = input.chars().collect();
+    let mut chars = input_chars[pos.cursor..].iter().peekable();
+    let start_pos = pos.clone();
+
+    if let Some(leading) = chars.peek() {
+        if **leading == '-' || leading.is_ascii_digit() {
+            chars.next();
+            pos.advance();
+        }
+
+        eat_digits(&mut chars, pos);
+
+        if let Some(dot) = chars.peek() {
+            if **dot == '.' {
+                chars.next();
+                pos.advance();
+
+                let backup = pos.clone();
+
+                eat_digits(&mut chars, pos);
+
+                if backup.cursor == pos.cursor {
+                    return Err(SquareError::UnexpectedToken(
+                        input,
+                        "expect at least one digit after dot".to_string(),
+                        pos.clone(),
+                    ));
+                }
+            }
+        }
+
+        if let Some(exp) = chars.peek() {
+            if **exp == 'e' || **exp == 'E' {
+                chars.next();
+                pos.advance();
+
+                if let Some(minus) = chars.peek() {
+                    if **minus == '-' || minus.is_ascii_digit() {
+                        chars.next();
+                        pos.advance();
+
+                        eat_digits(&mut chars, pos);
+                    } else {
+                        return Err(SquareError::UnexpectedToken(
+                            input,
+                            "expect minus or digit after exp".to_string(),
+                            pos.clone(),
+                        ));
+                    }
+                } else {
+                    return Err(SquareError::UnexpectedToken(
+                        input,
+                        "expect minus or digit after exp".to_string(),
+                        pos.clone(),
+                    ));
+                }
+            }
+        }
+    }
+
+    let source = input_chars[start_pos.cursor..pos.cursor].iter().collect();
 
     Ok(Token {
         name: TokenName::NUM,
@@ -195,19 +368,88 @@ fn raise_integer<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
 }
 
 #[test]
-fn test_raise_integer() {
-    let input = "012.34";
-    let token = raise_integer(input, &mut Position::default()).unwrap();
+fn test_raise_number_integer() {
+    let input = "012";
+    let token = raise_number(input, &mut Position::default()).unwrap();
 
     assert_eq!(token.source, "012");
 }
 
+#[test]
+fn test_raise_number_float() {
+    let input = "012.34.56";
+    let token = raise_number(input, &mut Position::default()).unwrap();
+
+    assert_eq!(token.source, "012.34");
+}
+
+#[test]
+fn test_raise_number_float_error() {
+    let input = "012.";
+
+    assert_eq!(
+        raise_number(input, &mut Position::default()),
+        Err(SquareError::UnexpectedToken(
+            input,
+            "expect at least one digit after dot".to_string(),
+            Position::new(1, 5, 4),
+        ))
+    );
+}
+
+#[test]
+fn test_raise_number_exp() {
+    let input = "01234e5.12";
+    let token = raise_number(input, &mut Position::default()).unwrap();
+
+    assert_eq!(token.source, "01234e5");
+}
+
+#[test]
+fn test_raise_number_exp2() {
+    let input = "012.34e5.12";
+    let token = raise_number(input, &mut Position::default()).unwrap();
+
+    assert_eq!(token.source, "012.34e5");
+}
+
+#[test]
+fn test_raise_number_exp3() {
+    let input = "012E5e6";
+    let token = raise_number(input, &mut Position::default()).unwrap();
+
+    assert_eq!(token.source, "012E5");
+}
+
+#[test]
+fn test_raise_number_exp_error() {
+    let input = "012e.";
+
+    assert_eq!(
+        raise_number(input, &mut Position::default()),
+        Err(SquareError::UnexpectedToken(
+            input,
+            "expect minus or digit after exp".to_string(),
+            Position::new(1, 5, 4),
+        ))
+    );
+}
+
+#[test]
+fn test_raise_number_minus() {
+    let input = "-012.34E-56";
+    let token = raise_number(input, &mut Position::default()).unwrap();
+
+    assert_eq!(token.source, "-012.34E-56");
+}
+
 fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    let mut chars = input[pos.cursor..].chars().peekable();
+    let input_chars: Vec<char> = input.chars().collect();
+    let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
 
     while let Some(ch) = chars.peek() {
-        if !(ch.is_alphabetic() || *ch == '_') {
+        if !(ch.is_alphabetic() || **ch == '_') {
             break;
         }
 
@@ -215,7 +457,7 @@ fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         pos.advance();
     }
 
-    let source = input[start_pos.cursor..pos.cursor].to_string();
+    let source = input_chars[start_pos.cursor..pos.cursor].iter().collect();
 
     Ok(Token {
         name: TokenName::ID,
@@ -233,7 +475,8 @@ fn test_raise_id() {
 }
 
 fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    let mut chars = input[pos.cursor..].chars().peekable();
+    let input_chars: Vec<char> = input.chars().collect();
+    let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
 
     if let Some(ch) = chars.next() {
@@ -252,15 +495,6 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                 Some('=') => {
                     chars.next();
                     pos.advance();
-                }
-                Some(num) => {
-                    if num.is_ascii_digit() {
-                        let mut val = raise_integer(input, pos)?;
-
-                        val.source.insert(0, ch);
-
-                        return Ok(val);
-                    }
                 }
                 _ => {}
             },
@@ -289,7 +523,7 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         }
     }
 
-    let source = input[start_pos.cursor..pos.cursor].to_string();
+    let source = input_chars[start_pos.cursor..pos.cursor].iter().collect();
 
     Ok(Token {
         name: TokenName::OP,
@@ -312,15 +546,6 @@ fn test_raise_eq() {
     let token = raise_operator(input, &mut Position::default()).unwrap();
 
     assert_eq!(token.source, "-=");
-}
-
-#[test]
-fn test_raise_minus() {
-    let input = "-42";
-    let token = raise_operator(input, &mut Position::default()).unwrap();
-
-    assert_eq!(token.name, TokenName::NUM);
-    assert_eq!(token.source, "-42");
 }
 
 #[test]
@@ -348,7 +573,8 @@ fn test_raise_dot3() {
 }
 
 fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    let mut chars = input[pos.cursor..].chars();
+    let input_chars: Vec<char> = input.chars().collect();
+    let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
 
     chars.next(); // skip first ;
@@ -387,7 +613,7 @@ fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         }
     }
 
-    let source = input[start_pos.cursor..pos.cursor].to_string();
+    let source = input_chars[start_pos.cursor..pos.cursor].iter().collect();
 
     Ok(Token {
         name: TokenName::COMMENT,
@@ -421,7 +647,8 @@ fn test_raise_comment_newline() {
 }
 
 fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
-    let mut chars = input[pos.cursor..].chars().peekable();
+    let input_chars: Vec<char> = input.chars().collect();
+    let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
 
     if let Some(ch) = chars.next() {
@@ -435,7 +662,7 @@ fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         }
     }
 
-    let source = input[start_pos.cursor..pos.cursor].to_string();
+    let source = input_chars[start_pos.cursor..pos.cursor].iter().collect();
 
     Ok(Token {
         name: TokenName::WHITESPACE,

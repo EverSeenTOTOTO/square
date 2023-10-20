@@ -9,7 +9,7 @@ use core::{cmp, fmt};
 pub struct Position {
     pub line: usize,
     pub column: usize,
-    pub cursor: usize,
+    pub cursor: usize, // char indices, not byte indices
 }
 
 impl Position {

@@ -8,7 +8,7 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 
     **Square** is a neat Lisp-inspired language, crafted with Rust. It's all about simplicity and cleanliness, aiming to reduce the reliance on control keys like `<Ctrl>` and `<Shift>`. That's why it employs symbols like `.`, `[]`, `;`, and `/` to structure the code.
 
-    **Square** is parsed by a recursive descent algorithm, compiled to a custom instruction set, and operates on a stack-based virtual machine. The source code, written with a Rust `no_std` environment, spans less than 3000 lines and can be compiled to a incredibly lightweight wasm file.
+    **Square** is parsed by a recursive descent algorithm, compiled to a custom instruction set, and operates on a stack-based virtual machine. The source code, written with a Rust `no_std` environment and can be compiled to a incredibly lightweight wasm file.
 
 2.  Why called **square**?
 
@@ -127,15 +127,25 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 
 ## BNF
 
-    expand -> '[' ('.' | '..' | '...' | id | expand)+ ']'
-    fn -> '/' expand expr
+    hex -> [0-9a-fA-F]
+    ascii_escape -> x hex hex
+    unicode_escape -> u hex{4}
+    single_escape -> ['\\bfnrtv]
+
+    escape -> \\ ascii_escape | unicode_escape | single_escape
+
+    str -> ' ([^'\\\r\n] | escape )* '
+    num -> -?[0-9]+(\.[0-9]+)?(e|E-?[0-9]+)?
+
+    expand -> [ (. | ... | id | expand)+ ]
+    fn -> / expand expr
 
     prop ->  . id
-    assign -> '=' (id prop* | expand) expr
+    assign -> = (id prop* | expand) expr
 
     op -> op expr expr*
 
-    call -> '[' assign | op | expr* ']'
+    call -> [ assign | op | expr* ]
 
     dot -> (id | call) prop*
 
