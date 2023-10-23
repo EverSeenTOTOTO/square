@@ -25,3 +25,4 @@ impl<'a> fmt::Display for SquareError<'a> {
         }
     }
 }
+

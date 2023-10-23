@@ -214,7 +214,11 @@ fn test_raise_string_escape_error() {
     let expected_output = Err(SquareError::UnexpectedToken(
         input,
         "bad escape".to_string(),
-        Position::new(1, 5, 4),
+        Position {
+            line: 1,
+            column: 5,
+            cursor: 4,
+        },
     ));
 
     assert_eq!(
@@ -229,7 +233,11 @@ fn test_raise_string_unterminated() {
     let expected_output = Err(SquareError::UnexpectedToken(
         input,
         "unterminated string, found newline".to_string(),
-        Position::new(1, 4, 3),
+        Position {
+            line: 1,
+            column: 4,
+            cursor: 3,
+        },
     ));
 
     assert_eq!(
@@ -253,7 +261,11 @@ fn test_raise_string_ascii_error() {
     let expected_output = Err(SquareError::UnexpectedToken(
         input,
         "invalid ascii code, expect \\x{hex}{2}, got '\\x6".to_string(),
-        Position::new(1, 5, 4),
+        Position {
+            line: 1,
+            column: 5,
+            cursor: 4,
+        },
     ));
 
     assert_eq!(
@@ -277,7 +289,11 @@ fn test_raise_string_unicode_error() {
     let expected_output = Err(SquareError::UnexpectedToken(
         input,
         "invalid unicode, expect \\u{hex}{4}, got '\\u123".to_string(),
-        Position::new(1, 7, 6),
+        Position {
+            line: 1,
+            column: 7,
+            cursor: 6,
+        },
     ));
 
     assert_eq!(
@@ -392,7 +408,11 @@ fn test_raise_number_float_error() {
         Err(SquareError::UnexpectedToken(
             input,
             "expect at least one digit after dot".to_string(),
-            Position::new(1, 5, 4),
+            Position {
+                line: 1,
+                column: 5,
+                cursor: 4
+            },
         ))
     );
 }
@@ -430,7 +450,11 @@ fn test_raise_number_exp_error() {
         Err(SquareError::UnexpectedToken(
             input,
             "expect minus or digit after exp".to_string(),
-            Position::new(1, 5, 4),
+            Position {
+                line: 1,
+                column: 5,
+                cursor: 4
+            },
         ))
     );
 }
@@ -690,7 +714,14 @@ fn test_skip_whitespace() {
 
     let _ = skip_whitespace(input, &mut pos);
 
-    assert_eq!(pos, Position::new(3, 4, input.len()));
+    assert_eq!(
+        pos,
+        Position {
+            line: 3,
+            column: 4,
+            cursor: input.len()
+        }
+    );
 }
 
 #[test]

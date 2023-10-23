@@ -1,23 +1,11 @@
-use core::fmt;
-
 use lazy_static::lazy_static;
 use spin::Mutex;
 
 pub mod wasm {
-    mod inner {
-        #[link(wasm_import_module = "wasm")]
-        extern "C" {
-            pub fn get_stack_base() -> usize;
-            pub fn get_heap_base() -> usize;
-        }
-    }
-
-    pub fn get_stack_base() -> usize {
-        unsafe { inner::get_stack_base() }
-    }
-
-    pub fn get_heap_base() -> usize {
-        unsafe { inner::get_heap_base() }
+    #[link(wasm_import_module = "wasm")]
+    extern "C" {
+        pub fn get_stack_base() -> usize;
+        pub fn get_heap_base() -> usize;
     }
 }
 
@@ -56,12 +44,19 @@ pub mod memory {
     }
 }
 
+pub mod app {
+    #[link(wasm_import_module = "app")]
+    extern "C" {
+        pub fn execute();
+    }
+}
+
 lazy_static! {
     static ref WRITER: Mutex<memory::Writer> = Mutex::new(memory::Writer {});
 }
 
 #[doc(hidden)]
-pub fn extern_write(args: fmt::Arguments) {
+pub fn extern_write(args: core::fmt::Arguments) {
     use core::fmt::Write;
     WRITER.lock().write_fmt(args).unwrap();
 }

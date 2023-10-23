@@ -13,22 +13,6 @@ pub struct Position {
 }
 
 impl Position {
-    pub fn new(line: usize, column: usize, cursor: usize) -> Self {
-        Self {
-            line,
-            column,
-            cursor,
-        }
-    }
-
-    pub fn default() -> Self {
-        Self {
-            line: 1,
-            column: 1,
-            cursor: 0,
-        }
-    }
-
     pub fn advance(&mut self) {
         self.column += 1;
         self.cursor += 1;
@@ -38,6 +22,16 @@ impl Position {
         self.column = 1;
         self.cursor += 1;
         self.line += 1;
+    }
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        Self {
+            line: 1,
+            column: 1,
+            cursor: 0,
+        }
     }
 }
 

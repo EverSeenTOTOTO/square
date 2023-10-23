@@ -4,12 +4,23 @@ import path from 'path';
 
 const encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder('utf-8');
+
 const readUtf8String = (memory: WebAssembly.Memory, offset: number, length: number) => {
   const array = new Uint8Array(memory.buffer, offset, length);
   return utf8Decoder.decode(array);
 };
-const writeUtf8String = (memory: WebAssembly.Memory, offset: number, string: string) => {
-  encoder.encodeInto(string, new Uint8Array(memory.buffer, offset, string.length));
+
+type WasmExports = {
+  __data_end: WebAssembly.Global,
+  __heap_base: WebAssembly.Global,
+  memory: WebAssembly.Memory,
+
+  main(): number,
+
+  alloc(size: number): number,
+  dealloc(ptr: number, size: number): void,
+
+  execute(ptr: number, size: number): void,
 };
 
 (async () => {
@@ -18,32 +29,50 @@ const writeUtf8String = (memory: WebAssembly.Memory, offset: number, string: str
   );
 
   const { instance } = await WebAssembly.instantiate(wasm, {
+    app: {
+      execute() {
+        const code = `
+; similar to Lua coroutine
+[= genFib /[n]
+  [co.wrap /[]
+    [= [a b] [1 1]]
+    [while [<= a n]
+      [co.yield a]
+      [= [a b] [b [+ a b]]]]]]
+
+[[genFib 100].forEach print]
+`;
+
+        const exports = instance.exports as WasmExports;
+        const encodedString = encoder.encode(code);
+        const addr = exports.alloc(encodedString.length);
+
+        new Uint8Array(exports.memory.buffer, addr, encodedString.length).set(encodedString);
+
+        exports.execute(addr, encodedString.length);
+      },
+    },
     memory: {
       write: (offset: number, length: number) => {
-        const message = readUtf8String(instance.exports.memory as WebAssembly.Memory, offset, length);
+        const message = readUtf8String((instance.exports as WasmExports).memory, offset, length);
 
         process.stdout.write(message);
       },
     },
     wasm: {
       get_data_end() {
-        return (instance.exports.__data_end as WebAssembly.Global).value;
+        return (instance.exports as WasmExports).__data_end.value;
       },
       get_heap_base() {
-        return (instance.exports.__heap_base as WebAssembly.Global).value;
+        return (instance.exports as WasmExports).__heap_base.value;
       },
       get_stack_base() {
-        return (instance.exports.memory as WebAssembly.Memory).buffer.byteLength;
+        return (instance.exports as WasmExports).memory.buffer.byteLength;
       },
     },
   });
 
-  const exports = instance.exports as {
-    __data_end: WebAssembly.Global,
-    __heap_base: WebAssembly.Global,
-    memory: WebAssembly.Memory,
-    main(): number
-  };
+  const exports = instance.exports as WasmExports;
 
   const dataEnd = exports.__data_end.value;
   const heapBase = exports.__heap_base.value;
@@ -54,13 +83,8 @@ const writeUtf8String = (memory: WebAssembly.Memory, offset: number, string: str
   );
 
   try {
-    writeUtf8String(exports.memory, heapBase, 'Hello, world!');
     exports.main();
-  } catch {
-    // ...
+  } catch (e) {
+    console.error(e);
   }
-
-  const view = new DataView(exports.memory.buffer);
-
-  console.log(view.getInt32(heapBase, true));
 })();
