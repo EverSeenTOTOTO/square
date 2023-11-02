@@ -2,12 +2,29 @@
 import fs from 'fs';
 import path from 'path';
 
-const encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder('utf-8');
 
-const readUtf8String = (memory: WebAssembly.Memory, offset: number, length: number) => {
-  const array = new Uint8Array(memory.buffer, offset, length);
+const readUtf8String = (exports: WasmExports, offset: number, length: number) => {
+  const array = new Uint8Array(exports.memory.buffer, offset, length);
   return utf8Decoder.decode(array);
+};
+
+const writeUtf8String = (exports: WasmExports, source: string) => {
+  const encoder = new TextEncoder();
+  const encodedString = encoder.encode(source);
+  const sourceAddr = exports.alloc(encodedString.length);
+
+  new Uint8Array(exports.memory.buffer, sourceAddr, encodedString.length).set(encodedString);
+
+  return {
+    sourceAddr,
+    sourceLength: encodedString.length,
+  };
+};
+
+type Square = {
+  init_vm(): number,
+  parse_and_run(vmAddr: number, sourceAddr: number, size: number): void,
 };
 
 type WasmExports = {
@@ -15,13 +32,9 @@ type WasmExports = {
   __heap_base: WebAssembly.Global,
   memory: WebAssembly.Memory,
 
-  main(): number,
-
   alloc(size: number): number,
   dealloc(ptr: number, size: number): void,
-
-  execute(ptr: number, size: number): void,
-};
+} & Square;
 
 (async () => {
   const wasm = await fs.promises.readFile(
@@ -29,32 +42,9 @@ type WasmExports = {
   );
 
   const { instance } = await WebAssembly.instantiate(wasm, {
-    app: {
-      execute() {
-        const code = `
-; similar to Lua coroutine
-[= genFib /[n]
-  [co.wrap /[]
-    [= [a b] [1 1]]
-    [while [<= a n]
-      [co.yield a]
-      [= [a b] [b [+ a b]]]]]]
-
-[[genFib 100].forEach print]
-`;
-
-        const exports = instance.exports as WasmExports;
-        const encodedString = encoder.encode(code);
-        const addr = exports.alloc(encodedString.length);
-
-        new Uint8Array(exports.memory.buffer, addr, encodedString.length).set(encodedString);
-
-        exports.execute(addr, encodedString.length);
-      },
-    },
     memory: {
       write: (offset: number, length: number) => {
-        const message = readUtf8String((instance.exports as WasmExports).memory, offset, length);
+        const message = readUtf8String(instance.exports as WasmExports, offset, length);
 
         process.stdout.write(message);
       },
@@ -72,18 +62,42 @@ type WasmExports = {
     },
   });
 
-  const exports = instance.exports as WasmExports;
-
-  const dataEnd = exports.__data_end.value;
-  const heapBase = exports.__heap_base.value;
-  const stackBase = exports.memory.buffer.byteLength;
-
-  console.log(
-    `Page count: ${exports.memory.buffer.byteLength / 64 / 1024}, data end: ${dataEnd}, heap base: ${heapBase}, stackBase: ${stackBase}`,
-  );
+  const square = instance.exports as WasmExports;
 
   try {
-    exports.main();
+    const vmAddr = square.init_vm();
+
+    const code = `
+; use built-in function \`obj\` to create an object
+[= stack /[vec] [begin 
+  [= this [obj]] ; \`this\` is just a variable name
+
+  [= this.vec vec]
+
+  [= this.clear /[] [= this.vec []]]
+
+  [= this.push /[x] [begin 
+    [= this.vec [.. this.vec [x]]]]]
+
+  [= this.pop /[] [begin
+    [= [... x] this.vec]
+    [= this.vec [this.vec.slice 0 -1]]
+    x]]
+
+  this]]
+
+[= v [1 2 3]]
+[= s [stack v]]
+[= x [s.pop]] ; x = 3
+[s.clear]
+[s.push 42]
+[= y [s.pop]] ; y = 42
+`;
+
+    const { sourceAddr, sourceLength } = writeUtf8String(square, code);
+
+    square.parse_and_run(vmAddr, sourceAddr, sourceLength);
+    square.dealloc(sourceAddr, sourceLength);
   } catch (e) {
     console.error(e);
   }

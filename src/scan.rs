@@ -508,20 +508,15 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
 
         match ch {
             '[' | ']' => {}
-            '+' | '*' | '/' | '^' | '%' | '&' | '|' | '=' | '!' | '>' | '<' => match chars.peek() {
-                Some('=') => {
-                    chars.next();
-                    pos.advance();
+            '+' | '-' | '*' | '/' | '^' | '%' | '&' | '|' | '=' | '!' | '>' | '<' => {
+                match chars.peek() {
+                    Some('=') => {
+                        chars.next();
+                        pos.advance();
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
-            '-' => match chars.peek() {
-                Some('=') => {
-                    chars.next();
-                    pos.advance();
-                }
-                _ => {}
-            },
+            }
             '.' => match chars.peek() {
                 Some('.') => {
                     chars.next();

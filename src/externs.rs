@@ -44,13 +44,6 @@ pub mod memory {
     }
 }
 
-pub mod app {
-    #[link(wasm_import_module = "app")]
-    extern "C" {
-        pub fn execute();
-    }
-}
-
 lazy_static! {
     static ref WRITER: Mutex<memory::Writer> = Mutex::new(memory::Writer {});
 }
