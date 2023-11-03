@@ -1,97 +1,203 @@
-use core::ops::Add;
+use core::fmt;
+use core::ops::{Add, Div, Mul, Rem, Sub};
 
+#[cfg(not(test))]
+use alloc::boxed::Box;
 #[cfg(not(test))]
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Value {
-    Int32(i32),
-    Int64(i64),
+struct StrValue {
+    length: usize,
+    ptr: *const u8,
 }
 
-impl Value {
-    fn byte_length(self) -> usize {
-        match self {
-            Value::Int32(_) => 4,
-            Value::Int64(_) => 8,
-        }
-    }
-}
-
-impl Add for Value {
-    type Output = Value;
-
-    fn add(self, another: Value) -> Value {
-        match self {
-            Value::Int32(lhs) => match another {
-                Value::Int32(rhs) => Value::Int32(lhs + rhs),
-                Value::Int64(rhs) => Value::Int64(Into::<i64>::into(lhs) + rhs),
-            },
-            Value::Int64(lhs) => match another {
-                Value::Int32(rhs) => Value::Int64(lhs + Into::<i64>::into(rhs)),
-                Value::Int64(rhs) => Value::Int64(lhs + rhs),
-            },
-        }
-    }
-}
-
-type Tag = Value;
-type TaggedBytes = (Vec<u8>, Tag);
-
-// used as tags
-pub static I32: Tag = Tag::Int32(0);
-pub static I64: Tag = Tag::Int64(0);
-
-impl Into<TaggedBytes> for Value {
-    fn into(self) -> TaggedBytes {
-        match self {
-            Value::Int32(value) => (value.to_le_bytes().to_vec(), I32),
-            Value::Int64(value) => (value.to_le_bytes().to_vec(), I64),
-        }
-    }
-}
-
-impl From<TaggedBytes> for Value {
-    fn from(bytes: TaggedBytes) -> Self {
-        match bytes.1 {
-            Tag::Int32(_) => {
-                let value = i32::from_le_bytes(bytes.0.as_slice().try_into().unwrap());
-                Value::Int32(value)
-            }
-            Tag::Int64(_) => {
-                let value = i64::from_le_bytes(bytes.0.as_slice().try_into().unwrap());
-                Value::Int64(value)
-            }
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum HeapValue {
+    Str(StrValue),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Instruction {
-    RET,
+enum Value {
+    Bool(bool),
+    Float(f32),
+    Double(f64),
+    Int(i32),
+    Int64(i64),
+    HeapPtr(Box<HeapValue>),
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Bool(val) => {
+                write!(f, "Bool({})", val)
+            }
+            Value::Float(val) => {
+                write!(f, "Float({})", val)
+            }
+            Value::Double(val) => {
+                write!(f, "Double({})", val)
+            }
+            Value::Int(val) => {
+                write!(f, "Int({})", val)
+            }
+            Value::Int64(val) => {
+                write!(f, "Int({})", val)
+            }
+            Value::HeapPtr(val) => {
+                write!(f, "HeapPtr({:?})", val)
+            }
+        }
+    }
+}
+
+macro_rules! impl_op {
+    ($trait:ty, $method:ident, $op:tt) => {
+        impl $trait for Value {
+            type Output = Self;
+
+            fn $method(self, another: Self) -> Self::Output {
+                match self {
+                    Value::Int(lhs)  => {
+                        match another {
+                            Value::Int(rhs)  => {
+                                Value::Int(lhs $op rhs)
+                            }
+                            Value::Int64(rhs) => {
+                                Value::Int64(lhs as i64 $op rhs)
+                            }
+                            Value::Float(rhs) => {
+                                Value::Float(lhs as f32 $op rhs)
+                            }
+                            Value::Double(rhs) => {
+                                Value::Double(lhs as f64 $op rhs)
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    Value::Int64(lhs) => {
+                        match another {
+                            Value::Int(rhs)  => {
+                                Value::Int64(lhs $op rhs as i64)
+                            }
+                            Value::Int64(rhs) => {
+                                Value::Int64(lhs $op rhs)
+                            }
+                            Value::Float(rhs) => {
+                                Value::Float(lhs as f32 $op rhs)
+                            }
+                            Value::Double(rhs) => {
+                                Value::Double(lhs as f64 $op rhs)
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    Value::Float(lhs) => {
+                        match another {
+                            Value::Int(rhs)  => {
+                                Value::Float(lhs $op rhs as f32)
+                            }
+                            Value::Int64(rhs) => {
+                                Value::Float(lhs $op rhs as f32)
+                            }
+                            Value::Float(rhs) => {
+                                Value::Float(lhs $op rhs)
+                            }
+                            Value::Double(rhs) => {
+                                Value::Double(lhs as f64 $op rhs)
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    Value::Double(lhs) => {
+                        match another {
+                            Value::Int(rhs)  => {
+                                Value::Double(lhs $op rhs as f64)
+                            }
+                            Value::Int64(rhs) => {
+                                Value::Double(lhs $op rhs as f64)
+                            }
+                            Value::Float(rhs) => {
+                                Value::Double(lhs $op rhs as f64)
+                            }
+                            Value::Double(rhs) => {
+                                Value::Double(lhs $op rhs)
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+        }
+    }
+}
+
+impl_op!(Add, add, +);
+impl_op!(Sub, sub, -);
+impl_op!(Mul, mul, *);
+impl_op!(Div, div, /);
+impl_op!(Rem, rem, %);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Inst {
     PUSH(Value),
-    POP(Tag),
-    ADD(Tag, Tag), // +
-    SUB,           // -
-    MUL,           // *
-    DIV,           // /
-    POW,           // ^
-    MOD,           // %
-    AND,           // &
-    OR,            // |
-    NOT,           // !
-    EQ,            // ==
-    NEQ,           // !=
-    LT,            // <
-    LTE,           // <=
-    GT,            // >
-    GTE,           // >=
+    POP,
+    ADD, // +
+    SUB, // -
+    MUL, // *
+    DIV, // /
+    REM, // %
+    AND, // &
+    OR,  // |
+    NOT, // !
+    EQ,  // ==
+    NEQ, // !=
+    LT,  // <
+    LTE, // <=
+    GT,  // >
+    GTE, // >=
+    RET,
+}
+
+macro_rules! handle_op {
+    ($vm:ident, $op:tt) => {
+        {
+            if let Some(rhs) = $vm.stack.pop() {
+                if let Some(lhs) = $vm.stack.pop() {
+                    let result = lhs $op rhs;
+
+                    Inst::PUSH(result).exec($vm);
+                }
+            }
+        }
+    };
+}
+
+impl Inst {
+    fn exec(self, vm: &mut VM) {
+        match self {
+            Inst::PUSH(value) => {
+                vm.stack.push(value);
+            }
+            Inst::POP => {
+                vm.stack.pop();
+            }
+            Inst::ADD => handle_op!(vm, +),
+            Inst::SUB => handle_op!(vm, -),
+            Inst::MUL => handle_op!(vm, *),
+            Inst::DIV => handle_op!(vm, /),
+            Inst::REM => handle_op!(vm, %),
+            _ => todo!(),
+        }
+    }
 }
 
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct VM {
-    pub stack: Vec<u8>,
+    stack: Vec<Value>,
 }
 
 impl Default for VM {
@@ -107,33 +213,8 @@ impl VM {
         }
     }
 
-    pub fn execute(&mut self, inst: Instruction) -> Option<Value> {
-        match inst {
-            Instruction::RET => None,
-            Instruction::PUSH(value) => {
-                self.stack
-                    .extend_from_slice(Into::<TaggedBytes>::into(value).0.as_slice());
-                None
-            }
-            Instruction::POP(tag) => {
-                let bytes = self.stack.split_off(self.sp() - tag.byte_length());
-
-                Value::try_from((bytes, tag)).ok()
-            }
-            Instruction::ADD(ltag, rtag) => {
-                if let Some(rhs) = self.execute(Instruction::POP(rtag)) {
-                    if let Some(lhs) = self.execute(Instruction::POP(ltag)) {
-                        let result = lhs + rhs;
-
-                        self.execute(Instruction::PUSH(result));
-                        return Some(result);
-                    }
-                }
-
-                None
-            }
-            _ => unimplemented!(),
-        }
+    pub fn exec(&mut self, inst: Inst) {
+        inst.exec(self);
     }
 
     pub fn sp(&self) -> usize {
@@ -145,15 +226,13 @@ impl VM {
 fn test_push_pop() {
     let mut vm = VM::default();
 
-    vm.execute(Instruction::PUSH(Value::Int32(42)));
-    vm.execute(Instruction::PUSH(Value::Int32(42)));
+    vm.exec(Inst::PUSH(Value::Int(42)));
+    vm.exec(Inst::PUSH(Value::Float(24.0)));
 
-    assert_eq!(vm.sp(), 8);
+    assert_eq!(vm.sp(), 2);
 
-    assert_eq!(
-        vm.execute(Instruction::POP(I64)),
-        Some(Value::Int64(0x2a0000002a))
-    );
+    vm.exec(Inst::POP);
+    vm.exec(Inst::POP);
 
     assert_eq!(vm.sp(), 0);
 }
@@ -162,14 +241,53 @@ fn test_push_pop() {
 fn test_add() {
     let mut vm = VM::default();
 
-    vm.execute(Instruction::PUSH(Value::Int32(42)));
-    vm.execute(Instruction::PUSH(Value::Int32(42)));
-    vm.execute(Instruction::PUSH(Value::Int32(0)));
+    vm.exec(Inst::PUSH(Value::Int(42)));
+    vm.exec(Inst::PUSH(Value::Float(42.5)));
+    vm.exec(Inst::ADD);
 
-    assert_eq!(
-        vm.execute(Instruction::ADD(I32, I64)),
-        Some(Value::Int64(84))
-    );
+    assert_eq!(vm.stack.pop(), Some(Value::Float(84.5)));
+}
 
-    assert_eq!(vm.execute(Instruction::POP(I64)), Some(Value::Int64(84)));
+#[test]
+fn test_sub() {
+    let mut vm = VM::default();
+
+    vm.exec(Inst::PUSH(Value::Int(42)));
+    vm.exec(Inst::PUSH(Value::Float(24.5)));
+    vm.exec(Inst::SUB);
+
+    assert_eq!(vm.stack.pop(), Some(Value::Float(42.0 - 24.5)));
+}
+
+#[test]
+fn test_mul() {
+    let mut vm = VM::default();
+
+    vm.exec(Inst::PUSH(Value::Int64(2)));
+    vm.exec(Inst::PUSH(Value::Double(24.5)));
+    vm.exec(Inst::MUL);
+
+    assert_eq!(vm.stack.pop(), Some(Value::Double(49.0)));
+}
+
+#[test]
+fn test_div() {
+    let mut vm = VM::default();
+
+    vm.exec(Inst::PUSH(Value::Int64(48)));
+    vm.exec(Inst::PUSH(Value::Float(1.5)));
+    vm.exec(Inst::DIV);
+
+    assert_eq!(vm.stack.pop(), Some(Value::Float(48.0 / 1.5)));
+}
+
+#[test]
+fn test_rem() {
+    let mut vm = VM::default();
+
+    vm.exec(Inst::PUSH(Value::Double(11.0)));
+    vm.exec(Inst::PUSH(Value::Int(3)));
+    vm.exec(Inst::REM);
+
+    assert_eq!(vm.stack.pop(), Some(Value::Double(2.0)));
 }

@@ -508,15 +508,49 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
 
         match ch {
             '[' | ']' => {}
-            '+' | '-' | '*' | '/' | '^' | '%' | '&' | '|' | '=' | '!' | '>' | '<' => {
-                match chars.peek() {
-                    Some('=') => {
-                        chars.next();
-                        pos.advance();
-                    }
-                    _ => {}
+            '+' | '-' | '*' | '/' | '^' | '%' | '&' | '|' | '=' | '!' => match chars.peek() {
+                Some('=') => {
+                    chars.next();
+                    pos.advance();
                 }
-            }
+                _ => {}
+            },
+            '>' => match chars.peek() {
+                Some('>') => {
+                    chars.next();
+                    pos.advance();
+                    match chars.peek() {
+                        Some('=') => {
+                            chars.next();
+                            pos.advance();
+                        }
+                        _ => {}
+                    }
+                }
+                Some('=') => {
+                    chars.next();
+                    pos.advance();
+                }
+                _ => {}
+            },
+            '<' => match chars.peek() {
+                Some('<') => {
+                    chars.next();
+                    pos.advance();
+                    match chars.peek() {
+                        Some('=') => {
+                            chars.next();
+                            pos.advance();
+                        }
+                        _ => {}
+                    }
+                }
+                Some('=') => {
+                    chars.next();
+                    pos.advance();
+                }
+                _ => {}
+            },
             '.' => match chars.peek() {
                 Some('.') => {
                     chars.next();
@@ -561,10 +595,10 @@ fn test_raise_op() {
 
 #[test]
 fn test_raise_eq() {
-    let input = "-==";
+    let input = "<<=";
     let token = raise_operator(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source, "-=");
+    assert_eq!(token.source, "<<=");
 }
 
 #[test]
