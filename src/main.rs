@@ -18,6 +18,7 @@ mod code_frame;
 mod errors;
 mod parse;
 mod scan;
+mod vm_value;
 mod vm;
 
 #[cfg(not(test))]
