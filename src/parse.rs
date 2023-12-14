@@ -29,15 +29,46 @@ pub enum Node {
     Dot(Box<Node>, Vec<Box<Node>>),                      // instance, (dot property)*
 }
 
-fn nodevec_to_string(vector: &Vec<Box<Node>>) -> String {
-    return match vector.is_empty() {
-        true => "Empty".to_string(),
-        _ => vector
-            .iter()
-            .map(|node| format!("{}", node))
-            .collect::<Vec<String>>()
-            .join(", "),
-    };
+impl Node {
+    pub fn range(&self) -> (Position, Position) {
+        match self {
+            Node::Token(token) => (token.pos.clone(), token.pos.clone()),
+            Node::Expand(left_bracket, right_bracket, _) => {
+                (left_bracket.pos.clone(), right_bracket.pos.clone())
+            }
+            Node::Fn(slash, _, body) => (slash.pos.clone(), body.range().1),
+            Node::Prop(dot, prop) => (dot.pos.clone(), prop.pos.clone()),
+            Node::Assign(eq, _, _, expr) => (eq.pos.clone(), expr.range().1),
+            Node::Op(op, exprs) => (op.pos.clone(), exprs.last().unwrap().range().1),
+            Node::Call(left_bracket, right_bracket, _) => {
+                (left_bracket.pos.clone(), right_bracket.pos.clone())
+            }
+            Node::Dot(inst, exprs) => (
+                inst.range().0,
+                if exprs.len() > 0 {
+                    exprs.last().unwrap().range().1
+                } else {
+                    inst.range().1
+                },
+            ),
+        }
+    }
+}
+
+struct BoxNodeVec<'a>(&'a Vec<Box<Node>>);
+
+impl<'a> Into<String> for &BoxNodeVec<'a> {
+    fn into(self) -> String {
+        return match self.0.is_empty() {
+            true => "Empty".to_string(),
+            _ => self
+                .0
+                .iter()
+                .map(|node| format!("{}", node))
+                .collect::<Vec<String>>()
+                .join(", "),
+        };
+    }
 }
 
 impl fmt::Display for Node {
@@ -45,7 +76,11 @@ impl fmt::Display for Node {
         match self {
             Node::Token(token) => write!(f, "Token({})", token),
             Node::Expand(_, _, placeholders) => {
-                write!(f, "Expand({})", nodevec_to_string(placeholders))
+                write!(
+                    f,
+                    "Expand({})",
+                    Into::<String>::into(&BoxNodeVec(placeholders))
+                )
             }
             Node::Fn(_, params, body) => {
                 write!(f, "Fn({}, {})", params, body)
@@ -58,18 +93,32 @@ impl fmt::Display for Node {
                     f,
                     "Assign({}.{} {})",
                     expansion,
-                    nodevec_to_string(properties),
+                    Into::<String>::into(&BoxNodeVec(properties)),
                     expression
                 )
             }
             Node::Op(operator, expressions) => {
-                write!(f, "Op({}, {})", operator, nodevec_to_string(expressions))
+                write!(
+                    f,
+                    "Op({}, {})",
+                    operator,
+                    Into::<String>::into(&BoxNodeVec(expressions))
+                )
             }
             Node::Call(_, _, expressions) => {
-                write!(f, "Call({})", nodevec_to_string(expressions))
+                write!(
+                    f,
+                    "Call({})",
+                    Into::<String>::into(&BoxNodeVec(expressions))
+                )
             }
             Node::Dot(instance, properties) => {
-                write!(f, "Dot({} {})", instance, nodevec_to_string(properties))
+                write!(
+                    f,
+                    "Dot({} {})",
+                    instance,
+                    Into::<String>::into(&BoxNodeVec(properties))
+                )
             }
         }
     }

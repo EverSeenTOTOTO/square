@@ -20,6 +20,7 @@ mod parse;
 mod scan;
 mod vm_value;
 mod vm;
+mod emit;
 
 #[cfg(not(test))]
 #[panic_handler]

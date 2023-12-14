@@ -1,9 +1,8 @@
-use core::cmp::PartialEq;
+use core::cmp::{Ordering, PartialEq};
 use core::fmt;
 use core::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub};
 
-#[cfg(not(test))]
-use alloc::boxed::Box;
+use alloc::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord)]
 pub struct SqString {
@@ -12,7 +11,7 @@ pub struct SqString {
 }
 
 impl PartialOrd for SqString {
-    fn partial_cmp(&self, _other: &Self) -> Option<core::cmp::Ordering> {
+    fn partial_cmp(&self, _other: &Self) -> Option<Ordering> {
         None
     }
 }
@@ -29,7 +28,7 @@ pub enum Value {
     Double(f64),
     Int(i32),
     Int64(i64),
-    HeapPtr(Box<HeapValue>),
+    HeapPtr(Rc<HeapValue>),
 }
 
 impl fmt::Display for Value {
