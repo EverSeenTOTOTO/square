@@ -522,12 +522,23 @@ fn test_parse_assign_expand() {
     panic!();
 }
 
-fn is_binary_operator<'a>(op: &'a str) -> bool {
+fn is_binary_op<'a>(op: &'a str) -> bool {
     match op {
-        "+" | "-" | "*" | "/" | "+=" | "-=" | "*=" | "/=" | "^" | "%" | "&" | "|" | "^=" | "%="
-        | "&=" | "|=" | "==" | "!=" | ">" | "<" | ">=" | "<=" | ".." => true,
+        "+" | "-" | "*" | "/" | "^" | "%" | "&" | "|" | "==" | "!=" | ">" | "<" | ">=" | "<="
+        | ".." => true,
         _ => false,
     }
+}
+
+fn is_binary_assign_op<'a>(op: &'a str) -> bool {
+    match op {
+        "+=" | "-=" | "*=" | "/=" | "^=" | "%=" | "&=" | "|=" => true,
+        _ => false,
+    }
+}
+
+fn is_op<'a>(op: &'a str) -> bool {
+    return is_binary_op(op) || is_binary_assign_op(op);
 }
 
 pub fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
@@ -539,15 +550,45 @@ pub fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
 
     let mut nodes = vec![];
 
-    match operator {
-        // binary
-        _ if is_binary_operator(operator.source.as_str()) => {
+    match operator.source.as_str() {
+        op if is_binary_op(op) => {
             nodes.push(parse_expr(input, pos)?);
 
             wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
             wrap(skip_whitespace(input, pos))?;
 
             nodes.push(parse_expr(input, pos)?);
+        }
+        op if is_binary_assign_op(op) => {
+            let token = wrap(raise_token(input, pos))?;
+
+            let target = if token.name == TokenName::ID {
+                Box::new(Node::Token(token))
+            } else {
+                return Err(SquareError::SyntaxError(
+                    input,
+                    format!(
+                        "faield to parse_op, expect lhs to be identifier, got {}({})",
+                        token.name, token.source
+                    ),
+                    token.pos,
+                    None,
+                ));
+            };
+
+            let props = parse_prop_chain(input, pos)?;
+
+            wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+            wrap(skip_whitespace(input, pos))?;
+
+            let expr = parse_expr(input, pos)?;
+
+            nodes.push(Box::new(Node::Assign(
+                operator.clone(),
+                target,
+                props,
+                expr,
+            )));
         }
         _ => {
             return Err(SquareError::SyntaxError(
@@ -581,6 +622,22 @@ fn test_parse_op_binary() {
     panic!();
 }
 
+#[test]
+fn test_parse_op_binary_assign() {
+    let input = "+= a 4";
+    let mut pos = Position::default();
+    let node = parse_op(input, &mut pos).unwrap();
+
+    if let Node::Op(op, exprs) = *node {
+        assert_eq!(exprs.len(), 1);
+        assert_eq!(op.source, "+=");
+
+        return;
+    }
+
+    panic!();
+}
+
 pub fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_call");
     let left_bracket = wrap(expect_source("[", input, pos))?;
@@ -592,7 +649,7 @@ pub fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
 
     if leading.source == "=" {
         nodes.push(parse_assign(input, pos)?);
-    } else if is_binary_operator(leading.source.as_str()) {
+    } else if is_op(leading.source.as_str()) {
         nodes.push(parse_op(input, pos)?);
     } else {
         while leading.source != "]" {

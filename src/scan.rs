@@ -302,21 +302,20 @@ fn test_raise_string_unicode_error() {
     );
 }
 
-fn eat_digits(chars: &mut Peekable<core::slice::Iter<'_, char>>, pos: &mut Position) {
-    while let Some(ch) = chars.peek() {
-        if !ch.is_ascii_digit() {
-            break;
-        }
-
-        chars.next();
-        pos.advance();
-    }
-}
-
 fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     let input_chars: Vec<char> = input.chars().collect();
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
+    let eat_digits = |chars: &mut Peekable<core::slice::Iter<'_, char>>, pos: &mut Position| {
+        while let Some(ch) = chars.peek() {
+            if !ch.is_ascii_digit() {
+                break;
+            }
+
+            chars.next();
+            pos.advance();
+        }
+    };
 
     if let Some(leading) = chars.peek() {
         if **leading == '-' || leading.is_ascii_digit() {
@@ -508,7 +507,7 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
 
         match ch {
             '[' | ']' => {}
-            '+' | '-' | '*' | '/' | '^' | '%' | '&' | '|' | '=' | '!' => match chars.peek() {
+            '+' | '-' | '*' | '/' | '^' | '%' | '&' | '|' | '=' => match chars.peek() {
                 Some('=') => {
                     chars.next();
                     pos.advance();
@@ -550,6 +549,19 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                     pos.advance();
                 }
                 _ => {}
+            },
+            '!' => match chars.peek() {
+                Some('=') => {
+                    chars.next();
+                    pos.advance();
+                }
+                _ => {
+                    return Err(SquareError::UnexpectedToken(
+                        input,
+                        format!("expect !=, got '!{}'", ch),
+                        pos.clone(),
+                    ))
+                }
             },
             '.' => match chars.peek() {
                 Some('.') => {
@@ -808,7 +820,11 @@ fn expect<'a>(
     Ok(token)
 }
 
-pub fn expect_source<'a>(source: &'a str, input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
+pub fn expect_source<'a, 'b>(
+    source: &'b str,
+    input: &'a str,
+    pos: &mut Position,
+) -> RaiseResult<'a> {
     return expect(&|token| token.source == source, input, pos, &|token| {
         format!("expect {}, got {}({})", source, token.name, token.source)
     });

@@ -103,9 +103,7 @@ fn emit_assign<'a>(
     expression: Box<Node>,
 ) -> EmitResult<'a> {
     let mut insts = Box::new(vec![]);
-    let result = emit_expr(input, expression)?;
-
-    insts.extend(*result);
+    insts.extend(*emit_expr(input, expression)?);
 
     match *target {
         Node::Token(id) => {
@@ -132,6 +130,9 @@ fn emit_op<'a>(input: &'a str, op: Token, expressions: Vec<Box<Node>>) -> EmitRe
         result.push(inst);
         return Ok(Box::new(result));
     };
+    let emit_op_assign_inst = |inst: Inst| -> EmitResult<'a> {
+        todo!();
+    };
 
     if op.name == TokenName::OP {
         return match op.source.as_str() {
@@ -143,13 +144,20 @@ fn emit_op<'a>(input: &'a str, op: Token, expressions: Vec<Box<Node>>) -> EmitRe
             "&" => emit_op_inst(Inst::BITAND),
             "|" => emit_op_inst(Inst::BITOR),
             "^" => emit_op_inst(Inst::BITXOR),
-            "!" => emit_op_inst(Inst::NOT),
             "==" => emit_op_inst(Inst::EQ),
             "!=" => emit_op_inst(Inst::NE),
             "<" => emit_op_inst(Inst::LT),
             "<=" => emit_op_inst(Inst::LE),
             ">" => emit_op_inst(Inst::GT),
             ">=" => emit_op_inst(Inst::GE),
+            "+=" => emit_op_assign_inst(Inst::ADD),
+            "-=" => emit_op_assign_inst(Inst::SUB),
+            "*=" => emit_op_assign_inst(Inst::MUL),
+            "/=" => emit_op_assign_inst(Inst::DIV),
+            "%=" => emit_op_assign_inst(Inst::REM),
+            "&=" => emit_op_assign_inst(Inst::BITAND),
+            "|=" => emit_op_assign_inst(Inst::BITOR),
+            "^=" => emit_op_assign_inst(Inst::BITXOR),
             _ => todo!(),
         };
     }
