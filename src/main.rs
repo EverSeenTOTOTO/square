@@ -5,7 +5,10 @@
 use alloc::boxed::Box;
 
 #[cfg(not(test))]
-use crate::externs::{memory, wasm};
+use crate::{
+    code_frame::Position,
+    externs::{memory, wasm},
+};
 
 extern crate alloc;
 
@@ -15,12 +18,12 @@ mod allocator;
 mod externs;
 
 mod code_frame;
+mod emit;
 mod errors;
 mod parse;
 mod scan;
-mod vm_value;
 mod vm;
-mod emit;
+mod vm_value;
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -39,7 +42,7 @@ pub fn init_vm() -> *mut vm::VM {
             .add_to_heap(wasm::get_heap_base(), wasm::get_stack_base())
     };
 
-    return Box::into_raw(Box::new(vm::VM::default()));
+    return Box::into_raw(Box::new(vm::VM::new()));
 }
 
 #[cfg(not(test))]
@@ -58,16 +61,24 @@ pub extern "C" fn dealloc(ptr: *mut u8, size: usize) {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub extern "C" fn parse_and_run(vmAddr: *const u8, sourceAddr: *mut u8, sourceLength: usize) {
-    let vm = unsafe { Box::from_raw(vmAddr as *mut vm::VM) };
+pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: usize) {
+    let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
+    let code = memory::read(source_addr as usize, source_length);
+    let mut pos = Position::default();
+    let ast = parse::parse(code, &mut pos).expect("failed to parse");
 
-    println!("{}", core::mem::size_of::<vm::VM>());
-
-    let code = memory::read(sourceAddr as usize, sourceLength);
-
-    let ast = parse::parse(code, &mut code_frame::Position::default()).expect("failed to parse");
-
-    for node in ast {
+    for node in &ast {
         println!("{}", node);
     }
+
+    let insts = emit::emit(code, ast).expect("failed to emit");
+    let mut pc = 0;
+
+    for inst in &insts {
+        println!("{}", inst);
+    }
+
+    vm.run(&insts, &mut pc);
+
+    println!("{:?}", vm.call_frame.resolve_local("a"));
 }

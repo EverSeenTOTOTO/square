@@ -17,42 +17,16 @@ use crate::scan::{
 
 type ParseResult<'a> = Result<Box<Node>, SquareError<'a>>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Token(Token),                                        // literal
     Expand(Token, Token, Vec<Box<Node>>),                // '[', ']', placeholders*
     Fn(Token, Box<Node>, Box<Node>),                     // '/', params, body
     Prop(Token, Token),                                  // '.', prop
-    Assign(Token, Box<Node>, Vec<Box<Node>>, Box<Node>), // '=', expansion, properties, expression
+    Assign(Token, Box<Node>, Vec<Box<Node>>, Box<Node>), // '=', expansion | id, (dot property)*, expression
     Op(Token, Vec<Box<Node>>),                           // operator, expressions+
     Call(Token, Token, Vec<Box<Node>>),                  // '[', ']', expressions+
-    Dot(Box<Node>, Vec<Box<Node>>),                      // instance, (dot property)*
-}
-
-impl Node {
-    pub fn range(&self) -> (Position, Position) {
-        match self {
-            Node::Token(token) => (token.pos.clone(), token.pos.clone()),
-            Node::Expand(left_bracket, right_bracket, _) => {
-                (left_bracket.pos.clone(), right_bracket.pos.clone())
-            }
-            Node::Fn(slash, _, body) => (slash.pos.clone(), body.range().1),
-            Node::Prop(dot, prop) => (dot.pos.clone(), prop.pos.clone()),
-            Node::Assign(eq, _, _, expr) => (eq.pos.clone(), expr.range().1),
-            Node::Op(op, exprs) => (op.pos.clone(), exprs.last().unwrap().range().1),
-            Node::Call(left_bracket, right_bracket, _) => {
-                (left_bracket.pos.clone(), right_bracket.pos.clone())
-            }
-            Node::Dot(inst, exprs) => (
-                inst.range().0,
-                if exprs.len() > 0 {
-                    exprs.last().unwrap().range().1
-                } else {
-                    inst.range().1
-                },
-            ),
-        }
-    }
+    Dot(Box<Node>, Vec<Box<Node>>),                      // id | call, (dot property)*
 }
 
 struct BoxNodeVec<'a>(&'a Vec<Box<Node>>);

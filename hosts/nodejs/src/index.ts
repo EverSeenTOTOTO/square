@@ -24,7 +24,7 @@ const writeUtf8String = (exports: WasmExports, source: string) => {
 
 type Square = {
   init_vm(): number,
-  parse_and_run(vmAddr: number, sourceAddr: number, size: number): void,
+  exec(vmAddr: number, sourceAddr: number, size: number): void,
 };
 
 type WasmExports = {
@@ -68,35 +68,14 @@ type WasmExports = {
     const vmAddr = square.init_vm();
 
     const code = `
-; use built-in function \`obj\` to create an object
-[= stack /[vec] [begin 
-  [= this [obj]] ; \`this\` is just a variable name
-
-  [= this.vec vec]
-
-  [= this.clear /[] [= this.vec []]]
-
-  [= this.push /[x] [begin 
-    [= this.vec [.. this.vec [x]]]]]
-
-  [= this.pop /[] [begin
-    [= [... x] this.vec]
-    [= this.vec [this.vec.slice 0 -1]]
-    x]]
-
-  this]]
-
-[= v [1 2 3]]
-[= s [stack v]]
-[= x [s.pop]] ; x = 3
-[s.clear]
-[s.push 42]
-[= y [s.pop]] ; y = 42
+[= a 24]
+[= b 42] 
+[= a [+ a b]]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);
 
-    square.parse_and_run(vmAddr, sourceAddr, sourceLength);
+    square.exec(vmAddr, sourceAddr, sourceLength);
     square.dealloc(sourceAddr, sourceLength);
   } catch (e) {
     console.error(e);

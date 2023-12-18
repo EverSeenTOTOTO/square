@@ -141,7 +141,7 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
     fn -> / expand expr
 
     prop ->  . id
-    assign -> = (id prop* | expand) expr
+    assign -> = (expand | id prop*) expr
 
     op -> op expr expr*
 

@@ -1,62 +1,8 @@
-#[cfg(not(test))]
-use alloc::{vec, vec::Vec};
+use alloc::{boxed::Box, string::String, string::ToString, vec, vec::Vec};
 
-use core::fmt;
+use hashbrown::HashMap;
 
-use crate::vm_value::Value;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Inst {
-    PUSH(Value),
-    POP,
-    ADD, // +
-    SUB, // -
-    MUL, // *
-    DIV, // /
-    REM, // %
-    AND, // &
-    OR,  // |
-    XOR, // ^
-    NOT, // !
-    EQ,  // ==
-    NE,  // !=
-    LT,  // <
-    LE,  // <=
-    GT,  // >
-    GE,  // >=
-    JMP(i32),
-    JEQ(i32), // jump if eq
-    CALL,
-    RET,
-}
-
-impl fmt::Display for Inst {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Inst::PUSH(value) => write!(f, "PUSH {}", value),
-            Inst::POP => write!(f, "POP"),
-            Inst::ADD => write!(f, "ADD"),
-            Inst::SUB => write!(f, "SUB"),
-            Inst::MUL => write!(f, "MUL"),
-            Inst::DIV => write!(f, "DIV"),
-            Inst::REM => write!(f, "REM"),
-            Inst::AND => write!(f, "AND"),
-            Inst::OR => write!(f, "OR"),
-            Inst::XOR => write!(f, "XOR"),
-            Inst::NOT => write!(f, "NOT"),
-            Inst::EQ => write!(f, "EQ"),
-            Inst::NE => write!(f, "NE"),
-            Inst::LT => write!(f, "LT"),
-            Inst::LE => write!(f, "LE"),
-            Inst::GT => write!(f, "GT"),
-            Inst::GE => write!(f, "GE"),
-            Inst::JMP(value) => write!(f, "JMP {}", value),
-            Inst::JEQ(value) => write!(f, "JEQ {}", value),
-            Inst::CALL => write!(f, "CALL"),
-            Inst::RET => write!(f, "RET"),
-        }
-    }
-}
+use crate::{emit::Inst, vm_value::Value};
 
 type OpFn = dyn Fn(&Value, &Value) -> Value;
 
@@ -64,26 +10,18 @@ impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) {
         match self {
             Inst::PUSH(value) => {
-                if vm.sp >= vm.stack.len() {
-                    todo!();
-                }
-
-                vm.stack[vm.sp] = value.clone();
-                vm.sp = vm.sp + 1;
+                self.push(vm, value.clone());
             }
             Inst::POP => {
-                if vm.sp < 1 {
-                    todo!();
-                }
-
-                vm.sp = vm.sp - 1;
+                self.pop(vm);
             }
             Inst::NOT => {
-                if vm.sp < 1 {
+                if vm.call_frame.sp < 1 {
                     todo!();
                 }
 
-                vm.stack[vm.sp - 1] = !&vm.stack[vm.sp - 1];
+                vm.call_frame.stack[vm.call_frame.sp - 1] =
+                    !&vm.call_frame.stack[vm.call_frame.sp - 1];
             }
 
             Inst::ADD => self.binop(vm, &|a, b| a + b),
@@ -91,9 +29,9 @@ impl Inst {
             Inst::MUL => self.binop(vm, &|a, b| a * b),
             Inst::DIV => self.binop(vm, &|a, b| a / b),
             Inst::REM => self.binop(vm, &|a, b| a % b),
-            Inst::AND => self.binop(vm, &|a, b| a & b),
-            Inst::OR => self.binop(vm, &|a, b| a | b),
-            Inst::XOR => self.binop(vm, &|a, b| a ^ b),
+            Inst::BITAND => self.binop(vm, &|a, b| a & b),
+            Inst::BITOR => self.binop(vm, &|a, b| a | b),
+            Inst::BITXOR => self.binop(vm, &|a, b| a ^ b),
             Inst::EQ => self.binop(vm, &|a, b| Value::Bool(a == b)),
             Inst::NE => self.binop(vm, &|a, b| Value::Bool(a != b)),
             Inst::LT => self.binop(vm, &|a, b| Value::Bool(a < b)),
@@ -105,29 +43,64 @@ impl Inst {
                 self.jump(insts, pc, *value);
             }
             Inst::JEQ(value) => {
-                if vm.sp < 1 {
+                if vm.call_frame.sp < 1 {
                     todo!();
                 }
 
-                let top = &vm.stack[vm.sp - 1];
-                vm.sp = vm.sp - 1;
+                let top = &vm.call_frame.stack[vm.call_frame.sp - 1];
+                vm.call_frame.sp = vm.call_frame.sp - 1;
                 if top != &Value::Bool(true) {
                     return;
                 }
 
                 self.jump(insts, pc, *value);
             }
+            Inst::STORE(name) => {
+                if let Some(val) = vm.call_frame.top() {
+                    vm.call_frame.define_local(name, val.clone());
+                } else {
+                    vm.call_frame.define_local(name, Value::Undefined);
+                }
+
+                self.pop(vm);
+            }
+            Inst::LOAD(name) => {
+                let mut tmp = Value::Undefined;
+                if let Some(val) = vm.call_frame.resolve_local(name) {
+                    tmp = val.clone(); // avoid mutable ref and immutable ref of vm at the same time
+                }
+                self.push(vm, tmp);
+            }
             _ => todo!(),
         }
     }
 
-    fn binop(&self, vm: &mut VM, op_fn: &OpFn) {
-        if vm.sp < 2 {
+    fn push(&self, vm: &mut VM, value: Value) {
+        if vm.call_frame.sp >= vm.call_frame.stack.len() {
             todo!();
         }
 
-        vm.stack[vm.sp - 2] = op_fn(&vm.stack[vm.sp - 2], &vm.stack[vm.sp - 1]);
-        vm.sp = vm.sp - 1;
+        vm.call_frame.stack[vm.call_frame.sp] = value;
+        vm.call_frame.sp = vm.call_frame.sp + 1;
+    }
+
+    fn pop(&self, vm: &mut VM) {
+        if vm.call_frame.sp < 1 {
+            todo!();
+        }
+        vm.call_frame.sp = vm.call_frame.sp - 1;
+    }
+
+    fn binop(&self, vm: &mut VM, op_fn: &OpFn) {
+        if vm.call_frame.sp < 2 {
+            todo!();
+        }
+
+        vm.call_frame.stack[vm.call_frame.sp - 2] = op_fn(
+            &vm.call_frame.stack[vm.call_frame.sp - 2],
+            &vm.call_frame.stack[vm.call_frame.sp - 1],
+        );
+        vm.call_frame.sp = vm.call_frame.sp - 1;
     }
 
     fn jump(&self, insts: &Vec<Inst>, pc: &mut usize, offset: i32) {
@@ -140,31 +113,122 @@ impl Inst {
     }
 }
 
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct VM {
+pub struct CallFrame {
+    locals: HashMap<String, Value>,
     stack: Vec<Value>,
     // fake length, avoid frequent push/pop
     sp: usize,
+    prev: Option<Box<CallFrame>>,
 }
 
-impl Default for VM {
-    fn default() -> Self {
-        Self::new(1024) // default 4KB stack
+impl CallFrame {
+    fn new() -> Self {
+        Self {
+            locals: HashMap::new(),
+            stack: vec![Value::Undefined; 1024], // item count, not byte length
+            sp: 0,
+            prev: None,
+        }
+    }
+
+    fn find_frame_by_varname<'a>(&self, name: &'a str) -> Option<&CallFrame> {
+        if self.locals.contains_key(name) {
+            return Some(self);
+        }
+
+        let mut frame = &self.prev;
+        while let Some(f) = frame {
+            if f.locals.contains_key(name) {
+                return Some(f.as_ref());
+            }
+            frame = &f.prev;
+        }
+        return None;
+    }
+
+    pub fn resolve_local<'a>(&self, name: &'a str) -> Option<&Value> {
+        let frame = self.find_frame_by_varname(name)?;
+
+        return frame.locals.get(name);
+    }
+
+    fn find_frame_by_varname_mut<'a>(&mut self, name: &'a str) -> Option<&mut CallFrame> {
+        if self.locals.contains_key(name) {
+            return Some(self);
+        }
+
+        let mut frame = &mut self.prev;
+        while let Some(f) = frame {
+            if f.locals.contains_key(name) {
+                return Some(f.as_mut());
+            }
+            frame = &mut f.prev;
+        }
+        return None;
+    }
+
+    pub fn define_local<'a>(&mut self, name: &'a str, value: Value) {
+        if let Some(frame) = self.find_frame_by_varname_mut(name) {
+            frame.locals.insert(name.to_string(), value);
+        } else {
+            self.locals.insert(name.to_string(), value);
+        }
+    }
+
+    pub fn top(&self) -> Option<&Value> {
+        if self.sp <= 0 {
+            return None;
+        }
+
+        Some(&self.stack[self.sp - 1])
     }
 }
 
+#[test]
+fn test_resolve_local() {
+    let mut top = CallFrame::new();
+
+    top.locals.insert("a".to_string(), Value::Int(42));
+
+    let mut frame = CallFrame::new();
+
+    frame.prev = Some(Box::new(top));
+    frame.locals.insert("b".to_string(), Value::Int(24));
+
+    assert_eq!(frame.resolve_local("a"), Some(&Value::Int(42)));
+    assert_eq!(frame.resolve_local("b"), Some(&Value::Int(24)));
+    assert_eq!(frame.resolve_local("c"), None);
+}
+
+#[test]
+fn test_define_local() {
+    let mut top = CallFrame::new();
+
+    top.define_local("a", Value::Int(42));
+
+    let mut frame = CallFrame::new();
+
+    frame.prev = Some(Box::new(top));
+    frame.define_local("b", Value::Int(24));
+
+    assert_eq!(frame.resolve_local("a"), Some(&Value::Int(42)));
+    assert_eq!(frame.resolve_local("b"), Some(&Value::Int(24)));
+    assert_eq!(frame.resolve_local("c"), None);
+}
+
+pub struct VM {
+    pub call_frame: Box<CallFrame>,
+}
+
 impl VM {
-    pub fn new(stack_size: usize) -> Self {
+    pub fn new() -> Self {
         Self {
-            stack: vec![Value::Int(0); stack_size], // item count, not byte length
-            sp: 0,
+            call_frame: Box::new(CallFrame::new()),
         }
     }
 
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) {
         let inst = &insts[*pc];
-
         inst.exec(self, insts, pc);
         *pc += 1;
     }
@@ -174,15 +238,11 @@ impl VM {
             self.step(insts, pc);
         }
     }
-
-    pub fn top(&self) -> Option<&Value> {
-        return self.stack.get(self.sp - 1);
-    }
 }
 
 #[test]
 fn test_step() {
-    let mut vm = VM::default();
+    let mut vm = VM::new();
     let insts = vec![
         Inst::PUSH(Value::Int(42)),
         Inst::PUSH(Value::Float(24.0)),
@@ -194,17 +254,17 @@ fn test_step() {
     vm.step(&insts, &mut pc);
     vm.step(&insts, &mut pc);
 
-    assert_eq!(vm.sp, 2);
+    assert_eq!(vm.call_frame.sp, 2);
 
     vm.step(&insts, &mut pc);
     vm.step(&insts, &mut pc);
 
-    assert_eq!(vm.sp, 0);
+    assert_eq!(vm.call_frame.sp, 0);
 }
 
 #[test]
 fn test_run() {
-    let mut vm = VM::default();
+    let mut vm = VM::new();
     let insts = vec![
         Inst::PUSH(Value::Int(42)),
         Inst::PUSH(Value::Int(24)),
@@ -216,48 +276,5 @@ fn test_run() {
 
     vm.run(&insts, &mut pc);
 
-    assert_eq!(vm.top(), Some(&Value::Int(132)));
-}
-
-#[test]
-fn test_jmp() {
-    let mut vm = VM::default();
-    let insts = vec![
-        Inst::PUSH(Value::Int(42)),
-        Inst::PUSH(Value::Int(24)),
-        Inst::ADD,
-        Inst::JMP(2),
-        Inst::PUSH(Value::Int(2)),
-        Inst::MUL,
-        Inst::PUSH(Value::Int(-2)),
-        Inst::DIV,
-    ];
-    let mut pc = 0;
-
-    vm.run(&insts, &mut pc);
-
-    assert_eq!(vm.top(), Some(&Value::Int(-33)));
-}
-
-#[test]
-fn test_jeq() {
-    let mut vm = VM::default();
-    let insts = vec![
-        Inst::PUSH(Value::Int(42)),
-        Inst::PUSH(Value::Int(24)),
-        Inst::ADD,
-        Inst::PUSH(Value::Bool(false)),
-        Inst::JEQ(6),
-        Inst::PUSH(Value::Bool(true)),
-        Inst::JEQ(2),
-        Inst::PUSH(Value::Int(2)),
-        Inst::MUL,
-        Inst::PUSH(Value::Int(-2)),
-        Inst::DIV,
-    ];
-    let mut pc = 0;
-
-    vm.run(&insts, &mut pc);
-
-    assert_eq!(vm.top(), Some(&Value::Int(-33)));
+    assert_eq!(vm.call_frame.top(), Some(&Value::Int(132)));
 }

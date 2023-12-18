@@ -10,7 +10,7 @@ use core::{fmt, iter::Peekable};
 
 pub type RaiseResult<'a> = Result<Token, SquareError<'a>>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenName {
     COMMENT,
     EOF,
@@ -35,7 +35,7 @@ impl fmt::Display for TokenName {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub name: TokenName,
     pub pos: Position,

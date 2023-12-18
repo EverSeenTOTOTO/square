@@ -1,25 +1,8 @@
-use core::cmp::{Ordering, PartialEq};
+use core::cmp::PartialEq;
 use core::fmt;
 use core::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub};
 
-use alloc::rc::Rc;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord)]
-pub struct SqString {
-    length: usize,
-    ptr: *const u8,
-}
-
-impl PartialOrd for SqString {
-    fn partial_cmp(&self, _other: &Self) -> Option<Ordering> {
-        None
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
-pub enum HeapValue {
-    Str(SqString),
-}
+use alloc::string::String;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Value {
@@ -28,7 +11,8 @@ pub enum Value {
     Double(f64),
     Int(i32),
     Int64(i64),
-    HeapPtr(Rc<HeapValue>),
+    Str(String),
+    Undefined,
 }
 
 impl fmt::Display for Value {
@@ -49,8 +33,11 @@ impl fmt::Display for Value {
             Value::Int64(val) => {
                 write!(f, "Int({})", val)
             }
-            Value::HeapPtr(val) => {
-                write!(f, "HeapPtr({:?})", val)
+            Value::Str(val) => {
+                write!(f, "Str({})", val)
+            }
+            Value::Undefined => {
+                write!(f, "Undefined")
             }
         }
     }
@@ -123,7 +110,8 @@ impl Not for &Value {
             Value::Int64(val) => Value::Bool(*val == 0),
             Value::Float(val) => Value::Bool(*val == 0.0),
             Value::Double(val) => Value::Bool(*val == 0.0),
-            Value::HeapPtr(_) => Value::Bool(false), // TODO
+            Value::Str(_) => Value::Bool(false), // TODO
+            Value::Undefined => Value::Bool(true),
         }
     }
 }
