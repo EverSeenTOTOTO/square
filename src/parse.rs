@@ -114,7 +114,7 @@ fn create_wrapper<'a>(fn_name: &'static str) -> Box<dyn Fn(RaiseResult<'a>) -> R
     });
 }
 
-pub fn parse_expand<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_expand<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_expand");
 
     let left_bracket = wrap(expect_source("[", input, pos))?;
@@ -281,7 +281,7 @@ fn test_parse_expand_error() {
     );
 }
 
-pub fn parse_fn<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_fn<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_fn");
 
     let slash = wrap(expect_source("/", input, pos))?;
@@ -377,7 +377,7 @@ fn test_parse_fn_high_order() {
     panic!();
 }
 
-pub fn parse_prop<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_prop<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_prop");
     let dot = wrap(expect_source(".", input, pos))?;
 
@@ -444,7 +444,7 @@ fn test_parse_prop_chain() {
     panic!()
 }
 
-pub fn parse_assign<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_assign<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_assign");
     let eq = wrap(expect_source("=", input, pos))?;
 
@@ -541,7 +541,7 @@ fn is_op<'a>(op: &'a str) -> bool {
     return is_binary_op(op) || is_binary_assign_op(op);
 }
 
-pub fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_op");
     let operator = wrap(raise_token(input, pos))?;
 
@@ -560,35 +560,12 @@ pub fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
             nodes.push(parse_expr(input, pos)?);
         }
         op if is_binary_assign_op(op) => {
-            let token = wrap(raise_token(input, pos))?;
-
-            let target = if token.name == TokenName::ID {
-                Box::new(Node::Token(token))
-            } else {
-                return Err(SquareError::SyntaxError(
-                    input,
-                    format!(
-                        "faield to parse_op, expect lhs to be identifier, got {}({})",
-                        token.name, token.source
-                    ),
-                    token.pos,
-                    None,
-                ));
-            };
-
-            let props = parse_prop_chain(input, pos)?;
+            nodes.push(parse_dot(input, pos)?);
 
             wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
             wrap(skip_whitespace(input, pos))?;
 
-            let expr = parse_expr(input, pos)?;
-
-            nodes.push(Box::new(Node::Assign(
-                operator.clone(),
-                target,
-                props,
-                expr,
-            )));
+            nodes.push(parse_expr(input, pos)?);
         }
         _ => {
             return Err(SquareError::SyntaxError(
@@ -624,21 +601,25 @@ fn test_parse_op_binary() {
 
 #[test]
 fn test_parse_op_binary_assign() {
-    let input = "+= a 4";
+    let input = "+= 42 a";
     let mut pos = Position::default();
-    let node = parse_op(input, &mut pos).unwrap();
 
-    if let Node::Op(op, exprs) = *node {
-        assert_eq!(exprs.len(), 1);
-        assert_eq!(op.source, "+=");
-
-        return;
-    }
-
-    panic!();
+    assert_eq!(
+        parse_op(input, &mut pos),
+        Err(SquareError::SyntaxError(
+            input,
+            "faield to parse_dot, expect identifier or call expression, got NUM(42)".to_string(),
+            Position {
+                line: 1,
+                column: 4,
+                cursor: 3
+            },
+            None,
+        ))
+    );
 }
 
-pub fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_call");
     let left_bracket = wrap(expect_source("[", input, pos))?;
 
@@ -692,7 +673,7 @@ fn test_parse_call_assign() {
     panic!();
 }
 
-pub fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_dot");
     let leading = wrap(lookahead(input, pos))?;
 
@@ -772,12 +753,33 @@ fn test_parse_dot() {
     panic!();
 }
 
-pub fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_expr");
     let leading = wrap(lookahead(input, pos))?;
 
     match leading {
         _ if leading.source == "/" => parse_fn(input, pos),
+        _ if leading.source == "-" => {
+            let minus = wrap(raise_token(input, pos))?;
+            let target = if wrap(lookahead(input, pos))?.name == TokenName::NUM {
+                Box::new(Node::Token(wrap(raise_token(input, pos))?))
+            } else {
+                parse_dot(input, pos)?
+            };
+
+            Ok(Box::new(Node::Op(
+                minus,
+                vec![
+                    // TODO: optimize
+                    Box::new(Node::Token(Token {
+                        name: TokenName::NUM,
+                        source: "0".to_string(),
+                        pos: leading.pos,
+                    })),
+                    target,
+                ],
+            )))
+        }
         _ if leading.name == TokenName::NUM || leading.name == TokenName::STR => {
             Ok(Box::new(Node::Token(raise_token(input, pos)?)))
         }
@@ -833,7 +835,7 @@ fn test_parse_control_flow() {
     let input = r#"
 ; match
 [match x
-  [[> 42 x] foo]
+  [[> -2.3e-2 x] foo]
   [[[regex '[a-z]+' 'gi'].test x] bar]]
 
 ; branch
@@ -938,7 +940,7 @@ fn test_parse_structure() {
 
   [= this.pop /[] [begin
     [= [... x] this.vec]
-    [= this.vec [this.vec.slice 0 -1]]
+    [= this.vec [this.vec.slice 0 -2]]
     x]]
 
   this]]

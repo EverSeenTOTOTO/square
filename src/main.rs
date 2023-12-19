@@ -67,6 +67,7 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
     let mut pos = Position::default();
     let ast = parse::parse(code, &mut pos).expect("failed to parse");
 
+    println!("");
     for node in &ast {
         println!("{}", node);
     }
@@ -74,11 +75,13 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
     let insts = emit::emit(code, ast).expect("failed to emit");
     let mut pc = 0;
 
+    println!("");
     for inst in &insts {
         println!("{}", inst);
     }
 
     vm.run(&insts, &mut pc);
 
+    println!("");
     println!("{:?}", vm.call_frame.resolve_local("a"));
 }

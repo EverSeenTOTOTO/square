@@ -66,7 +66,7 @@ pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         Some(';') => raise_comment(input, pos),
         Some(ch) => match ch {
             _ if ch.is_alphabetic() || **ch == '_' => raise_ident(input, pos),
-            _ if **ch == '-' || ch.is_ascii_digit() => raise_number(input, pos),
+            _ if ch.is_ascii_digit() => raise_number(input, pos),
             _ if ch.is_whitespace() => raise_whitespace(input, pos),
             _ => raise_operator(input, pos),
         },
@@ -307,68 +307,67 @@ fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
     let eat_digits = |chars: &mut Peekable<core::slice::Iter<'_, char>>, pos: &mut Position| {
+        let mut count = 0;
         while let Some(ch) = chars.peek() {
             if !ch.is_ascii_digit() {
                 break;
             }
 
+            count += 1;
             chars.next();
             pos.advance();
         }
+
+        return count;
     };
 
-    if let Some(leading) = chars.peek() {
-        if **leading == '-' || leading.is_ascii_digit() {
+    if eat_digits(&mut chars, pos) < 1 {
+        return Err(SquareError::UnexpectedToken(
+            input,
+            "expect at least one digit".to_string(),
+            pos.clone(),
+        ));
+    }
+
+    if let Some(dot) = chars.peek() {
+        if **dot == '.' {
             chars.next();
             pos.advance();
-        }
 
-        eat_digits(&mut chars, pos);
-
-        if let Some(dot) = chars.peek() {
-            if **dot == '.' {
-                chars.next();
-                pos.advance();
-
-                let backup = pos.clone();
-
-                eat_digits(&mut chars, pos);
-
-                if backup.cursor == pos.cursor {
-                    return Err(SquareError::UnexpectedToken(
-                        input,
-                        "expect at least one digit after dot".to_string(),
-                        pos.clone(),
-                    ));
-                }
+            if eat_digits(&mut chars, pos) < 1 {
+                return Err(SquareError::UnexpectedToken(
+                    input,
+                    "expect at least one digit after dot".to_string(),
+                    pos.clone(),
+                ));
             }
         }
+    }
 
-        if let Some(exp) = chars.peek() {
-            if **exp == 'e' || **exp == 'E' {
-                chars.next();
-                pos.advance();
+    if let Some(exp) = chars.peek() {
+        if **exp == 'e' || **exp == 'E' {
+            chars.next();
+            pos.advance();
 
-                if let Some(minus) = chars.peek() {
-                    if **minus == '-' || minus.is_ascii_digit() {
-                        chars.next();
-                        pos.advance();
+            if let Some(minus) = chars.peek() {
+                if **minus == '-' {
+                    chars.next();
+                    pos.advance();
+                }
 
-                        eat_digits(&mut chars, pos);
-                    } else {
-                        return Err(SquareError::UnexpectedToken(
-                            input,
-                            "expect minus or digit after exp".to_string(),
-                            pos.clone(),
-                        ));
-                    }
-                } else {
+                if eat_digits(&mut chars, pos) < 1 {
                     return Err(SquareError::UnexpectedToken(
                         input,
-                        "expect minus or digit after exp".to_string(),
+                        "expect at least one digit after exp".to_string(),
                         pos.clone(),
                     ));
                 }
+            } else {
+                return Err(SquareError::UnexpectedToken(
+                    input,
+                    "expect minus or digit after exp".to_string(),
+                    pos.clone(),
+                ));
             }
         }
     }
@@ -448,7 +447,7 @@ fn test_raise_number_exp_error() {
         raise_number(input, &mut Position::default()),
         Err(SquareError::UnexpectedToken(
             input,
-            "expect minus or digit after exp".to_string(),
+            "expect at least one digit after exp".to_string(),
             Position {
                 line: 1,
                 column: 5,
@@ -460,10 +459,10 @@ fn test_raise_number_exp_error() {
 
 #[test]
 fn test_raise_number_minus() {
-    let input = "-012.34E-56";
+    let input = "012.34E-56";
     let token = raise_number(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source, "-012.34E-56");
+    assert_eq!(token.source, "012.34E-56");
 }
 
 fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {

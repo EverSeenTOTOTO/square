@@ -86,7 +86,7 @@ fn emit_token<'a>(input: &'a str, token: Token) -> EmitResult<'a> {
             return Err(SquareError::SyntaxError(
                 input,
                 format!(
-                    "expect number, string or identifier name, got {}",
+                    "failed to emit_token, expect number, string or identifier name, got {}",
                     token.name
                 ),
                 token.pos,
@@ -112,7 +112,7 @@ fn emit_assign<'a>(
             } else {
                 return Err(SquareError::SyntaxError(
                     input,
-                    format!("cannot assign to {}, expect identifier", id.name),
+                    format!("failed to emit_assign, cannot assign to {}, expect identifier", id.name),
                     id.pos,
                     None,
                 ));
@@ -164,7 +164,7 @@ fn emit_op<'a>(input: &'a str, op: Token, expressions: Vec<Box<Node>>) -> EmitRe
 
     return Err(SquareError::SyntaxError(
         input,
-        format!("expect operator, got {}", op.name),
+        format!("failed to emit_op, expect operator, got {}", op.name),
         op.pos,
         None,
     ));

@@ -36,7 +36,7 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 ```lisp
 ; match
 [match x
-  [[> 42 x] foo]
+  [[> -2.3e-2 x] foo]
   [[[regex '[a-z]+' 'gi'].test x] bar]]
 
 ; branch
@@ -143,10 +143,10 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
     prop ->  . id
     assign -> = (expand | id prop*) expr
 
-    op -> op expr expr*
+    op -> (binary_op expr expr*) | (binary_assign_op dot expr*)
 
     call -> [ assign | op | expr* ]
 
     dot -> (id | call) prop*
 
-    expr -> fn | num | str | dot
+    expr -> fn | str | -?(num | dot)
