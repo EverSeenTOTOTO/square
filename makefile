@@ -11,7 +11,7 @@ clean:
 .PHONY: build
 build:
 	RUSTFLAGS="-C link-arg=-zstack-size=65536" cargo build --release --target=wasm32-unknown-unknown -Zbuild-std=core,compiler_builtins,alloc -Zunstable-options
-	mv target/wasm32-unknown-unknown/release/sq.wasm .
+	mv target/wasm32-unknown-unknown/release/square.wasm .
 
 .PHONY: start
 start: build

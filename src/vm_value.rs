@@ -110,7 +110,7 @@ impl Not for &Value {
             Value::Int64(val) => Value::Bool(*val == 0),
             Value::Float(val) => Value::Bool(*val == 0.0),
             Value::Double(val) => Value::Bool(*val == 0.0),
-            Value::Str(_) => Value::Bool(false), // TODO
+            Value::Str(_) => Value::Bool(false),
             Value::Undefined => Value::Bool(true),
         }
     }

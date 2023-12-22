@@ -65,23 +65,35 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
     let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
     let code = memory::read(source_addr as usize, source_length);
     let mut pos = Position::default();
-    let ast = parse::parse(code, &mut pos).expect("failed to parse");
+    let ast = parse::parse(code, &mut pos);
 
     println!("");
-    for node in &ast {
+    if let Err(e) = ast {
+        println!("{}", e);
+        return;
+    }
+
+    for node in ast.as_ref().unwrap() {
         println!("{}", node);
     }
 
-    let insts = emit::emit(code, ast).expect("failed to emit");
-    let mut pc = 0;
+    let insts = emit::emit(code, ast.as_ref().unwrap());
 
     println!("");
-    for inst in &insts {
+    if let Err(e) = insts {
+        println!("{}", e);
+        return;
+    }
+
+    for inst in insts.as_ref().unwrap() {
         println!("{}", inst);
     }
 
-    vm.run(&insts, &mut pc);
-
     println!("");
-    println!("{:?}", vm.call_frame.resolve_local("a"));
+    let mut pc = 0;
+    if let Err(e) = vm.run(insts.as_ref().unwrap(), &mut pc) {
+        println!("{}", e);
+    }
+
+    println!("{}", vm.call_frame.unwrap());
 }

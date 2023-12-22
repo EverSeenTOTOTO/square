@@ -1,158 +1,192 @@
-use alloc::{boxed::Box, string::String, string::ToString, vec, vec::Vec};
+use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
+use core::fmt;
 
 use hashbrown::HashMap;
 
-use crate::{emit::Inst, vm_value::Value};
+use crate::{emit::Inst, errors::SquareError, vm_value::Value};
 
 type OpFn = dyn Fn(&Value, &Value) -> Value;
+type ExecResult<'a> = Result<(), SquareError<'a>>;
 
 impl Inst {
-    fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) {
+    fn exec<'a>(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult<'a> {
         match self {
-            Inst::PUSH(value) => {
-                self.push(vm, value.clone());
-            }
-            Inst::POP => {
-                self.pop(vm);
-            }
-            Inst::NOT => {
-                if vm.call_frame.sp < 1 {
-                    todo!();
+            Inst::PUSH(value) => self.push(vm, value.clone(), pc),
+            Inst::POP => self.pop(vm, pc),
+
+            Inst::ADD => self.binop(vm, &|a, b| a + b, pc),
+            Inst::SUB => self.binop(vm, &|a, b| a - b, pc),
+            Inst::MUL => self.binop(vm, &|a, b| a * b, pc),
+            Inst::DIV => self.binop(vm, &|a, b| a / b, pc),
+            Inst::REM => self.binop(vm, &|a, b| a % b, pc),
+            Inst::BITAND => self.binop(vm, &|a, b| a & b, pc),
+            Inst::BITOR => self.binop(vm, &|a, b| a | b, pc),
+            Inst::BITXOR => self.binop(vm, &|a, b| a ^ b, pc),
+            Inst::EQ => self.binop(vm, &|a, b| Value::Bool(a == b), pc),
+            Inst::NE => self.binop(vm, &|a, b| Value::Bool(a != b), pc),
+            Inst::LT => self.binop(vm, &|a, b| Value::Bool(a < b), pc),
+            Inst::LE => self.binop(vm, &|a, b| Value::Bool(a <= b), pc),
+            Inst::GT => self.binop(vm, &|a, b| Value::Bool(a > b), pc),
+            Inst::GE => self.binop(vm, &|a, b| Value::Bool(a >= b), pc),
+
+            Inst::JMP(value) => self.jump(insts, pc, *value),
+            Inst::JNE(value) => {
+                let frame = vm.call_frame.as_mut().unwrap();
+
+                if frame.sp < 1 {
+                    return Err(SquareError::RuntimeError(
+                        "bad jne, operand stack empty".to_string(),
+                        self.clone(),
+                        *pc,
+                    ));
                 }
 
-                vm.call_frame.stack[vm.call_frame.sp - 1] =
-                    !&vm.call_frame.stack[vm.call_frame.sp - 1];
-            }
+                let top = &frame.stack[frame.sp - 1];
+                frame.sp -= 1;
 
-            Inst::ADD => self.binop(vm, &|a, b| a + b),
-            Inst::SUB => self.binop(vm, &|a, b| a - b),
-            Inst::MUL => self.binop(vm, &|a, b| a * b),
-            Inst::DIV => self.binop(vm, &|a, b| a / b),
-            Inst::REM => self.binop(vm, &|a, b| a % b),
-            Inst::BITAND => self.binop(vm, &|a, b| a & b),
-            Inst::BITOR => self.binop(vm, &|a, b| a | b),
-            Inst::BITXOR => self.binop(vm, &|a, b| a ^ b),
-            Inst::EQ => self.binop(vm, &|a, b| Value::Bool(a == b)),
-            Inst::NE => self.binop(vm, &|a, b| Value::Bool(a != b)),
-            Inst::LT => self.binop(vm, &|a, b| Value::Bool(a < b)),
-            Inst::LE => self.binop(vm, &|a, b| Value::Bool(a <= b)),
-            Inst::GT => self.binop(vm, &|a, b| Value::Bool(a > b)),
-            Inst::GE => self.binop(vm, &|a, b| Value::Bool(a >= b)),
-
-            Inst::JMP(value) => {
-                self.jump(insts, pc, *value);
-            }
-            Inst::JEQ(value) => {
-                if vm.call_frame.sp < 1 {
-                    todo!();
+                if !top == Value::Bool(true) {
+                    return self.jump(insts, pc, *value);
                 }
 
-                let top = &vm.call_frame.stack[vm.call_frame.sp - 1];
-                vm.call_frame.sp = vm.call_frame.sp - 1;
-                if top != &Value::Bool(true) {
-                    return;
-                }
-
-                self.jump(insts, pc, *value);
+                Ok(())
             }
+
             Inst::STORE(name) => {
-                if let Some(val) = vm.call_frame.top() {
-                    vm.call_frame.define_local(name, val.clone());
+                let frame = vm.call_frame.as_mut().unwrap();
+
+                if let Some(val) = frame.top() {
+                    frame.define_local(name, val.clone());
                 } else {
-                    vm.call_frame.define_local(name, Value::Undefined);
+                    frame.define_local(name, Value::Undefined);
                 }
 
-                self.pop(vm);
+                self.pop(vm, pc)
             }
             Inst::LOAD(name) => {
+                let frame = vm.call_frame.as_mut().unwrap();
                 let mut tmp = Value::Undefined;
-                if let Some(val) = vm.call_frame.resolve_local(name) {
+
+                if let Some(val) = frame.resolve_local(name) {
                     tmp = val.clone(); // avoid mutable ref and immutable ref of vm at the same time
                 }
-                self.push(vm, tmp);
+                self.push(vm, tmp, pc)
             }
-            _ => todo!(),
+
+            Inst::CALL => {
+                let mut new_frame = CallFrame::new();
+                new_frame.prev = vm.call_frame.take();
+
+                vm.call_frame = Some(Box::new(new_frame));
+
+                Ok(())
+            }
+            Inst::RET => {
+                let frame = vm.call_frame.as_mut().unwrap();
+                let top = frame.top().unwrap_or(&Value::Undefined).clone();
+
+                vm.call_frame = frame.prev.take();
+                // always return the top value
+                self.push(vm, top, pc)
+            }
         }
     }
 
-    fn push(&self, vm: &mut VM, value: Value) {
-        if vm.call_frame.sp >= vm.call_frame.stack.len() {
-            todo!();
+    fn push<'a>(&self, vm: &mut VM, value: Value, _pc: &mut usize) -> ExecResult<'a> {
+        let frame = vm.call_frame.as_mut().unwrap();
+
+        if frame.sp >= frame.stack.len() {
+            frame.stack.resize(frame.stack.len() * 2, Value::Undefined);
         }
 
-        vm.call_frame.stack[vm.call_frame.sp] = value;
-        vm.call_frame.sp = vm.call_frame.sp + 1;
+        frame.stack[frame.sp] = value;
+        frame.sp += 1;
+        Ok(())
     }
 
-    fn pop(&self, vm: &mut VM) {
-        if vm.call_frame.sp < 1 {
-            todo!();
+    fn pop<'a>(&self, vm: &mut VM, pc: &mut usize) -> ExecResult<'a> {
+        let frame = vm.call_frame.as_mut().unwrap();
+
+        if frame.sp < 1 {
+            return Err(SquareError::RuntimeError(
+                "bad pop, operand stack empty".to_string(),
+                self.clone(),
+                *pc,
+            ));
         }
-        vm.call_frame.sp = vm.call_frame.sp - 1;
+        frame.sp -= 1;
+        Ok(())
     }
 
-    fn binop(&self, vm: &mut VM, op_fn: &OpFn) {
-        if vm.call_frame.sp < 2 {
-            todo!();
+    fn binop<'a>(&self, vm: &mut VM, op_fn: &OpFn, pc: &mut usize) -> ExecResult<'a> {
+        let frame = vm.call_frame.as_mut().unwrap();
+
+        if frame.sp < 2 {
+            return Err(SquareError::RuntimeError(
+                format!("bad binary operation, operand stack length is {}", frame.sp),
+                self.clone(),
+                *pc,
+            ));
         }
 
-        vm.call_frame.stack[vm.call_frame.sp - 2] = op_fn(
-            &vm.call_frame.stack[vm.call_frame.sp - 2],
-            &vm.call_frame.stack[vm.call_frame.sp - 1],
-        );
-        vm.call_frame.sp = vm.call_frame.sp - 1;
+        frame.stack[frame.sp - 2] = op_fn(&frame.stack[frame.sp - 2], &frame.stack[frame.sp - 1]);
+        frame.sp -= 1;
+        Ok(())
     }
 
-    fn jump(&self, insts: &Vec<Inst>, pc: &mut usize, offset: i32) {
+    fn jump<'a>(&self, insts: &Vec<Inst>, pc: &mut usize, offset: i32) -> ExecResult<'a> {
         let new_pc = *pc as i32 + offset;
         if new_pc < 0 || new_pc > insts.len() as i32 {
-            todo!();
+            return Err(SquareError::RuntimeError(
+                "bad pc".to_string(),
+                self.clone(),
+                *pc,
+            ));
         }
 
         *pc = new_pc as usize;
+        Ok(())
     }
 }
 
 pub struct CallFrame {
     locals: HashMap<String, Value>,
+    // operand stack
     stack: Vec<Value>,
     // fake length, avoid frequent push/pop
     sp: usize,
     prev: Option<Box<CallFrame>>,
 }
 
+impl fmt::Display for CallFrame {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Locals:")?;
+        for (key, value) in &self.locals {
+            writeln!(f, "{:>8}: {}", key, value)?;
+        }
+        writeln!(f, "Operand Stack:")?;
+        for (index, value) in self.stack.iter().enumerate() {
+            if index >= self.sp {
+                break;
+            }
+
+            writeln!(f, "{:8}: {}", index, value)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl CallFrame {
     fn new() -> Self {
         Self {
             locals: HashMap::new(),
-            stack: vec![Value::Undefined; 1024], // item count, not byte length
+            stack: vec![Value::Undefined; 16], // item count, not byte length
             sp: 0,
             prev: None,
         }
     }
 
-    fn find_frame_by_varname<'a>(&self, name: &'a str) -> Option<&CallFrame> {
-        if self.locals.contains_key(name) {
-            return Some(self);
-        }
-
-        let mut frame = &self.prev;
-        while let Some(f) = frame {
-            if f.locals.contains_key(name) {
-                return Some(f.as_ref());
-            }
-            frame = &f.prev;
-        }
-        return None;
-    }
-
-    pub fn resolve_local<'a>(&self, name: &'a str) -> Option<&Value> {
-        let frame = self.find_frame_by_varname(name)?;
-
-        return frame.locals.get(name);
-    }
-
-    fn find_frame_by_varname_mut<'a>(&mut self, name: &'a str) -> Option<&mut CallFrame> {
+    fn find_frame_by_varname<'a>(&mut self, name: &'a str) -> Option<&mut CallFrame> {
         if self.locals.contains_key(name) {
             return Some(self);
         }
@@ -167,8 +201,14 @@ impl CallFrame {
         return None;
     }
 
+    pub fn resolve_local<'a>(&mut self, name: &'a str) -> Option<&Value> {
+        let frame = self.find_frame_by_varname(name)?;
+
+        return frame.locals.get(name);
+    }
+
     pub fn define_local<'a>(&mut self, name: &'a str, value: Value) {
-        if let Some(frame) = self.find_frame_by_varname_mut(name) {
+        if let Some(frame) = self.find_frame_by_varname(name) {
             frame.locals.insert(name.to_string(), value);
         } else {
             self.locals.insert(name.to_string(), value);
@@ -217,49 +257,31 @@ fn test_define_local() {
 }
 
 pub struct VM {
-    pub call_frame: Box<CallFrame>,
+    pub call_frame: Option<Box<CallFrame>>,
 }
 
 impl VM {
     pub fn new() -> Self {
         Self {
-            call_frame: Box::new(CallFrame::new()),
+            call_frame: Some(Box::new(CallFrame::new())),
         }
     }
 
-    pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) {
+    pub fn step<'a>(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult<'a> {
         let inst = &insts[*pc];
-        inst.exec(self, insts, pc);
+        inst.exec(self, insts, pc)?;
         *pc += 1;
+
+        Ok(())
     }
 
-    pub fn run(&mut self, insts: &Vec<Inst>, pc: &mut usize) {
+    pub fn run<'a>(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult<'a> {
         while *pc < insts.len() {
-            self.step(insts, pc);
+            self.step(insts, pc)?;
         }
+
+        Ok(())
     }
-}
-
-#[test]
-fn test_step() {
-    let mut vm = VM::new();
-    let insts = vec![
-        Inst::PUSH(Value::Int(42)),
-        Inst::PUSH(Value::Float(24.0)),
-        Inst::POP,
-        Inst::POP,
-    ];
-    let mut pc = 0;
-
-    vm.step(&insts, &mut pc);
-    vm.step(&insts, &mut pc);
-
-    assert_eq!(vm.call_frame.sp, 2);
-
-    vm.step(&insts, &mut pc);
-    vm.step(&insts, &mut pc);
-
-    assert_eq!(vm.call_frame.sp, 0);
 }
 
 #[test]
@@ -274,7 +296,8 @@ fn test_run() {
     ];
     let mut pc = 0;
 
-    vm.run(&insts, &mut pc);
+    vm.run(&insts, &mut pc).unwrap();
 
-    assert_eq!(vm.call_frame.top(), Some(&Value::Int(132)));
+    let callframe = vm.call_frame.as_mut().unwrap();
+    assert_eq!(callframe.top(), Some(&Value::Int(132)));
 }

@@ -173,7 +173,7 @@ fn test_parse_expand_empty() {
     let mut pos = Position::default();
     let node = parse_expand(input, &mut pos).unwrap();
 
-    if let Node::Expand(_, _, phs) = *node {
+    if let Node::Expand(_, _, phs) = node.as_ref() {
         assert_eq!(phs.len(), 0);
 
         return;
@@ -188,7 +188,7 @@ fn test_parse_expand_base() {
     let mut pos = Position::default();
     let node = parse_expand(input, &mut pos).unwrap();
 
-    if let Node::Expand(_, _, phs) = *node {
+    if let Node::Expand(_, _, phs) = node.as_ref() {
         assert_eq!(phs.len(), 3);
 
         return;
@@ -203,7 +203,7 @@ fn test_parse_expand_placehoders() {
     let mut pos = Position::default();
     let node = parse_expand(input, &mut pos).unwrap();
 
-    if let Node::Expand(_, _, phs) = *node {
+    if let Node::Expand(_, _, phs) = node.as_ref() {
         assert_eq!(phs.len(), 5);
         return;
     }
@@ -217,14 +217,14 @@ fn test_parse_expand_nested() {
     let mut pos = Position::default();
     let node = parse_expand(input, &mut pos).unwrap();
 
-    if let Node::Expand(_, _, phs) = *node {
+    if let Node::Expand(_, _, phs) = node.as_ref() {
         assert_eq!(phs.len(), 4);
 
-        if let Node::Expand(_, _, ref phs2) = *phs[1] {
+        if let Node::Expand(_, _, phs2) = phs[1].as_ref() {
             assert_eq!(phs2.len(), 3);
 
-            if let Node::Expand(_, _, ref phs3) = *phs2[1] {
-                if let Node::Token(ref y) = *phs3[0] {
+            if let Node::Expand(_, _, phs3) = phs2[1].as_ref() {
+                if let Node::Token(y) = phs3[0].as_ref() {
                     assert_eq!(y.source, "y");
 
                     return;
@@ -300,11 +300,11 @@ fn test_parse_fn_base() {
     let mut pos = Position::default();
     let node = parse_fn(input, &mut pos).unwrap();
 
-    if let Node::Fn(_, params, body) = *node {
-        if let Node::Expand(_, _, phs) = *params {
+    if let Node::Fn(_, params, body) = node.as_ref() {
+        if let Node::Expand(_, _, phs) = params.as_ref() {
             assert_eq!(phs.len(), 0);
 
-            if let Node::Token(value) = *body {
+            if let Node::Token(value) = body.as_ref() {
                 assert_eq!(value.source, "42");
 
                 return;
@@ -321,15 +321,15 @@ fn test_parse_fn_params() {
     let mut pos = Position::default();
     let node = parse_fn(input, &mut pos).unwrap();
 
-    if let Node::Fn(_, params, _) = *node {
-        if let Node::Expand(_, _, phs) = *params {
+    if let Node::Fn(_, params, _) = node.as_ref() {
+        if let Node::Expand(_, _, phs) = params.as_ref() {
             assert_eq!(phs.len(), 4);
 
-            if let Node::Expand(_, _, ref phs2) = *phs[1] {
+            if let Node::Expand(_, _, phs2) = phs[1].as_ref() {
                 assert_eq!(phs2.len(), 3);
 
-                if let Node::Expand(_, _, ref phs3) = *phs2[1] {
-                    if let Node::Token(ref y) = *phs3[0] {
+                if let Node::Expand(_, _, phs3) = phs2[1].as_ref() {
+                    if let Node::Token(y) = phs3[0].as_ref() {
                         assert_eq!(y.source, "y");
 
                         return;
@@ -348,19 +348,19 @@ fn test_parse_fn_high_order() {
     let mut pos = Position::default();
     let node = parse_fn(input, &mut pos).unwrap();
 
-    if let Node::Fn(_, x_param, x_body) = *node {
-        if let Node::Expand(_, _, x_phs) = *x_param {
-            if let Node::Token(ref x) = *x_phs[0] {
+    if let Node::Fn(_, x_param, x_body) = node.as_ref() {
+        if let Node::Expand(_, _, x_phs) = x_param.as_ref() {
+            if let Node::Token(x) = x_phs[0].as_ref() {
                 assert_eq!(x.source, "x");
 
-                if let Node::Fn(_, y_param, y_body) = *x_body {
-                    if let Node::Expand(_, _, y_phs) = *y_param {
-                        if let Node::Token(ref y) = *y_phs[0] {
+                if let Node::Fn(_, y_param, y_body) = x_body.as_ref() {
+                    if let Node::Expand(_, _, y_phs) = y_param.as_ref() {
+                        if let Node::Token(y) = y_phs[0].as_ref() {
                             assert_eq!(y.source, "y");
 
-                            if let Node::Fn(_, z_param, _) = *y_body {
-                                if let Node::Expand(_, _, z_phs) = *z_param {
-                                    if let Node::Token(ref z) = *z_phs[0] {
+                            if let Node::Fn(_, z_param, _) = y_body.as_ref() {
+                                if let Node::Expand(_, _, z_phs) = z_param.as_ref() {
+                                    if let Node::Token(z) = z_phs[0].as_ref() {
                                         assert_eq!(z.source, "z");
 
                                         return;
@@ -393,7 +393,7 @@ fn test_parse_prop() {
     let mut pos = Position::default();
     let node = parse_prop(input, &mut pos).unwrap();
 
-    if let Node::Prop(_, id) = *node {
+    if let Node::Prop(_, id) = node.as_ref() {
         assert_eq!(id.source, "foo");
 
         return;
@@ -435,7 +435,7 @@ fn test_parse_prop_chain() {
     let mut pos = Position::default();
     let chain = parse_prop_chain(input, &mut pos).unwrap();
 
-    if let Node::Prop(_, ref baz) = *chain[2] {
+    if let Node::Prop(_, baz) = chain[2].as_ref() {
         assert_eq!(baz.source, "baz");
 
         return;
@@ -486,11 +486,11 @@ fn test_parse_assign_base() {
     let mut pos = Position::default();
     let node = parse_assign(input, &mut pos).unwrap();
 
-    if let Node::Assign(_, lhs, _, rhs) = *node {
-        if let Node::Token(a) = *lhs {
+    if let Node::Assign(_, lhs, _, rhs) = node.as_ref() {
+        if let Node::Token(a) = lhs.as_ref() {
             assert_eq!(a.source, "a");
 
-            if let Node::Token(b) = *rhs {
+            if let Node::Token(b) = rhs.as_ref() {
                 assert_eq!(b.source, "b");
 
                 return;
@@ -507,11 +507,11 @@ fn test_parse_assign_expand() {
     let mut pos = Position::default();
     let node = parse_assign(input, &mut pos).unwrap();
 
-    if let Node::Assign(_, lhs, _, rhs) = *node {
-        if let Node::Expand(_, _, exprs) = *lhs {
+    if let Node::Assign(_, lhs, _, rhs) = node.as_ref() {
+        if let Node::Expand(_, _, exprs) = lhs.as_ref() {
             assert_eq!(exprs.len(), 3);
 
-            if let Node::Token(b) = *rhs {
+            if let Node::Token(b) = rhs.as_ref() {
                 assert_eq!(b.source, "b");
 
                 return;
@@ -589,7 +589,7 @@ fn test_parse_op_binary() {
     let mut pos = Position::default();
     let node = parse_op(input, &mut pos).unwrap();
 
-    if let Node::Op(op, exprs) = *node {
+    if let Node::Op(op, exprs) = node.as_ref() {
         assert_eq!(exprs.len(), 2);
         assert_eq!(op.source, "..");
 
@@ -658,10 +658,10 @@ fn test_parse_call_assign() {
     let mut pos = Position::default();
     let node = parse_call(input, &mut pos).unwrap();
 
-    if let Node::Call(_, _, ref exprs) = *node {
-        if let Node::Assign(_, ref expansion, _, _) = *exprs[0] {
-            if let Node::Expand(_, _, ref phs) = **expansion {
-                if let Node::Token(ref b) = *phs[1] {
+    if let Node::Call(_, _, exprs) = node.as_ref() {
+        if let Node::Assign(_, expansion, _, _) = exprs[0].as_ref() {
+            if let Node::Expand(_, _, phs) = expansion.as_ref() {
+                if let Node::Token(b) = phs[1].as_ref() {
                     assert_eq!(b.source, "b");
 
                     return;
@@ -717,10 +717,10 @@ fn test_parse_dot_empty() {
     let mut pos = Position::default();
     let node = parse_dot(input, &mut pos).unwrap();
 
-    if let Node::Call(_, _, exprs) = *node {
-        if let Node::Assign(_, _, _, ref expr) = *exprs[0] {
-            if let Node::Call(_, _, ref exprs) = **expr {
-                if let Node::Token(ref fourty_two) = *exprs[0] {
+    if let Node::Call(_, _, exprs) = node.as_ref() {
+        if let Node::Assign(_, _, _, expr) = exprs[0].as_ref() {
+            if let Node::Call(_, _, exprs) = expr.as_ref() {
+                if let Node::Token(fourty_two) = exprs[0].as_ref() {
                     assert_eq!(fourty_two.source, "42");
 
                     return;
@@ -738,11 +738,11 @@ fn test_parse_dot() {
     let mut pos = Position::default();
     let node = parse_dot(input, &mut pos).unwrap();
 
-    if let Node::Dot(_, props) = *node {
-        if let Node::Prop(_, ref foo) = *props[0] {
+    if let Node::Dot(_, props) = node.as_ref() {
+        if let Node::Prop(_, foo) = props[0].as_ref() {
             assert_eq!(foo.source, "foo");
 
-            if let Node::Prop(_, ref bar) = *props[1] {
+            if let Node::Prop(_, bar) = props[1].as_ref() {
                 assert_eq!(bar.source, "bar");
 
                 return;
@@ -825,7 +825,7 @@ fn test_parse_variable() {
         })
         .unwrap();
 
-    for node in ast {
+    for node in &*ast {
         println!("{}", node);
     }
 }
@@ -857,7 +857,7 @@ fn test_parse_control_flow() {
         })
         .unwrap();
 
-    for node in ast {
+    for node in &*ast {
         println!("{}", node);
     }
 }
@@ -893,7 +893,7 @@ fn test_parse_function() {
         })
         .unwrap();
 
-    for node in ast {
+    for node in &*ast {
         println!("{}", node);
     }
 }
@@ -919,7 +919,7 @@ fn test_parse_conroutine() {
         })
         .unwrap();
 
-    for node in ast {
+    for node in &*ast {
         println!("{}", node);
     }
 }
@@ -960,7 +960,7 @@ fn test_parse_structure() {
         })
         .unwrap();
 
-    for node in ast {
+    for node in &*ast {
         println!("{}", node);
     }
 }

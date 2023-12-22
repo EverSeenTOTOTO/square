@@ -1,7 +1,4 @@
-#[cfg(not(test))]
 use alloc::{format, string::String};
-#[cfg(test)]
-use std::{format, string::String};
 
 use core::{cmp, fmt};
 

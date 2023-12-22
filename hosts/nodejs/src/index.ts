@@ -38,7 +38,7 @@ type WasmExports = {
 
 (async () => {
   const wasm = await fs.promises.readFile(
-    path.join(__dirname, '../../../sq.wasm'),
+    path.join(__dirname, '../../../square.wasm'),
   );
 
   const { instance } = await WebAssembly.instantiate(wasm, {
@@ -68,9 +68,9 @@ type WasmExports = {
     const vmAddr = square.init_vm();
 
     const code = `
-[= a 24]
-[= b 42] 
-[= a [+ a b]]
+[= a [begin 1 2 42]]
+[= b [begin 1 2 24]]
+[while [< a b] [= a [- a 2]]]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);

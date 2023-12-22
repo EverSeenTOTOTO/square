@@ -5,10 +5,10 @@ use crate::{
     vm_value::Value,
 };
 
-use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
+use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 use core::fmt;
 
-type EmitResult<'a> = Result<Box<Vec<Inst>>, SquareError<'a>>;
+type EmitResult<'a> = Result<Vec<Inst>, SquareError<'a>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inst {
@@ -22,7 +22,6 @@ pub enum Inst {
     BITAND, // &
     BITOR,  // |
     BITXOR, // ^
-    NOT,    // !
     EQ,     // ==
     NE,     // !=
     LT,     // <
@@ -30,7 +29,7 @@ pub enum Inst {
     GT,     // >
     GE,     // >=
     JMP(i32),
-    JEQ(i32), // jump if eq
+    JNE(i32), // jump if false
     STORE(String),
     LOAD(String),
     CALL,
@@ -50,7 +49,6 @@ impl fmt::Display for Inst {
             Inst::BITAND => write!(f, "AND"),
             Inst::BITOR => write!(f, "OR"),
             Inst::BITXOR => write!(f, "XOR"),
-            Inst::NOT => write!(f, "NOT"),
             Inst::EQ => write!(f, "EQ"),
             Inst::NE => write!(f, "NE"),
             Inst::LT => write!(f, "LT"),
@@ -58,7 +56,7 @@ impl fmt::Display for Inst {
             Inst::GT => write!(f, "GT"),
             Inst::GE => write!(f, "GE"),
             Inst::JMP(value) => write!(f, "JMP {}", value),
-            Inst::JEQ(value) => write!(f, "JEQ {}", value),
+            Inst::JNE(value) => write!(f, "JNE {}", value),
             Inst::STORE(name) => write!(f, "STORE {}", name),
             Inst::LOAD(name) => write!(f, "LOAD {}", name),
             Inst::CALL => write!(f, "CALL"),
@@ -67,20 +65,20 @@ impl fmt::Display for Inst {
     }
 }
 
-fn emit_token<'a>(input: &'a str, token: Token) -> EmitResult<'a> {
+fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult<'a> {
     match token.name {
         TokenName::NUM => {
             let val = Value::Int(
                 token.source.parse::<i32>().unwrap(), // TODO: numeric types
             );
-            return Ok(Box::new(vec![Inst::PUSH(val)]));
+            return Ok(vec![Inst::PUSH(val)]);
         }
         TokenName::STR => {
             let val = Value::Str(token.source.clone());
-            return Ok(Box::new(vec![Inst::PUSH(val)]));
+            return Ok(vec![Inst::PUSH(val)]);
         }
         TokenName::ID => {
-            return Ok(Box::new(vec![Inst::LOAD(token.source.clone())]));
+            return Ok(vec![Inst::LOAD(token.source.clone())]);
         }
         _ => {
             return Err(SquareError::SyntaxError(
@@ -89,31 +87,33 @@ fn emit_token<'a>(input: &'a str, token: Token) -> EmitResult<'a> {
                     "failed to emit_token, expect number, string or identifier name, got {}",
                     token.name
                 ),
-                token.pos,
+                token.pos.clone(),
                 None,
             ));
         }
     }
 }
 
-fn emit_assign<'a>(
+fn emit_assign<'a, 'b>(
     input: &'a str,
-    target: Box<Node>,
-    _properties: Vec<Box<Node>>,
-    expression: Box<Node>,
+    target: &'b Box<Node>,
+    _properties: &'b Vec<Box<Node>>,
+    expression: &'b Box<Node>,
 ) -> EmitResult<'a> {
-    let mut insts = Box::new(vec![]);
-    insts.extend(*emit_expr(input, expression)?);
+    let mut insts = emit_expr(input, expression)?;
 
-    match *target {
+    match target.as_ref() {
         Node::Token(id) => {
             if id.name == TokenName::ID {
-                insts.push(Inst::STORE(id.source));
+                insts.push(Inst::STORE(id.source.clone()));
             } else {
                 return Err(SquareError::SyntaxError(
                     input,
-                    format!("failed to emit_assign, cannot assign to {}, expect identifier", id.name),
-                    id.pos,
+                    format!(
+                        "failed to emit_assign, cannot assign to {}, expect identifier",
+                        id.name
+                    ),
+                    id.pos.clone(),
                     None,
                 ));
             }
@@ -124,40 +124,86 @@ fn emit_assign<'a>(
     return Ok(insts);
 }
 
-fn emit_op<'a>(input: &'a str, op: Token, expressions: Vec<Box<Node>>) -> EmitResult<'a> {
-    let emit_op_inst = |inst: Inst| -> EmitResult<'a> {
+fn emit_op<'a, 'b>(
+    input: &'a str,
+    op: &'b Token,
+    expressions: &'b Vec<Box<Node>>,
+) -> EmitResult<'a> {
+    let op_action = |action: Inst| {
+        if expressions.len() != 2 {
+            return Err(SquareError::SyntaxError(
+                input,
+                "failed to emit_op, operands count not match".to_string(),
+                op.pos.clone(),
+                None,
+            ));
+        }
+
         let mut result = emit(input, expressions)?;
-        result.push(inst);
-        return Ok(Box::new(result));
+        result.push(action);
+        return Ok(result);
     };
-    let emit_op_assign_inst = |inst: Inst| -> EmitResult<'a> {
-        todo!();
+    let op_assign_action = |action: Inst| {
+        if expressions.len() != 2 {
+            return Err(SquareError::SyntaxError(
+                input,
+                "failed to emit_op, operands count not match".to_string(),
+                op.pos.clone(),
+                None,
+            ));
+        }
+
+        let mut result = vec![];
+        let first = expressions.first().unwrap();
+
+        match &**first {
+            Node::Token(token) => {
+                let source = token.source.clone();
+                if token.name == TokenName::ID {
+                    result.extend(emit(input, expressions)?);
+                    result.push(action);
+                    result.push(Inst::STORE(source));
+                    return Ok(result);
+                } else {
+                    return Err(SquareError::SyntaxError(
+                        input,
+                        format!(
+                            "failed to emit_assign_op, expect identifier, got {}",
+                            token.name
+                        ),
+                        token.pos.clone(),
+                        None,
+                    ));
+                }
+            }
+            _ => todo!(),
+        }
     };
 
     if op.name == TokenName::OP {
         return match op.source.as_str() {
-            "+" => emit_op_inst(Inst::ADD),
-            "-" => emit_op_inst(Inst::SUB),
-            "*" => emit_op_inst(Inst::MUL),
-            "/" => emit_op_inst(Inst::DIV),
-            "%" => emit_op_inst(Inst::REM),
-            "&" => emit_op_inst(Inst::BITAND),
-            "|" => emit_op_inst(Inst::BITOR),
-            "^" => emit_op_inst(Inst::BITXOR),
-            "==" => emit_op_inst(Inst::EQ),
-            "!=" => emit_op_inst(Inst::NE),
-            "<" => emit_op_inst(Inst::LT),
-            "<=" => emit_op_inst(Inst::LE),
-            ">" => emit_op_inst(Inst::GT),
-            ">=" => emit_op_inst(Inst::GE),
-            "+=" => emit_op_assign_inst(Inst::ADD),
-            "-=" => emit_op_assign_inst(Inst::SUB),
-            "*=" => emit_op_assign_inst(Inst::MUL),
-            "/=" => emit_op_assign_inst(Inst::DIV),
-            "%=" => emit_op_assign_inst(Inst::REM),
-            "&=" => emit_op_assign_inst(Inst::BITAND),
-            "|=" => emit_op_assign_inst(Inst::BITOR),
-            "^=" => emit_op_assign_inst(Inst::BITXOR),
+            "+" => op_action(Inst::ADD),
+            "-" => op_action(Inst::SUB),
+            "*" => op_action(Inst::MUL),
+            "/" => op_action(Inst::DIV),
+            "%" => op_action(Inst::REM),
+            "&" => op_action(Inst::BITAND),
+            "|" => op_action(Inst::BITOR),
+            "^" => op_action(Inst::BITXOR),
+            "==" => op_action(Inst::EQ),
+            "!=" => op_action(Inst::NE),
+            "<" => op_action(Inst::LT),
+            "<=" => op_action(Inst::LE),
+            ">" => op_action(Inst::GT),
+            ">=" => op_action(Inst::GE),
+            "+=" => op_assign_action(Inst::ADD),
+            "-=" => op_assign_action(Inst::SUB),
+            "*=" => op_assign_action(Inst::MUL),
+            "/=" => op_assign_action(Inst::DIV),
+            "%=" => op_assign_action(Inst::REM),
+            "&=" => op_assign_action(Inst::BITAND),
+            "|=" => op_assign_action(Inst::BITOR),
+            "^=" => op_assign_action(Inst::BITXOR),
             _ => todo!(),
         };
     }
@@ -165,17 +211,114 @@ fn emit_op<'a>(input: &'a str, op: Token, expressions: Vec<Box<Node>>) -> EmitRe
     return Err(SquareError::SyntaxError(
         input,
         format!("failed to emit_op, expect operator, got {}", op.name),
-        op.pos,
+        op.pos.clone(),
         None,
     ));
 }
 
-fn emit_call<'a>(input: &'a str, expressions: Vec<Box<Node>>) -> EmitResult<'a> {
-    return Ok(Box::new(emit(input, expressions)?));
+fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult<'a> {
+    let leading = expressions.first().unwrap();
+
+    if expressions.len() < 3 {
+        return Err(SquareError::SyntaxError(
+            input,
+            "failed to emit_if, expect condition and true_branch".to_string(),
+            if let Node::Token(if_token) = &**leading {
+                if_token.pos.clone()
+            } else {
+                unreachable!()
+            },
+            None,
+        ));
+    }
+
+    let mut result = vec![Inst::CALL];
+
+    let condition = expressions.get(1).unwrap();
+    result.extend(emit_expr(input, condition)?);
+
+    let true_branch = expressions.get(2).unwrap();
+    let true_branch_result = emit_expr(input, true_branch)?;
+    // skip true branch, +1 for one extra JMP instcurtion
+    result.push(Inst::JNE(true_branch_result.len() as i32 + 1));
+    result.extend(true_branch_result);
+
+    if let Some(false_branch) = expressions.get(3) {
+        let false_branch_result = emit_expr(input, false_branch)?;
+        // skip false branch
+        result.push(Inst::JMP(false_branch_result.len() as i32));
+        result.extend(false_branch_result);
+    } else {
+        result.push(Inst::JMP(1));
+        result.push(Inst::PUSH(Value::Undefined)); // FIXME: else undefined
+    }
+    result.push(Inst::RET);
+
+    return Ok(result);
 }
 
-fn emit_expr<'a>(input: &'a str, node: Box<Node>) -> EmitResult<'a> {
-    match *node {
+fn emit_while<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult<'a> {
+    let leading = expressions.first().unwrap();
+
+    if expressions.len() < 3 {
+        return Err(SquareError::SyntaxError(
+            input,
+            "failed to emit_while, expect condition and body".to_string(),
+            if let Node::Token(while_token) = &**leading {
+                while_token.pos.clone()
+            } else {
+                unreachable!()
+            },
+            None,
+        ));
+    }
+
+    let mut result = vec![Inst::CALL];
+    let condition = expressions.get(1).unwrap();
+    let condition_result = emit_expr(input, condition)?;
+    let condition_result_len = condition_result.len();
+    let body = expressions.get(2).unwrap();
+    let body_result = emit_expr(input, body)?;
+    let body_result_len = body_result.len();
+
+    result.extend(condition_result);
+    result.push(Inst::JNE(body_result_len as i32 + 1));
+    result.extend(body_result);
+    result.push(Inst::JMP(
+        -((condition_result_len + body_result_len + 2) as i32),
+    ));
+    result.push(Inst::RET);
+
+    return Ok(result);
+}
+
+fn emit_begin<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult<'a> {
+    let mut result = vec![Inst::CALL];
+    result.extend(emit(input, &expressions[1..].to_vec())?);
+    result.push(Inst::RET);
+    return Ok(result);
+}
+
+fn emit_call<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult<'a> {
+    if expressions.len() == 0 {
+        todo!(); // TODO: []
+    }
+
+    let first = expressions.first().unwrap();
+
+    match &**first {
+        Node::Token(keyword) => match keyword.source.as_str() {
+            "if" => emit_if(input, expressions),
+            "while" => emit_while(input, expressions),
+            "begin" => emit_begin(input, expressions),
+            _ => emit(input, expressions),
+        },
+        _ => emit(input, expressions),
+    }
+}
+
+fn emit_expr<'a, 'b>(input: &'a str, node: &'b Box<Node>) -> EmitResult<'a> {
+    match node.as_ref() {
         Node::Token(token) => emit_token(input, token),
         Node::Assign(_, target, properties, expression) => {
             emit_assign(input, target, properties, expression)
@@ -186,12 +329,12 @@ fn emit_expr<'a>(input: &'a str, node: Box<Node>) -> EmitResult<'a> {
     }
 }
 
-pub fn emit<'a>(input: &'a str, ast: Vec<Box<Node>>) -> Result<Vec<Inst>, SquareError<'a>> {
+pub fn emit<'a, 'b>(input: &'a str, ast: &'b Vec<Box<Node>>) -> Result<Vec<Inst>, SquareError<'a>> {
     let mut insts = vec![];
 
     for node in ast {
         let result = emit_expr(input, node)?;
-        insts.extend(*result);
+        insts.extend(result);
     }
 
     return Ok(insts);
