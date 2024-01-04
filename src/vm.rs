@@ -28,6 +28,22 @@ impl Inst {
             Inst::LE => self.binop(vm, &|a, b| Value::Bool(a <= b), pc),
             Inst::GT => self.binop(vm, &|a, b| Value::Bool(a > b), pc),
             Inst::GE => self.binop(vm, &|a, b| Value::Bool(a >= b), pc),
+            Inst::SHL => self.binop(vm, &|a, b| a << b, pc),
+            Inst::SHR => self.binop(vm, &|a, b| a >> b, pc),
+            Inst::BITNOT => {
+                let frame = vm.call_frame.as_mut().unwrap();
+
+                if frame.sp < 1 {
+                    return Err(SquareError::RuntimeError(
+                        format!("bad binary operation, operand stack length is {}", frame.sp),
+                        self.clone(),
+                        *pc,
+                    ));
+                }
+
+                frame.stack[frame.sp - 1] = !&frame.stack[frame.sp - 1];
+                Ok(())
+            }
 
             Inst::JMP(value) => self.jump(insts, pc, *value),
             Inst::JNE(value) => {
@@ -41,14 +57,13 @@ impl Inst {
                     ));
                 }
 
-                let top = &frame.stack[frame.sp - 1];
-                frame.sp -= 1;
-
-                if !top == Value::Bool(true) {
-                    return self.jump(insts, pc, *value);
+                if frame.top() != Some(&Value::Bool(true)) {
+                    frame.sp -= 1;
+                    self.jump(insts, pc, *value)
+                } else {
+                    frame.sp -= 1;
+                    Ok(())
                 }
-
-                Ok(())
             }
 
             Inst::STORE(name) => {
@@ -56,11 +71,11 @@ impl Inst {
 
                 if let Some(val) = frame.top() {
                     frame.define_local(name, val.clone());
+                    self.pop(vm, pc)
                 } else {
                     frame.define_local(name, Value::Undefined);
+                    Ok(())
                 }
-
-                self.pop(vm, pc)
             }
             Inst::LOAD(name) => {
                 let frame = vm.call_frame.as_mut().unwrap();
@@ -135,7 +150,7 @@ impl Inst {
 
     fn jump<'a>(&self, insts: &Vec<Inst>, pc: &mut usize, offset: i32) -> ExecResult<'a> {
         let new_pc = *pc as i32 + offset;
-        if new_pc < 0 || new_pc > insts.len() as i32 {
+        if new_pc < 0 || new_pc >= insts.len() as i32 {
             return Err(SquareError::RuntimeError(
                 "bad pc".to_string(),
                 self.clone(),
@@ -267,6 +282,10 @@ impl VM {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.call_frame = Some(Box::new(CallFrame::new()));
+    }
+
     pub fn step<'a>(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult<'a> {
         let inst = &insts[*pc];
         inst.exec(self, insts, pc)?;
@@ -285,19 +304,113 @@ impl VM {
 }
 
 #[test]
-fn test_run() {
+fn test_many_operands() {
     let mut vm = VM::new();
-    let insts = vec![
-        Inst::PUSH(Value::Int(42)),
-        Inst::PUSH(Value::Int(24)),
-        Inst::ADD,
-        Inst::PUSH(Value::Int(2)),
-        Inst::MUL,
-    ];
-    let mut pc = 0;
+    let mut insts = vec![];
 
-    vm.run(&insts, &mut pc).unwrap();
+    for i in 0..100 {
+        insts.push(Inst::PUSH(Value::Int(i)))
+    }
+
+    vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.call_frame.as_mut().unwrap();
-    assert_eq!(callframe.top(), Some(&Value::Int(132)));
+
+    assert_eq!(callframe.stack.len() >= 100, true);
+    assert_eq!(callframe.sp, 100);
+    assert_eq!(callframe.top(), Some(&Value::Int(99)));
+}
+
+#[test]
+fn test_load_undefined() {
+    let mut vm = VM::new();
+    let insts = vec![
+        Inst::LOAD("a".to_string()),
+        Inst::LOAD("a".to_string()),
+        Inst::EQ,
+    ];
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.call_frame.as_mut().unwrap();
+    assert_eq!(callframe.top(), Some(&Value::Bool(true)));
+}
+
+#[test]
+fn test_store_undefined() {
+    let mut vm = VM::new();
+    let insts = vec![Inst::STORE("a".to_string())];
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.call_frame.as_mut().unwrap();
+    assert_eq!(callframe.resolve_local("a"), Some(&Value::Undefined));
+}
+
+#[test]
+fn test_call_ret() {
+    let mut vm = VM::new();
+    let insts = vec![
+        Inst::CALL,
+        Inst::CALL,
+        Inst::CALL,
+        Inst::PUSH(Value::Int(42)),
+        Inst::RET,
+        Inst::RET,
+        Inst::RET,
+        Inst::BITNOT,
+    ];
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.call_frame.as_mut().unwrap();
+    assert_eq!(callframe.top(), Some(&Value::Int(!42)));
+}
+
+#[test]
+fn test_jump_if() {
+    let mut vm = VM::new();
+    let mut insts = vec![
+        Inst::PUSH(Value::Bool(true)), // condition
+        Inst::JNE(2),
+        Inst::PUSH(Value::Int(42)), // true branch
+        Inst::JMP(1),
+        Inst::PUSH(Value::Int(24)), // false branch
+    ];
+
+    vm.run(&insts, &mut 0).unwrap();
+    let callframe = vm.call_frame.as_mut().unwrap();
+    assert_eq!(callframe.top(), Some(&Value::Int(42)));
+
+    insts[0] = Inst::PUSH(Value::Bool(false));
+
+    vm.reset();
+    vm.run(&insts, &mut 0).unwrap();
+    let callframe = vm.call_frame.as_mut().unwrap();
+    assert_eq!(callframe.top(), Some(&Value::Int(24)));
+}
+
+#[test]
+fn test_jump_while() {
+    let mut vm = VM::new();
+    let insts = vec![
+        // i = 0
+        Inst::PUSH(Value::Int(0)),
+        Inst::STORE("i".to_string()),
+        // while i < 10
+        Inst::LOAD("i".to_string()),
+        Inst::PUSH(Value::Int(10)),
+        Inst::LT,
+        // i = i + 1
+        Inst::JNE(5),
+        Inst::LOAD("i".to_string()),
+        Inst::PUSH(Value::Int(1)),
+        Inst::ADD,
+        Inst::STORE("i".to_string()),
+        Inst::JMP(-9), // pc will automaticlly increase 1, which is different from jump forward
+    ];
+
+    vm.run(&insts, &mut 0).unwrap();
+    let callframe = vm.call_frame.as_mut().unwrap();
+    assert_eq!(callframe.resolve_local("i"), Some(&Value::Int(10)));
 }

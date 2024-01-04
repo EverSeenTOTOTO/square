@@ -22,12 +22,15 @@ pub enum Inst {
     BITAND, // &
     BITOR,  // |
     BITXOR, // ^
+    BITNOT, // ~
     EQ,     // ==
     NE,     // !=
     LT,     // <
     LE,     // <=
     GT,     // >
     GE,     // >=
+    SHL,    // <<
+    SHR,    // >>
     JMP(i32),
     JNE(i32), // jump if false
     STORE(String),
@@ -49,12 +52,15 @@ impl fmt::Display for Inst {
             Inst::BITAND => write!(f, "AND"),
             Inst::BITOR => write!(f, "OR"),
             Inst::BITXOR => write!(f, "XOR"),
+            Inst::BITNOT => write!(f, "NOT"),
             Inst::EQ => write!(f, "EQ"),
             Inst::NE => write!(f, "NE"),
             Inst::LT => write!(f, "LT"),
             Inst::LE => write!(f, "LE"),
             Inst::GT => write!(f, "GT"),
             Inst::GE => write!(f, "GE"),
+            Inst::SHL => write!(f, "SHL"),
+            Inst::SHR => write!(f, "SHR"),
             Inst::JMP(value) => write!(f, "JMP {}", value),
             Inst::JNE(value) => write!(f, "JNE {}", value),
             Inst::STORE(name) => write!(f, "STORE {}", name),
@@ -190,12 +196,17 @@ fn emit_op<'a, 'b>(
             "&" => op_action(Inst::BITAND),
             "|" => op_action(Inst::BITOR),
             "^" => op_action(Inst::BITXOR),
+            "~" => op_action(Inst::BITNOT),
             "==" => op_action(Inst::EQ),
             "!=" => op_action(Inst::NE),
             "<" => op_action(Inst::LT),
             "<=" => op_action(Inst::LE),
             ">" => op_action(Inst::GT),
             ">=" => op_action(Inst::GE),
+            ">>" => op_action(Inst::SHR),
+            "<<" => op_action(Inst::SHL),
+            ">>=" => op_assign_action(Inst::SHR),
+            "<<=" => op_assign_action(Inst::SHL),
             "+=" => op_assign_action(Inst::ADD),
             "-=" => op_assign_action(Inst::SUB),
             "*=" => op_assign_action(Inst::MUL),

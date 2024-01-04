@@ -505,7 +505,7 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         pos.advance();
 
         match ch {
-            '[' | ']' => {}
+            '~' | '[' | ']' => {}
             '+' | '-' | '*' | '/' | '^' | '%' | '&' | '|' | '=' => match chars.peek() {
                 Some('=') => {
                     chars.next();
@@ -554,10 +554,10 @@ fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
                     chars.next();
                     pos.advance();
                 }
-                _ => {
+                any => {
                     return Err(SquareError::UnexpectedToken(
                         input,
-                        format!("expect !=, got '!{}'", ch),
+                        format!("expect !=, got '!{:?}'", any),
                         pos.clone(),
                     ))
                 }
@@ -610,6 +610,26 @@ fn test_raise_eq() {
     let token = raise_operator(input, &mut Position::default()).unwrap();
 
     assert_eq!(token.source, "<<=");
+}
+
+#[test]
+fn test_raise_ne() {
+    let input = "!=";
+    let token = raise_operator(input, &mut Position::default()).unwrap();
+    assert_eq!(token.source, "!=");
+
+    assert_eq!(
+        raise_operator("!", &mut Position::default()),
+        Err(SquareError::UnexpectedToken(
+            "!",
+            "expect !=, got '!None'".to_string(),
+            Position {
+                line: 1,
+                column: 2,
+                cursor: 1
+            },
+        ))
+    );
 }
 
 #[test]
