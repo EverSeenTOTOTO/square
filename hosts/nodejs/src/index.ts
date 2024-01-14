@@ -70,7 +70,7 @@ type WasmExports = {
     const code = `
 [= a [begin 1 2 42]]
 [= b [begin 1 2 24]]
-[while [< a b] [= a [- a 2]]]
+[while [> a b] [= a [- a 2]]]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);

@@ -1,9 +1,4 @@
-use crate::{
-    errors::SquareError,
-    parse::Node,
-    scan::{Token, TokenName},
-    vm_value::Value,
-};
+use crate::{errors::SquareError, parse::Node, scan::Token, vm_value::Value};
 
 use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 use core::fmt;
@@ -72,28 +67,28 @@ impl fmt::Display for Inst {
 }
 
 fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult<'a> {
-    match token.name {
-        TokenName::NUM => {
+    match token {
+        Token::Num(.., int, _dot, _exp) => {
             let val = Value::Int(
-                token.source.parse::<i32>().unwrap(), // TODO: numeric types
+                int.parse::<i32>().unwrap(), // TODO: numeric types
             );
             return Ok(vec![Inst::PUSH(val)]);
         }
-        TokenName::STR => {
-            let val = Value::Str(token.source.clone());
+        Token::Str(_, str) => {
+            let val = Value::Str(str.clone());
             return Ok(vec![Inst::PUSH(val)]);
         }
-        TokenName::ID => {
-            return Ok(vec![Inst::LOAD(token.source.clone())]);
+        Token::Id(_, id) => {
+            return Ok(vec![Inst::LOAD(id.clone())]);
         }
         _ => {
             return Err(SquareError::SyntaxError(
                 input,
                 format!(
                     "failed to emit_token, expect number, string or identifier name, got {}",
-                    token.name
+                    token.to_string()
                 ),
-                token.pos.clone(),
+                token.pos().clone(),
                 None,
             ));
         }
@@ -110,16 +105,16 @@ fn emit_assign<'a, 'b>(
 
     match target.as_ref() {
         Node::Token(id) => {
-            if id.name == TokenName::ID {
-                insts.push(Inst::STORE(id.source.clone()));
+            if let Token::Id(_, source) = id {
+                insts.push(Inst::STORE(source.clone()));
             } else {
                 return Err(SquareError::SyntaxError(
                     input,
                     format!(
                         "failed to emit_assign, cannot assign to {}, expect identifier",
-                        id.name
+                        id.to_string()
                     ),
-                    id.pos.clone(),
+                    id.pos().clone(),
                     None,
                 ));
             }
@@ -140,7 +135,7 @@ fn emit_op<'a, 'b>(
             return Err(SquareError::SyntaxError(
                 input,
                 "failed to emit_op, operands count not match".to_string(),
-                op.pos.clone(),
+                op.pos().clone(),
                 None,
             ));
         }
@@ -154,7 +149,7 @@ fn emit_op<'a, 'b>(
             return Err(SquareError::SyntaxError(
                 input,
                 "failed to emit_op, operands count not match".to_string(),
-                op.pos.clone(),
+                op.pos().clone(),
                 None,
             ));
         }
@@ -162,22 +157,21 @@ fn emit_op<'a, 'b>(
         let mut result = vec![];
         let first = expressions.first().unwrap();
 
-        match &**first {
+        match first.as_ref() {
             Node::Token(token) => {
-                let source = token.source.clone();
-                if token.name == TokenName::ID {
+                if let Token::Id(_, source) = token {
                     result.extend(emit(input, expressions)?);
                     result.push(action);
-                    result.push(Inst::STORE(source));
+                    result.push(Inst::STORE(source.clone()));
                     return Ok(result);
                 } else {
                     return Err(SquareError::SyntaxError(
                         input,
                         format!(
                             "failed to emit_assign_op, expect identifier, got {}",
-                            token.name
+                            token.to_string()
                         ),
-                        token.pos.clone(),
+                        token.pos().clone(),
                         None,
                     ));
                 }
@@ -186,8 +180,8 @@ fn emit_op<'a, 'b>(
         }
     };
 
-    if op.name == TokenName::OP {
-        return match op.source.as_str() {
+    if let Token::Op(_, source) = op {
+        return match source.as_str() {
             "+" => op_action(Inst::ADD),
             "-" => op_action(Inst::SUB),
             "*" => op_action(Inst::MUL),
@@ -221,8 +215,8 @@ fn emit_op<'a, 'b>(
 
     return Err(SquareError::SyntaxError(
         input,
-        format!("failed to emit_op, expect operator, got {}", op.name),
-        op.pos.clone(),
+        format!("failed to emit_op, expect operator, got {}", op.to_string()),
+        op.pos().clone(),
         None,
     ));
 }
@@ -234,8 +228,8 @@ fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResul
         return Err(SquareError::SyntaxError(
             input,
             "failed to emit_if, expect condition and true_branch".to_string(),
-            if let Node::Token(if_token) = &**leading {
-                if_token.pos.clone()
+            if let Node::Token(if_token) = leading.as_ref() {
+                if_token.pos().clone()
             } else {
                 unreachable!()
             },
@@ -261,7 +255,7 @@ fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResul
         result.extend(false_branch_result);
     } else {
         result.push(Inst::JMP(1));
-        result.push(Inst::PUSH(Value::Undefined)); // FIXME: else undefined
+        result.push(Inst::PUSH(Value::Nil)); // FIXME: else undefined
     }
     result.push(Inst::RET);
 
@@ -275,8 +269,8 @@ fn emit_while<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitRe
         return Err(SquareError::SyntaxError(
             input,
             "failed to emit_while, expect condition and body".to_string(),
-            if let Node::Token(while_token) = &**leading {
-                while_token.pos.clone()
+            if let Node::Token(while_token) = leading.as_ref() {
+                while_token.pos().clone()
             } else {
                 unreachable!()
             },
@@ -317,8 +311,8 @@ fn emit_call<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitRes
 
     let first = expressions.first().unwrap();
 
-    match &**first {
-        Node::Token(keyword) => match keyword.source.as_str() {
+    match first.as_ref() {
+        Node::Token(keyword) => match keyword.source() {
             "if" => emit_if(input, expressions),
             "while" => emit_while(input, expressions),
             "begin" => emit_begin(input, expressions),

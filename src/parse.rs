@@ -10,10 +10,7 @@ use core::fmt;
 
 use crate::code_frame::Position;
 use crate::errors::SquareError;
-use crate::scan::{
-    expect_name, expect_source, lookahead, raise_token, skip_whitespace, RaiseResult, Token,
-    TokenName,
-};
+use crate::scan::{expect, lookahead, raise_token, skip_whitespace, RaiseResult, Token};
 
 type ParseResult<'a> = Result<Box<Node>, SquareError<'a>>;
 
@@ -29,20 +26,15 @@ pub enum Node {
     Dot(Box<Node>, Vec<Box<Node>>),                      // id | call, (dot property)*
 }
 
-struct BoxNodeVec<'a>(&'a Vec<Box<Node>>);
-
-impl<'a> Into<String> for &BoxNodeVec<'a> {
-    fn into(self) -> String {
-        return match self.0.is_empty() {
-            true => "Empty".to_string(),
-            _ => self
-                .0
-                .iter()
-                .map(|node| format!("{}", node))
-                .collect::<Vec<String>>()
-                .join(", "),
-        };
-    }
+fn print_nodevec<'a>(nodevec: &'a Vec<Box<Node>>) -> String {
+    return match nodevec.is_empty() {
+        true => "Empty".to_string(),
+        _ => nodevec
+            .iter()
+            .map(|node| format!("{}", node))
+            .collect::<Vec<String>>()
+            .join(", "),
+    };
 }
 
 impl fmt::Display for Node {
@@ -50,11 +42,7 @@ impl fmt::Display for Node {
         match self {
             Node::Token(token) => write!(f, "Token({})", token),
             Node::Expand(_, _, placeholders) => {
-                write!(
-                    f,
-                    "Expand({})",
-                    Into::<String>::into(&BoxNodeVec(placeholders))
-                )
+                write!(f, "Expand({})", print_nodevec(&placeholders))
             }
             Node::Fn(_, params, body) => {
                 write!(f, "Fn({}, {})", params, body)
@@ -67,32 +55,18 @@ impl fmt::Display for Node {
                     f,
                     "Assign({}.{} {})",
                     expansion,
-                    Into::<String>::into(&BoxNodeVec(properties)),
+                    print_nodevec(&properties),
                     expression
                 )
             }
             Node::Op(operator, expressions) => {
-                write!(
-                    f,
-                    "Op({}, {})",
-                    operator,
-                    Into::<String>::into(&BoxNodeVec(expressions))
-                )
+                write!(f, "Op({}, {})", operator, print_nodevec(&expressions))
             }
             Node::Call(_, _, expressions) => {
-                write!(
-                    f,
-                    "Call({})",
-                    Into::<String>::into(&BoxNodeVec(expressions))
-                )
+                write!(f, "Call({})", print_nodevec(&expressions))
             }
             Node::Dot(instance, properties) => {
-                write!(
-                    f,
-                    "Dot({} {})",
-                    instance,
-                    Into::<String>::into(&BoxNodeVec(properties))
-                )
+                write!(f, "Dot({} {})", instance, print_nodevec(&properties))
             }
         }
     }
@@ -114,10 +88,27 @@ fn create_wrapper<'a>(fn_name: &'static str) -> Box<dyn Fn(RaiseResult<'a>) -> R
     });
 }
 
+fn expect_whitespace<'a>(input: &'a str, pos: &mut Position) -> Result<Token, SquareError<'a>> {
+    return expect(
+        &|token| {
+            if let Token::Whitespace(..) = token {
+                return (true, "".to_string());
+            }
+            (false, "expect WHITESPACE".to_string())
+        },
+        input,
+        pos,
+    );
+}
+
 fn parse_expand<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_expand");
 
-    let left_bracket = wrap(expect_source("[", input, pos))?;
+    let left_bracket = wrap(expect(
+        &|token| (token.source() == "[", "expect [".to_string()),
+        input,
+        pos,
+    ))?;
 
     wrap(skip_whitespace(input, pos))?;
 
@@ -125,34 +116,34 @@ fn parse_expand<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let mut nodes = vec![];
 
     loop {
-        match token.source.as_str() {
+        match token.source() {
             "." | "..." => {
                 nodes.push(Box::new(Node::Token(token)));
 
-                if wrap(lookahead(input, pos))?.source != "]" {
-                    wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+                if wrap(lookahead(input, pos))?.source() != "]" {
+                    wrap(expect_whitespace(input, pos))?;
                 }
             }
             "[" => {
-                *pos = token.pos;
+                *pos = token.pos().clone();
                 nodes.push(parse_expand(input, pos)?);
             }
             "]" => break,
             _ => {
-                if token.name == TokenName::ID {
+                if let Token::Id(..) = token {
                     nodes.push(Box::new(Node::Token(token)));
 
-                    if wrap(lookahead(input, pos))?.source != "]" {
-                        wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+                    if wrap(lookahead(input, pos))?.source() != "]" {
+                        wrap(expect_whitespace(input, pos))?;
                     }
                 } else {
                     return Err(SquareError::SyntaxError(
                         input,
                         format!(
-                            "faield to parse_expand, expect identifier or placeholders, got {}({})",
-                            token.name, token.source
+                            "faield to parse_expand, expect identifier or placeholders, got {}",
+                            token.to_string()
                         ),
-                        token.pos,
+                        token.pos().clone(),
                         None,
                     ));
                 }
@@ -225,7 +216,7 @@ fn test_parse_expand_nested() {
 
             if let Node::Expand(_, _, phs3) = phs2[1].as_ref() {
                 if let Node::Token(y) = phs3[0].as_ref() {
-                    assert_eq!(y.source, "y");
+                    assert_eq!(y.source(), "y");
 
                     return;
                 }
@@ -246,7 +237,7 @@ fn test_parse_expand_error() {
         err,
         Err(SquareError::SyntaxError(
             input,
-            "failed to parse_expand, expect WHITESPACE, got ID(x)".to_string(),
+            "failed to parse_expand, expect WHITESPACE, got Id(x)".to_string(),
             pos,
             None
         ))
@@ -260,7 +251,7 @@ fn test_parse_expand_error() {
         err,
         Err(SquareError::SyntaxError(
             input,
-            "failed to parse_expand, expect WHITESPACE, got OP(.)".to_string(),
+            "failed to parse_expand, expect WHITESPACE, got Op(.)".to_string(),
             pos,
             None
         ))
@@ -274,7 +265,7 @@ fn test_parse_expand_error() {
         err,
         Err(SquareError::SyntaxError(
             input,
-            "failed to parse_expand, expect WHITESPACE, got OP(...)".to_string(),
+            "failed to parse_expand, expect WHITESPACE, got Op(...)".to_string(),
             pos,
             None
         ))
@@ -284,7 +275,11 @@ fn test_parse_expand_error() {
 fn parse_fn<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_fn");
 
-    let slash = wrap(expect_source("/", input, pos))?;
+    let slash = wrap(expect(
+        &|token| (token.source() == "/", "expect /".to_string()),
+        input,
+        pos,
+    ))?;
     let expand = parse_expand(input, pos)?;
 
     wrap(skip_whitespace(input, pos))?;
@@ -305,7 +300,7 @@ fn test_parse_fn_base() {
             assert_eq!(phs.len(), 0);
 
             if let Node::Token(value) = body.as_ref() {
-                assert_eq!(value.source, "42");
+                assert_eq!(value.source(), "42");
 
                 return;
             }
@@ -330,7 +325,7 @@ fn test_parse_fn_params() {
 
                 if let Node::Expand(_, _, phs3) = phs2[1].as_ref() {
                     if let Node::Token(y) = phs3[0].as_ref() {
-                        assert_eq!(y.source, "y");
+                        assert_eq!(y.source(), "y");
 
                         return;
                     }
@@ -351,17 +346,17 @@ fn test_parse_fn_high_order() {
     if let Node::Fn(_, x_param, x_body) = node.as_ref() {
         if let Node::Expand(_, _, x_phs) = x_param.as_ref() {
             if let Node::Token(x) = x_phs[0].as_ref() {
-                assert_eq!(x.source, "x");
+                assert_eq!(x.source(), "x");
 
                 if let Node::Fn(_, y_param, y_body) = x_body.as_ref() {
                     if let Node::Expand(_, _, y_phs) = y_param.as_ref() {
                         if let Node::Token(y) = y_phs[0].as_ref() {
-                            assert_eq!(y.source, "y");
+                            assert_eq!(y.source(), "y");
 
                             if let Node::Fn(_, z_param, _) = y_body.as_ref() {
                                 if let Node::Expand(_, _, z_phs) = z_param.as_ref() {
                                     if let Node::Token(z) = z_phs[0].as_ref() {
-                                        assert_eq!(z.source, "z");
+                                        assert_eq!(z.source(), "z");
 
                                         return;
                                     }
@@ -379,11 +374,24 @@ fn test_parse_fn_high_order() {
 
 fn parse_prop<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_prop");
-    let dot = wrap(expect_source(".", input, pos))?;
+    let dot = wrap(expect(
+        &|token| (token.source() == ".", "expect .".to_string()),
+        input,
+        pos,
+    ))?;
 
     Ok(Box::new(Node::Prop(
         dot,
-        wrap(expect_name(TokenName::ID, input, pos))?,
+        wrap(expect(
+            &|token| {
+                if let Token::Id(..) = token {
+                    return (true, "".to_string());
+                }
+                (false, "expect ID".to_string())
+            },
+            input,
+            pos,
+        ))?,
     )))
 }
 
@@ -394,7 +402,7 @@ fn test_parse_prop() {
     let node = parse_prop(input, &mut pos).unwrap();
 
     if let Node::Prop(_, id) = node.as_ref() {
-        assert_eq!(id.source, "foo");
+        assert_eq!(id.source(), "foo");
 
         return;
     }
@@ -416,7 +424,7 @@ fn parse_prop_chain<'a>(
 
         let dot = wrap(lookahead(input, pos))?;
 
-        if dot.source != "." {
+        if dot.source() != "." {
             *pos = backup;
             break;
         }
@@ -436,7 +444,7 @@ fn test_parse_prop_chain() {
     let chain = parse_prop_chain(input, &mut pos).unwrap();
 
     if let Node::Prop(_, baz) = chain[2].as_ref() {
-        assert_eq!(baz.source, "baz");
+        assert_eq!(baz.source(), "baz");
 
         return;
     }
@@ -446,33 +454,37 @@ fn test_parse_prop_chain() {
 
 fn parse_assign<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_assign");
-    let eq = wrap(expect_source("=", input, pos))?;
+    let eq = wrap(expect(
+        &|token| (token.source() == "=", "expect =".to_string()),
+        input,
+        pos,
+    ))?;
 
-    wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+    wrap(expect_whitespace(input, pos))?;
     wrap(skip_whitespace(input, pos))?;
 
     let token = wrap(raise_token(input, pos))?;
 
-    let target = if token.source == "[" {
-        *pos = token.pos;
+    let target = if token.source() == "[" {
+        *pos = token.pos().clone();
         parse_expand(input, pos)?
-    } else if token.name == TokenName::ID {
+    } else if let Token::Id(..) = token {
         Box::new(Node::Token(token))
     } else {
         return Err(SquareError::SyntaxError(
             input,
             format!(
-                "faield to parse_assign, expect identifier or expansion, got {}({})",
-                token.name, token.source
+                "faield to parse_assign, expect identifier or expansion, got {}",
+                token.to_string()
             ),
-            token.pos,
+            token.pos().clone(),
             None,
         ));
     };
 
     let props = parse_prop_chain(input, pos)?;
 
-    wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+    wrap(expect_whitespace(input, pos))?;
     wrap(skip_whitespace(input, pos))?;
 
     let expr = parse_expr(input, pos)?;
@@ -488,10 +500,10 @@ fn test_parse_assign_base() {
 
     if let Node::Assign(_, lhs, _, rhs) = node.as_ref() {
         if let Node::Token(a) = lhs.as_ref() {
-            assert_eq!(a.source, "a");
+            assert_eq!(a.source(), "a");
 
             if let Node::Token(b) = rhs.as_ref() {
-                assert_eq!(b.source, "b");
+                assert_eq!(b.source(), "b");
 
                 return;
             }
@@ -512,7 +524,7 @@ fn test_parse_assign_expand() {
             assert_eq!(exprs.len(), 3);
 
             if let Node::Token(b) = rhs.as_ref() {
-                assert_eq!(b.source, "b");
+                assert_eq!(b.source(), "b");
 
                 return;
             }
@@ -545,16 +557,16 @@ fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_op");
     let operator = wrap(raise_token(input, pos))?;
 
-    wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+    wrap(expect_whitespace(input, pos))?;
     wrap(skip_whitespace(input, pos))?;
 
     let mut nodes = vec![];
 
-    match operator.source.as_str() {
+    match operator.source() {
         op if is_binary_op(op) => {
             nodes.push(parse_expr(input, pos)?);
 
-            wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+            wrap(expect_whitespace(input, pos))?;
             wrap(skip_whitespace(input, pos))?;
 
             nodes.push(parse_expr(input, pos)?);
@@ -562,7 +574,7 @@ fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
         op if is_binary_assign_op(op) => {
             nodes.push(parse_dot(input, pos)?);
 
-            wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+            wrap(expect_whitespace(input, pos))?;
             wrap(skip_whitespace(input, pos))?;
 
             nodes.push(parse_expr(input, pos)?);
@@ -571,10 +583,10 @@ fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
             return Err(SquareError::SyntaxError(
                 input,
                 format!(
-                    "faield to parse_op, expect operator, got {}({})",
-                    operator.name, operator.source
+                    "faield to parse_op, expect operator, got {}",
+                    operator.source()
                 ),
-                operator.pos,
+                operator.pos().clone(),
                 None,
             ));
         }
@@ -591,7 +603,7 @@ fn test_parse_op_binary() {
 
     if let Node::Op(op, exprs) = node.as_ref() {
         assert_eq!(exprs.len(), 2);
-        assert_eq!(op.source, "..");
+        assert_eq!(op.source(), "..");
 
         return;
     }
@@ -608,7 +620,7 @@ fn test_parse_op_binary_assign() {
         parse_op(input, &mut pos),
         Err(SquareError::SyntaxError(
             input,
-            "faield to parse_dot, expect identifier or call expression, got NUM(42)".to_string(),
+            "faield to parse_dot, expect identifier or call expression, got Num(42)".to_string(),
             Position {
                 line: 1,
                 column: 4,
@@ -621,24 +633,28 @@ fn test_parse_op_binary_assign() {
 
 fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let wrap = create_wrapper("parse_call");
-    let left_bracket = wrap(expect_source("[", input, pos))?;
+    let left_bracket = wrap(expect(
+        &|token| (token.source() == "[", "expect [".to_string()),
+        input,
+        pos,
+    ))?;
 
     wrap(skip_whitespace(input, pos))?;
 
     let mut leading = wrap(lookahead(input, pos))?;
     let mut nodes = vec![];
 
-    if leading.source == "=" {
+    if leading.source() == "=" {
         nodes.push(parse_assign(input, pos)?);
-    } else if is_op(leading.source.as_str()) {
+    } else if is_op(leading.source()) {
         nodes.push(parse_op(input, pos)?);
     } else {
-        while leading.source != "]" {
+        while leading.source() != "]" {
             nodes.push(parse_expr(input, pos)?);
             leading = wrap(lookahead(input, pos))?;
 
-            if leading.source != "]" {
-                wrap(expect_name(TokenName::WHITESPACE, input, pos))?;
+            if leading.source() != "]" {
+                wrap(expect_whitespace(input, pos))?;
                 wrap(skip_whitespace(input, pos))?;
                 leading = wrap(lookahead(input, pos))?;
             }
@@ -647,7 +663,11 @@ fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
 
     wrap(skip_whitespace(input, pos))?;
 
-    let right_bracket = wrap(expect_source("]", input, pos))?;
+    let right_bracket = wrap(expect(
+        &|token| (token.source() == "]", "expect ]".to_string()),
+        input,
+        pos,
+    ))?;
 
     Ok(Box::new(Node::Call(left_bracket, right_bracket, nodes)))
 }
@@ -662,7 +682,7 @@ fn test_parse_call_assign() {
         if let Node::Assign(_, expansion, _, _) = exprs[0].as_ref() {
             if let Node::Expand(_, _, phs) = expansion.as_ref() {
                 if let Node::Token(b) = phs[1].as_ref() {
-                    assert_eq!(b.source, "b");
+                    assert_eq!(b.source(), "b");
 
                     return;
                 }
@@ -678,7 +698,7 @@ fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let leading = wrap(lookahead(input, pos))?;
 
     match leading {
-        _ if leading.source == "[" => {
+        _ if leading.source() == "[" => {
             let call = parse_call(input, pos)?;
             let nodes = parse_prop_chain(input, pos)?;
 
@@ -688,9 +708,8 @@ fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
                 Ok(Box::new(Node::Dot(call, nodes)))
             }
         }
-        _ if leading.name == TokenName::ID => {
-            let id = wrap(expect_name(TokenName::ID, input, pos))?;
-
+        _ if let Token::Id(..) = leading => {
+            let id = wrap(raise_token(input, pos))?;
             let nodes = parse_prop_chain(input, pos)?;
 
             if nodes.len() == 0 {
@@ -702,10 +721,10 @@ fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
         _ => Err(SquareError::SyntaxError(
             input,
             format!(
-                "faield to parse_dot, expect identifier or call expression, got {}({})",
-                leading.name, leading.source
+                "faield to parse_dot, expect identifier or call expression, got {}",
+                leading.to_string()
             ),
-            leading.pos,
+            leading.pos().clone(),
             None,
         )),
     }
@@ -721,7 +740,7 @@ fn test_parse_dot_empty() {
         if let Node::Assign(_, _, _, expr) = exprs[0].as_ref() {
             if let Node::Call(_, _, exprs) = expr.as_ref() {
                 if let Node::Token(fourty_two) = exprs[0].as_ref() {
-                    assert_eq!(fourty_two.source, "42");
+                    assert_eq!(fourty_two.source(), "42");
 
                     return;
                 }
@@ -740,10 +759,10 @@ fn test_parse_dot() {
 
     if let Node::Dot(_, props) = node.as_ref() {
         if let Node::Prop(_, foo) = props[0].as_ref() {
-            assert_eq!(foo.source, "foo");
+            assert_eq!(foo.source(), "foo");
 
             if let Node::Prop(_, bar) = props[1].as_ref() {
-                assert_eq!(bar.source, "bar");
+                assert_eq!(bar.source(), "bar");
 
                 return;
             }
@@ -758,10 +777,10 @@ fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     let leading = wrap(lookahead(input, pos))?;
 
     match leading {
-        _ if leading.source == "/" => parse_fn(input, pos),
-        _ if leading.source == "-" => {
+        _ if leading.source() == "/" => parse_fn(input, pos),
+        _ if leading.source() == "-" => {
             let minus = wrap(raise_token(input, pos))?;
-            let target = if wrap(lookahead(input, pos))?.name == TokenName::NUM {
+            let target = if let Token::Num(..) = wrap(lookahead(input, pos))? {
                 Box::new(Node::Token(wrap(raise_token(input, pos))?))
             } else {
                 parse_dot(input, pos)?
@@ -770,19 +789,19 @@ fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
             Ok(Box::new(Node::Op(
                 minus,
                 vec![
-                    // TODO: optimize
-                    Box::new(Node::Token(Token {
-                        name: TokenName::NUM,
-                        source: "0".to_string(),
-                        pos: leading.pos,
-                    })),
+                    // convert -42 into 0 - 42, TODO: optimize
+                    Box::new(Node::Token(Token::Num(
+                        leading.pos().clone(),
+                        "0".to_string(),
+                        "0".to_string(),
+                        "".to_string(),
+                        "".to_string(),
+                    ))),
                     target,
                 ],
             )))
         }
-        _ if leading.name == TokenName::NUM || leading.name == TokenName::STR => {
-            Ok(Box::new(Node::Token(raise_token(input, pos)?)))
-        }
+        Token::Num(..) | Token::Str(..) => Ok(Box::new(Node::Token(raise_token(input, pos)?))),
         _ => parse_dot(input, pos),
     }
 }
@@ -793,7 +812,11 @@ pub fn parse<'a>(input: &'a str, pos: &mut Position) -> Result<Vec<Box<Node>>, S
 
     wrap(skip_whitespace(input, pos))?;
 
-    while wrap(lookahead(input, pos))?.name != TokenName::EOF {
+    loop {
+        if let Token::Eof(_) = wrap(lookahead(input, pos))? {
+            break;
+        }
+
         ast.push(parse_expr(input, pos)?);
         wrap(skip_whitespace(input, pos))?;
     }
@@ -901,15 +924,30 @@ fn test_parse_function() {
 #[test]
 fn test_parse_conroutine() {
     let input = r#"
-; similar to Lua coroutine
-[= genFib /[n]
-  [co.wrap /[]
-    [= [a b] [1 1]]
-    [while [<= a n]
-      [co.yield a]
-      [= [a b] [b [+ a b]]]]]]
+[= gen /[yield]
+    [begin
+        [= i 0]
+        [while [< i 10]
+            [callcc /[cc]
+                [yield [vec i cc]]]]]]
 
-[[genFib 100].forEach print]
+[= innerCc nil]
+
+[= next /[g]
+    [if [== [typeof innerCc] 'fn']
+        [innerCc]
+        [begin
+            [= p [callcc /[cc] [g cc]]]
+            [if [== [typeof p] 'vec']
+                [begin
+                    [= [i innerCc] p]
+                    [print i]]]]]]
+                    
+[next gen]
+[next gen]
+[next gen]
+[next gen]
+[next gen]
 "#;
     let mut pos = Position::default();
     let ast = parse(input, &mut pos)
@@ -940,17 +978,14 @@ fn test_parse_structure() {
 
   [= this.pop /[] [begin
     [= [... x] this.vec]
-    [= this.vec [this.vec.slice 0 -2]]
+    [= this.vec [this.vec.slice 0 -1]]
     x]]
 
   this]]
 
-[= v [1 2 3]]
-[= s [stack v]]
+[= s [stack [vec 1 2 3]]]
 [= x [s.pop]] ; x = 3
-[s.clear]
-[s.push 42]
-[= y [s.pop]] ; y = 42
+[s.push 42] ; s = [1 2 42]
 "#;
     let mut pos = Position::default();
     let ast = parse(input, &mut pos)

@@ -57,7 +57,7 @@ impl Inst {
                     ));
                 }
 
-                if frame.top() != Some(&Value::Bool(true)) {
+                if !frame.top().unwrap().to_bool() {
                     frame.sp -= 1;
                     self.jump(insts, pc, *value)
                 } else {
@@ -73,13 +73,13 @@ impl Inst {
                     frame.define_local(name, val.clone());
                     self.pop(vm, pc)
                 } else {
-                    frame.define_local(name, Value::Undefined);
+                    frame.define_local(name, Value::Nil);
                     Ok(())
                 }
             }
             Inst::LOAD(name) => {
                 let frame = vm.call_frame.as_mut().unwrap();
-                let mut tmp = Value::Undefined;
+                let mut tmp = Value::Nil;
 
                 if let Some(val) = frame.resolve_local(name) {
                     tmp = val.clone(); // avoid mutable ref and immutable ref of vm at the same time
@@ -97,7 +97,7 @@ impl Inst {
             }
             Inst::RET => {
                 let frame = vm.call_frame.as_mut().unwrap();
-                let top = frame.top().unwrap_or(&Value::Undefined).clone();
+                let top = frame.top().unwrap_or(&Value::Nil).clone();
 
                 vm.call_frame = frame.prev.take();
                 // always return the top value
@@ -110,7 +110,7 @@ impl Inst {
         let frame = vm.call_frame.as_mut().unwrap();
 
         if frame.sp >= frame.stack.len() {
-            frame.stack.resize(frame.stack.len() * 2, Value::Undefined);
+            frame.stack.resize(frame.stack.len() * 2, Value::Nil);
         }
 
         frame.stack[frame.sp] = value;
@@ -195,7 +195,7 @@ impl CallFrame {
     fn new() -> Self {
         Self {
             locals: HashMap::new(),
-            stack: vec![Value::Undefined; 16], // item count, not byte length
+            stack: vec![Value::Nil; 16], // item count, not byte length
             sp: 0,
             prev: None,
         }
@@ -344,7 +344,7 @@ fn test_store_undefined() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.call_frame.as_mut().unwrap();
-    assert_eq!(callframe.resolve_local("a"), Some(&Value::Undefined));
+    assert_eq!(callframe.resolve_local("a"), Some(&Value::Nil));
 }
 
 #[test]

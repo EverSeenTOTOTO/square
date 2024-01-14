@@ -1,0 +1,25 @@
+[= gen /[yield]
+    [begin
+        [= i 0]
+        [while [< i 10]
+            [callcc /[cc]
+                [yield [vec i cc]]]]]]
+
+[= innerCc nil]
+
+[= next /[g]
+    [if [== [typeof innerCc] 'fn']
+        [innerCc]
+        [begin
+            [= p [callcc /[cc] [g cc]]]
+            [if [== [typeof p] 'vec']
+                [begin
+                    [= [i innerCc] p]
+                    [print i]]]]]]
+                    
+[next gen]
+[next gen]
+[next gen]
+[next gen]
+[next gen]
+

@@ -19,6 +19,7 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 ```lisp
 ; basic
 [= x 2] ; x = 2
+
 [= x [.. 1 4]] ; x = [1 2 3 4], `..` can concat strings, ranges and vectors
 
 ; expansion
@@ -75,18 +76,33 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 [print [[.. 1 10].map /[x] [fib x]]]
 ```
 
-## Coroutine
+## Continuation
 
 ```lisp
-; similar to Lua coroutine
-[= genFib /[n]
-  [co.wrap /[]
-    [= [a b] [1 1]]
-    [while [<= a n]
-      [co.yield a]
-      [= [a b] [b [+ a b]]]]]]
+[= gen /[yield]
+    [begin
+        [= i 0]
+        [while [< i 10]
+            [callcc /[cc]
+                [yield [vec i cc]]]]]]
 
-[[genFib 100].forEach print]
+[= innerCc nil]
+
+[= next /[g]
+    [if [== [typeof innerCc] 'fn']
+        [innerCc]
+        [begin
+            [= p [callcc /[cc] [g cc]]]
+            [if [== [typeof p] 'vec']
+                [begin
+                    [= [i innerCc] p]
+                    [print i]]]]]]
+                    
+[next gen]
+[next gen]
+[next gen]
+[next gen]
+[next gen]
 ```
 
 ## Structure
@@ -110,12 +126,9 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 
   this]]
 
-[= v [1 2 3]]
-[= s [stack v]]
+[= s [stack [vec 1 2 3]]]
 [= x [s.pop]] ; x = 3
-[s.clear]
-[s.push 42]
-[= y [s.pop]] ; y = 42
+[s.push 42] ; s = [1 2 42]
 ```
 
 ## Comment

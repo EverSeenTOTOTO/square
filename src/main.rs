@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
+#![feature(if_let_guard)]
 
 #[cfg(not(test))]
 use alloc::boxed::Box;

@@ -12,7 +12,7 @@ pub enum Value {
     Int(i32),
     Int64(i64),
     Str(String),
-    Undefined,
+    Nil,
 }
 
 impl fmt::Display for Value {
@@ -36,8 +36,8 @@ impl fmt::Display for Value {
             Value::Str(val) => {
                 write!(f, "Str({})", val)
             }
-            Value::Undefined => {
-                write!(f, "Undefined")
+            Value::Nil => {
+                write!(f, "Nil")
             }
         }
     }
@@ -64,7 +64,7 @@ impl PartialOrd for Value {
             (Value::Double(lhs), Value::Int64(rhs)) => lhs.partial_cmp(&(*rhs as f64)),
             (Value::Double(lhs), Value::Float(rhs)) => lhs.partial_cmp(&(*rhs as f64)),
             (Value::Str(lhs), Value::Str(rhs)) => lhs.partial_cmp(rhs),
-            (Value::Undefined, Value::Undefined) => Some(core::cmp::Ordering::Equal),
+            (Value::Nil, Value::Nil) => Some(core::cmp::Ordering::Equal),
             _ => None,
         }
     }
@@ -91,7 +91,7 @@ impl PartialEq for Value {
             (Value::Double(lhs), Value::Int64(rhs)) => *lhs == *rhs as f64,
             (Value::Double(lhs), Value::Float(rhs)) => *lhs == *rhs as f64,
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
-            (Value::Undefined, Value::Undefined) => true,
+            (Value::Nil, Value::Nil) => true,
             _ => false,
         }
     }
@@ -170,6 +170,20 @@ impl Not for &Value {
     }
 }
 
+impl Value {
+    pub fn to_bool(&self) -> bool {
+        match self {
+            Value::Bool(val) => *val,
+            Value::Int(val) => *val != 0,
+            Value::Int64(val) => *val != 0,
+            Value::Float(val) => *val != 0.0,
+            Value::Double(val) => *val != 0.0,
+            Value::Str(val) => !val.is_empty(),
+            Value::Nil => false,
+        }
+    }
+}
+
 #[test]
 fn test_partial_cmp() {
     assert_eq!(
@@ -177,7 +191,7 @@ fn test_partial_cmp() {
         true
     );
     assert_eq!(Value::Double(0.0) == Value::Int(0), true);
-    assert_eq!(Value::Undefined == Value::Bool(false), false);
+    assert_eq!(Value::Nil == Value::Bool(false), false);
 }
 
 #[test]
