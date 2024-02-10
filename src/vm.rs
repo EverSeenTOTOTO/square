@@ -1,9 +1,13 @@
-use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
+use alloc::{boxed::Box, format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
 use core::fmt;
 
 use hashbrown::HashMap;
 
-use crate::{emit::Inst, errors::SquareError, vm_value::Value};
+use crate::{
+    errors::SquareError,
+    vm_insts::Inst,
+    vm_value::{Closure, Value},
+};
 
 type OpFn = dyn Fn(&Value, &Value) -> Value;
 type ExecResult<'a> = Result<(), SquareError<'a>>;
@@ -88,18 +92,35 @@ impl Inst {
             }
 
             Inst::CALL => {
-                let mut new_frame = CallFrame::new();
-                new_frame.prev = vm.call_frame.take();
+                let frame = vm.call_frame.as_mut().unwrap();
 
-                vm.call_frame = Some(Box::new(new_frame));
+                if let Some(Value::Closure(closure)) = frame.top() {
+                    let mut new_frame = CallFrame::new();
 
-                Ok(())
+                    new_frame.prev = vm.call_frame.take();
+                    // return address is next instruction
+                    new_frame.ra = *pc + 1;
+
+                    vm.call_frame = Some(Box::new(new_frame));
+                    // jump to function definition
+                    *pc = closure.ip;
+
+                    return Ok(());
+                }
+
+                Err(SquareError::RuntimeError(
+                    "invalid call".to_string(),
+                    self.clone(),
+                    *pc,
+                ))
             }
             Inst::RET => {
                 let frame = vm.call_frame.as_mut().unwrap();
                 let top = frame.top().unwrap_or(&Value::Nil).clone();
 
                 vm.call_frame = frame.prev.take();
+                // jump back
+                *pc = frame.ra;
                 // always return the top value
                 self.push(vm, top, pc)
             }
@@ -165,15 +186,19 @@ impl Inst {
 
 pub struct CallFrame {
     locals: HashMap<String, Value>,
+
     // operand stack
     stack: Vec<Value>,
-    // fake length, avoid frequent push/pop
+    // fake length, avoid frequent operand stak push/pop
     sp: usize,
+
+    ra: usize, // return address
     prev: Option<Box<CallFrame>>,
 }
 
 impl fmt::Display for CallFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Return Address: {}", self.ra)?;
         writeln!(f, "Locals:")?;
         for (key, value) in &self.locals {
             writeln!(f, "{:>8}: {}", key, value)?;
@@ -197,6 +222,7 @@ impl CallFrame {
             locals: HashMap::new(),
             stack: vec![Value::Nil; 16], // item count, not byte length
             sp: 0,
+            ra: 0,
             prev: None,
         }
     }

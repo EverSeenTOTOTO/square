@@ -1,6 +1,6 @@
 use crate::{
     code_frame::{code_frame, Position},
-    emit::Inst,
+    vm_insts::Inst,
 };
 
 use alloc::{format, string::String};

@@ -1,70 +1,8 @@
-use crate::{errors::SquareError, parse::Node, scan::Token, vm_value::Value};
+use crate::{errors::SquareError, parse::Node, scan::Token, vm_insts::Inst, vm_value::Value};
 
-use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
-use core::fmt;
+use alloc::{boxed::Box, format, rc::Rc, string::ToString, vec, vec::Vec};
 
 type EmitResult<'a> = Result<Vec<Inst>, SquareError<'a>>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Inst {
-    PUSH(Value),
-    POP,
-    ADD,    // +
-    SUB,    // -
-    MUL,    // *
-    DIV,    // /
-    REM,    // %
-    BITAND, // &
-    BITOR,  // |
-    BITXOR, // ^
-    BITNOT, // ~
-    EQ,     // ==
-    NE,     // !=
-    LT,     // <
-    LE,     // <=
-    GT,     // >
-    GE,     // >=
-    SHL,    // <<
-    SHR,    // >>
-    JMP(i32),
-    JNE(i32), // jump if false
-    STORE(String),
-    LOAD(String),
-    CALL,
-    RET,
-}
-
-impl fmt::Display for Inst {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Inst::PUSH(value) => write!(f, "PUSH {}", value),
-            Inst::POP => write!(f, "POP"),
-            Inst::ADD => write!(f, "ADD"),
-            Inst::SUB => write!(f, "SUB"),
-            Inst::MUL => write!(f, "MUL"),
-            Inst::DIV => write!(f, "DIV"),
-            Inst::REM => write!(f, "REM"),
-            Inst::BITAND => write!(f, "AND"),
-            Inst::BITOR => write!(f, "OR"),
-            Inst::BITXOR => write!(f, "XOR"),
-            Inst::BITNOT => write!(f, "NOT"),
-            Inst::EQ => write!(f, "EQ"),
-            Inst::NE => write!(f, "NE"),
-            Inst::LT => write!(f, "LT"),
-            Inst::LE => write!(f, "LE"),
-            Inst::GT => write!(f, "GT"),
-            Inst::GE => write!(f, "GE"),
-            Inst::SHL => write!(f, "SHL"),
-            Inst::SHR => write!(f, "SHR"),
-            Inst::JMP(value) => write!(f, "JMP {}", value),
-            Inst::JNE(value) => write!(f, "JNE {}", value),
-            Inst::STORE(name) => write!(f, "STORE {}", name),
-            Inst::LOAD(name) => write!(f, "LOAD {}", name),
-            Inst::CALL => write!(f, "CALL"),
-            Inst::RET => write!(f, "RET"),
-        }
-    }
-}
 
 fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult<'a> {
     match token {
@@ -237,7 +175,7 @@ fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResul
         ));
     }
 
-    let mut result = vec![Inst::CALL];
+    let mut result = vec![];
 
     let condition = expressions.get(1).unwrap();
     result.extend(emit_expr(input, condition)?);

@@ -24,6 +24,7 @@ mod errors;
 mod parse;
 mod scan;
 mod vm;
+mod vm_insts;
 mod vm_value;
 
 #[cfg(not(test))]

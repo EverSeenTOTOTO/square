@@ -1,8 +1,14 @@
+use alloc::rc::Rc;
+use alloc::string::String;
 use core::cmp::PartialEq;
 use core::fmt;
 use core::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
 
-use alloc::string::String;
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct Closure {
+    pub name: &'static str,
+    pub ip: usize, // function location
+}
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -12,6 +18,7 @@ pub enum Value {
     Int(i32),
     Int64(i64),
     Str(String),
+    Closure(Rc<Closure>),
     Nil,
 }
 
@@ -35,6 +42,9 @@ impl fmt::Display for Value {
             }
             Value::Str(val) => {
                 write!(f, "Str({})", val)
+            }
+            Value::Closure(_) => {
+                write!(f, "Closure")
             }
             Value::Nil => {
                 write!(f, "Nil")
@@ -64,6 +74,7 @@ impl PartialOrd for Value {
             (Value::Double(lhs), Value::Int64(rhs)) => lhs.partial_cmp(&(*rhs as f64)),
             (Value::Double(lhs), Value::Float(rhs)) => lhs.partial_cmp(&(*rhs as f64)),
             (Value::Str(lhs), Value::Str(rhs)) => lhs.partial_cmp(rhs),
+            (Value::Closure(lhs), Value::Closure(rhs)) => lhs.partial_cmp(rhs),
             (Value::Nil, Value::Nil) => Some(core::cmp::Ordering::Equal),
             _ => None,
         }
@@ -91,6 +102,7 @@ impl PartialEq for Value {
             (Value::Double(lhs), Value::Int64(rhs)) => *lhs == *rhs as f64,
             (Value::Double(lhs), Value::Float(rhs)) => *lhs == *rhs as f64,
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
+            (Value::Closure(lhs), Value::Closure(rhs)) => lhs == rhs,
             (Value::Nil, Value::Nil) => true,
             _ => false,
         }
@@ -179,7 +191,7 @@ impl Value {
             Value::Float(val) => *val != 0.0,
             Value::Double(val) => *val != 0.0,
             Value::Str(val) => !val.is_empty(),
-            Value::Nil => false,
+            _ => false,
         }
     }
 }
