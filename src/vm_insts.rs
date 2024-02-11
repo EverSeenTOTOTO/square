@@ -30,6 +30,7 @@ pub enum Inst {
     LOAD(String),
     CALL,
     RET,
+    MAKE_CLOSURE(i32), // relative offset
 }
 
 impl fmt::Display for Inst {
@@ -60,6 +61,7 @@ impl fmt::Display for Inst {
             Inst::LOAD(name) => write!(f, "LOAD {}", name),
             Inst::CALL => write!(f, "CALL"),
             Inst::RET => write!(f, "RET"),
+            Inst::MAKE_CLOSURE(offset) => write!(f, "MAKE_CLOSURE {}", offset),
         }
     }
 }

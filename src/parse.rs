@@ -793,9 +793,6 @@ fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
                     Box::new(Node::Token(Token::Num(
                         leading.pos().clone(),
                         "0".to_string(),
-                        "0".to_string(),
-                        "".to_string(),
-                        "".to_string(),
                     ))),
                     target,
                 ],

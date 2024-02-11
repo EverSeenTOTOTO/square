@@ -15,7 +15,7 @@ pub enum Token {
     Comment(Position, String),
     Eof(Position),
     Id(Position, String),
-    Num(Position, String, String, String, String),
+    Num(Position, String),
     Op(Position, String),
     Str(Position, String),
     Whitespace(Position, String),
@@ -27,7 +27,7 @@ impl Token {
             Token::Comment(_, source) => source,
             Token::Eof(_) => "",
             Token::Id(_, source) => source,
-            Token::Num(_, source, ..) => source,
+            Token::Num(_, source) => source,
             Token::Op(_, source) => source,
             Token::Str(_, source) => source,
             Token::Whitespace(_, source) => source,
@@ -39,7 +39,7 @@ impl Token {
             Token::Comment(pos, _) => pos,
             Token::Eof(pos) => pos,
             Token::Id(pos, _) => pos,
-            Token::Num(pos, ..) => pos,
+            Token::Num(pos, _) => pos,
             Token::Op(pos, _) => pos,
             Token::Str(pos, _) => pos,
             Token::Whitespace(pos, _) => pos,
@@ -53,8 +53,8 @@ impl fmt::Display for Token {
             Token::Comment(_, source) => write!(f, "Comment({})", source),
             Token::Eof(_) => write!(f, "Eof"),
             Token::Id(_, source) => write!(f, "Id({})", source),
-            Token::Num(..) => {
-                write!(f, "Num({})", self.source())
+            Token::Num(_, source) => {
+                write!(f, "Num({})", source)
             }
             Token::Op(_, source) => write!(f, "Op({})", source),
             Token::Str(_, source) => write!(f, "Str({})", source),
@@ -336,9 +336,6 @@ fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
         ));
     }
 
-    let int = input_chars[start_pos.cursor..pos.cursor].iter().collect();
-
-    let dot_start = pos.clone();
     if let Some(dot) = chars.peek() {
         if **dot == '.' {
             chars.next();
@@ -353,8 +350,6 @@ fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
             }
         }
     }
-    let dot = input_chars[dot_start.cursor..pos.cursor].iter().collect();
-    let exp_start = pos.clone();
 
     if let Some(exp) = chars.peek() {
         if **exp == 'e' || **exp == 'E' {
@@ -362,7 +357,7 @@ fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
             pos.advance();
 
             if let Some(minus) = chars.peek() {
-                if **minus == '-' {
+                if **minus == '-' || **minus == '+' {
                     chars.next();
                     pos.advance();
                 }
@@ -383,10 +378,9 @@ fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {
             }
         }
     }
-    let exp = input_chars[exp_start.cursor..pos.cursor].iter().collect();
     let source = input_chars[start_pos.cursor..pos.cursor].iter().collect();
 
-    Ok(Token::Num(start_pos, source, int, dot, exp))
+    Ok(Token::Num(start_pos, source))
 }
 
 #[test]
@@ -441,10 +435,10 @@ fn test_raise_number_exp2() {
 
 #[test]
 fn test_raise_number_exp3() {
-    let input = "012E5e6";
+    let input = "012E+5e6";
     let token = raise_number(input, &mut Position::default()).unwrap();
 
-    assert_eq!(token.source(), "012E5");
+    assert_eq!(token.source(), "012E+5");
 }
 
 #[test]
@@ -471,6 +465,30 @@ fn test_raise_number_minus() {
     let token = raise_number(input, &mut Position::default()).unwrap();
 
     assert_eq!(token.source(), "012.34E-56");
+}
+
+#[test]
+fn test_raise_number_min_max() {
+    let max = "1.7976931348623157e+308";
+    let min_positive = "2.2250738585072014e-308";
+
+    assert_eq!(
+        raise_number(max, &mut Position::default())
+            .unwrap()
+            .source()
+            .parse::<f64>()
+            .unwrap(),
+        core::f64::MAX
+    );
+
+    assert_eq!(
+        raise_number(min_positive, &mut Position::default())
+            .unwrap()
+            .source()
+            .parse::<f64>()
+            .unwrap(),
+        core::f64::MIN_POSITIVE
+    );
 }
 
 fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult<'a> {

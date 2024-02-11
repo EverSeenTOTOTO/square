@@ -3,20 +3,18 @@ use alloc::string::String;
 use core::cmp::PartialEq;
 use core::fmt;
 use core::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
+use hashbrown::HashMap;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
-    pub name: &'static str,
-    pub ip: usize, // function location
+    pub ip: i32, // function location
+    pub captures: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Value {
     Bool(bool),
-    Float(f32),
-    Double(f64),
-    Int(i32),
-    Int64(i64),
+    Num(f64),
     Str(String),
     Closure(Rc<Closure>),
     Nil,
@@ -28,23 +26,14 @@ impl fmt::Display for Value {
             Value::Bool(val) => {
                 write!(f, "Bool({})", val)
             }
-            Value::Float(val) => {
-                write!(f, "Float({})", val)
-            }
-            Value::Double(val) => {
-                write!(f, "Double({})", val)
-            }
-            Value::Int(val) => {
-                write!(f, "Int({})", val)
-            }
-            Value::Int64(val) => {
-                write!(f, "Int({})", val)
+            Value::Num(val) => {
+                write!(f, "Num({})", val)
             }
             Value::Str(val) => {
                 write!(f, "Str({})", val)
             }
-            Value::Closure(_) => {
-                write!(f, "Closure")
+            Value::Closure(closure) => {
+                write!(f, "Closure({})", closure.ip)
             }
             Value::Nil => {
                 write!(f, "Nil")
@@ -57,24 +46,8 @@ impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         match (self, other) {
             (Value::Bool(lhs), Value::Bool(rhs)) => lhs.partial_cmp(rhs),
-            (Value::Int(lhs), Value::Int(rhs)) => lhs.partial_cmp(rhs),
-            (Value::Int(lhs), Value::Int64(rhs)) => (*lhs as i64).partial_cmp(rhs),
-            (Value::Int(lhs), Value::Float(rhs)) => (*lhs as f32).partial_cmp(rhs),
-            (Value::Int(lhs), Value::Double(rhs)) => (*lhs as f64).partial_cmp(rhs),
-            (Value::Int64(lhs), Value::Int64(rhs)) => lhs.partial_cmp(rhs),
-            (Value::Int64(lhs), Value::Int(rhs)) => lhs.partial_cmp(&(*rhs as i64)),
-            (Value::Int64(lhs), Value::Float(rhs)) => (*lhs as f32).partial_cmp(rhs),
-            (Value::Int64(lhs), Value::Double(rhs)) => (*lhs as f64).partial_cmp(rhs),
-            (Value::Float(lhs), Value::Float(rhs)) => lhs.partial_cmp(rhs),
-            (Value::Float(lhs), Value::Int(rhs)) => lhs.partial_cmp(&(*rhs as f32)),
-            (Value::Float(lhs), Value::Int64(rhs)) => lhs.partial_cmp(&(*rhs as f32)),
-            (Value::Float(lhs), Value::Double(rhs)) => (*lhs as f64).partial_cmp(rhs),
-            (Value::Double(lhs), Value::Double(rhs)) => lhs.partial_cmp(rhs),
-            (Value::Double(lhs), Value::Int(rhs)) => lhs.partial_cmp(&(*rhs as f64)),
-            (Value::Double(lhs), Value::Int64(rhs)) => lhs.partial_cmp(&(*rhs as f64)),
-            (Value::Double(lhs), Value::Float(rhs)) => lhs.partial_cmp(&(*rhs as f64)),
+            (Value::Num(lhs), Value::Num(rhs)) => lhs.partial_cmp(rhs),
             (Value::Str(lhs), Value::Str(rhs)) => lhs.partial_cmp(rhs),
-            (Value::Closure(lhs), Value::Closure(rhs)) => lhs.partial_cmp(rhs),
             (Value::Nil, Value::Nil) => Some(core::cmp::Ordering::Equal),
             _ => None,
         }
@@ -85,22 +58,7 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Bool(lhs), Value::Bool(rhs)) => lhs == rhs,
-            (Value::Int(lhs), Value::Int(rhs)) => lhs == rhs,
-            (Value::Int(lhs), Value::Int64(rhs)) => *lhs as i64 == *rhs,
-            (Value::Int(lhs), Value::Float(rhs)) => *lhs as f32 == *rhs,
-            (Value::Int(lhs), Value::Double(rhs)) => *lhs as f64 == *rhs,
-            (Value::Int64(lhs), Value::Int64(rhs)) => lhs == rhs,
-            (Value::Int64(lhs), Value::Int(rhs)) => *lhs == *rhs as i64,
-            (Value::Int64(lhs), Value::Float(rhs)) => *lhs as f32 == *rhs,
-            (Value::Int64(lhs), Value::Double(rhs)) => *lhs as f64 == *rhs,
-            (Value::Float(lhs), Value::Float(rhs)) => lhs == rhs,
-            (Value::Float(lhs), Value::Int(rhs)) => *lhs == *rhs as f32,
-            (Value::Float(lhs), Value::Int64(rhs)) => *lhs == *rhs as f32,
-            (Value::Float(lhs), Value::Double(rhs)) => *lhs as f64 == *rhs,
-            (Value::Double(lhs), Value::Double(rhs)) => lhs == rhs,
-            (Value::Double(lhs), Value::Int(rhs)) => *lhs == *rhs as f64,
-            (Value::Double(lhs), Value::Int64(rhs)) => *lhs == *rhs as f64,
-            (Value::Double(lhs), Value::Float(rhs)) => *lhs == *rhs as f64,
+            (Value::Num(lhs), Value::Num(rhs)) => lhs == rhs,
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
             (Value::Closure(lhs), Value::Closure(rhs)) => lhs == rhs,
             (Value::Nil, Value::Nil) => true,
@@ -116,22 +74,7 @@ macro_rules! impl_binop {
 
             fn $method(self, another: Self) -> Self::Output {
                 match (self, another) {
-                    (Value::Int(lhs), Value::Int(rhs)) => Value::Int(lhs $op rhs),
-                    (Value::Int(lhs), Value::Int64(rhs)) => Value::Int64(*lhs as i64 $op rhs),
-                    (Value::Int(lhs), Value::Float(rhs)) => Value::Float(*lhs as f32 $op rhs),
-                    (Value::Int(lhs), Value::Double(rhs)) => Value::Double(*lhs as f64 $op rhs),
-                    (Value::Int64(lhs), Value::Int(rhs)) => Value::Int64(lhs $op *rhs as i64),
-                    (Value::Int64(lhs), Value::Int64(rhs)) => Value::Int64(lhs $op rhs),
-                    (Value::Int64(lhs), Value::Float(rhs)) => Value::Float(*lhs as f32 $op rhs),
-                    (Value::Int64(lhs), Value::Double(rhs)) => Value::Double(*lhs as f64 $op rhs),
-                    (Value::Float(lhs), Value::Int(rhs)) => Value::Float(lhs $op *rhs as f32),
-                    (Value::Float(lhs), Value::Int64(rhs)) => Value::Float(lhs $op *rhs as f32),
-                    (Value::Float(lhs), Value::Float(rhs)) => Value::Float(lhs $op rhs),
-                    (Value::Float(lhs), Value::Double(rhs)) => Value::Double(*lhs as f64 $op rhs),
-                    (Value::Double(lhs), Value::Int(rhs)) => Value::Double(lhs $op *rhs as f64),
-                    (Value::Double(lhs), Value::Int64(rhs)) => Value::Double(lhs $op *rhs as f64),
-                    (Value::Double(lhs), Value::Float(rhs)) => Value::Double(lhs $op *rhs as f64),
-                    (Value::Double(lhs), Value::Double(rhs)) => Value::Double(lhs $op rhs),
+                    (Value::Num(lhs), Value::Num(rhs)) => Value::Num(lhs $op rhs),
                     _ => unimplemented!(),
                 }
             }
@@ -146,10 +89,7 @@ macro_rules! impl_bitop {
 
             fn $method(self, another: Self) -> Self::Output {
                 match (self, another) {
-                    (Value::Int(lhs), Value::Int(rhs)) => Value::Int(lhs $op rhs),
-                    (Value::Int(lhs), Value::Int64(rhs)) => Value::Int64((*lhs as i64) $op rhs),
-                    (Value::Int64(lhs), Value::Int(rhs)) => Value::Int64(lhs $op *rhs as i64),
-                    (Value::Int64(lhs), Value::Int64(rhs)) => Value::Int64(lhs $op rhs),
+                    (Value::Num(lhs), Value::Num(rhs)) => Value::Num(((*lhs as i64) $op (*rhs as i64)) as f64),
                     _ => unimplemented!(),
                 }
             }
@@ -175,8 +115,7 @@ impl Not for &Value {
     fn not(self) -> Self::Output {
         match self {
             Value::Bool(val) => Value::Bool(!*val),
-            Value::Int(val) => Value::Int(!*val),
-            Value::Int64(val) => Value::Int64(!*val),
+            Value::Num(val) => Value::Num(!(*val as i64) as f64),
             _ => unimplemented!(),
         }
     }
@@ -186,10 +125,7 @@ impl Value {
     pub fn to_bool(&self) -> bool {
         match self {
             Value::Bool(val) => *val,
-            Value::Int(val) => *val != 0,
-            Value::Int64(val) => *val != 0,
-            Value::Float(val) => *val != 0.0,
-            Value::Double(val) => *val != 0.0,
+            Value::Num(val) => *val != 0.0,
             Value::Str(val) => !val.is_empty(),
             _ => false,
         }
@@ -199,53 +135,53 @@ impl Value {
 #[test]
 fn test_partial_cmp() {
     assert_eq!(
-        Value::Double(core::f64::INFINITY) > Value::Int64(core::i64::MAX),
+        Value::Num(core::f64::INFINITY) > Value::Num(core::i64::MAX as f64),
         true
     );
-    assert_eq!(Value::Double(0.0) == Value::Int(0), true);
+    assert_eq!(Value::Num(0.0) == Value::Num(0 as f64), true);
     assert_eq!(Value::Nil == Value::Bool(false), false);
 }
 
 #[test]
 fn test_binop_overflow() {
-    let lhs = Value::Int((2i64.pow(31) - 1) as i32);
-    let rhs = Value::Float(1.0);
+    let lhs = Value::Num(2i64.pow(53) as f64);
+    let rhs = Value::Num(1.0);
 
-    assert_eq!(&lhs + &rhs, Value::Float((2i64.pow(31) - 1) as f32));
+    assert_eq!(&lhs + &rhs, Value::Num(2i64.pow(53) as f64));
 }
 
 #[test]
 fn test_binop_precison() {
-    let mut lhs = Value::Double(0.2);
-    lhs = &lhs + &Value::Double(0.1);
-    lhs = &lhs - &Value::Double(0.3);
+    let mut lhs = Value::Num(0.2);
+    lhs = &lhs + &Value::Num(0.1);
+    lhs = &lhs - &Value::Num(0.3);
 
-    let mut i = Value::Int(0);
-    while &lhs < &Value::Int(1) {
+    let mut i = Value::Num(0.0);
+    while &lhs < &Value::Num(1.0) {
         lhs = &lhs + &lhs;
-        i = &i + &Value::Int(1);
+        i = &i + &Value::Num(1.0);
         println!("{}", lhs);
     }
 
-    assert_eq!(i, Value::Int(54));
-    assert_eq!(lhs, Value::Double(1.0));
+    assert_eq!(i, Value::Num(54.0));
+    assert_eq!(lhs, Value::Num(1.0));
 }
 
 #[test]
 fn test_bitop_xor() {
-    let mut lhs = Value::Int(0x1ff);
-    let mut rhs = Value::Int64(0xfec);
+    let mut lhs = Value::Num(0x1ff as f64);
+    let mut rhs = Value::Num(0xfec as f64);
 
     lhs = &rhs ^ &lhs;
     rhs = &lhs ^ &rhs;
     lhs = &lhs ^ &rhs;
 
-    assert_eq!(lhs, Value::Int64(0xfec));
-    assert_eq!(rhs, Value::Int64(0x1ff));
+    assert_eq!(lhs, Value::Num(0xfec as f64));
+    assert_eq!(rhs, Value::Num(0x1ff as f64));
 }
 
 #[test]
 fn test_bitop_not() {
-    assert_eq!(!&Value::Int(0x1ff), Value::Int(!0x1ff));
+    assert_eq!(!&Value::Num(0x1ff as f64), Value::Num(!0x1ff as f64));
     assert_eq!(!&Value::Bool(false), Value::Bool(true));
 }

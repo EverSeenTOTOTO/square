@@ -96,6 +96,4 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
     if let Err(e) = vm.run(insts.as_ref().unwrap(), &mut pc) {
         println!("{}", e);
     }
-
-    println!("{}", vm.call_frame.unwrap());
 }
