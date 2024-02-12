@@ -2,9 +2,9 @@ use crate::{errors::SquareError, parse::Node, scan::Token, vm_insts::Inst, vm_va
 
 use alloc::{boxed::Box, format, rc::Rc, string::ToString, vec, vec::Vec};
 
-type EmitResult<'a> = Result<Vec<Inst>, SquareError<'a>>;
+type EmitResult = Result<Vec<Inst>, SquareError>;
 
-fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult<'a> {
+fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult {
     match token {
         Token::Num(_, num) => {
             return Ok(vec![Inst::PUSH(Value::Num(num.parse::<f64>().unwrap()))]);
@@ -25,7 +25,7 @@ fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult<'a> {
         }
         _ => {
             return Err(SquareError::SyntaxError(
-                input,
+                input.to_string(),
                 format!(
                     "failed to emit_token, expect number, string or identifier name, got {}",
                     token.to_string()
@@ -42,7 +42,7 @@ fn emit_assign<'a, 'b>(
     target: &'b Box<Node>,
     _properties: &'b Vec<Box<Node>>,
     expression: &'b Box<Node>,
-) -> EmitResult<'a> {
+) -> EmitResult {
     let mut insts = emit_expr(input, expression)?;
 
     match target.as_ref() {
@@ -51,7 +51,7 @@ fn emit_assign<'a, 'b>(
                 insts.push(Inst::STORE(source.clone()));
             } else {
                 return Err(SquareError::SyntaxError(
-                    input,
+                    input.to_string(),
                     format!(
                         "failed to emit_assign, cannot assign to {}, expect identifier",
                         id.to_string()
@@ -67,15 +67,11 @@ fn emit_assign<'a, 'b>(
     return Ok(insts);
 }
 
-fn emit_op<'a, 'b>(
-    input: &'a str,
-    op: &'b Token,
-    expressions: &'b Vec<Box<Node>>,
-) -> EmitResult<'a> {
+fn emit_op<'a, 'b>(input: &'a str, op: &'b Token, expressions: &'b Vec<Box<Node>>) -> EmitResult {
     let op_action = |action: Inst| {
         if expressions.len() != 2 {
             return Err(SquareError::SyntaxError(
-                input,
+                input.to_string(),
                 "failed to emit_op, operands count not match".to_string(),
                 op.pos().clone(),
                 None,
@@ -89,7 +85,7 @@ fn emit_op<'a, 'b>(
     let op_assign_action = |action: Inst| {
         if expressions.len() != 2 {
             return Err(SquareError::SyntaxError(
-                input,
+                input.to_string(),
                 "failed to emit_op, operands count not match".to_string(),
                 op.pos().clone(),
                 None,
@@ -108,7 +104,7 @@ fn emit_op<'a, 'b>(
                     return Ok(result);
                 } else {
                     return Err(SquareError::SyntaxError(
-                        input,
+                        input.to_string(),
                         format!(
                             "failed to emit_assign_op, expect identifier, got {}",
                             token.to_string()
@@ -156,19 +152,19 @@ fn emit_op<'a, 'b>(
     }
 
     return Err(SquareError::SyntaxError(
-        input,
+        input.to_string(),
         format!("failed to emit_op, expect operator, got {}", op.to_string()),
         op.pos().clone(),
         None,
     ));
 }
 
-fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult<'a> {
+fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult {
     let leading = expressions.first().unwrap();
 
     if expressions.len() < 3 {
         return Err(SquareError::SyntaxError(
-            input,
+            input.to_string(),
             "failed to emit_if, expect condition and true_branch".to_string(),
             if let Node::Token(if_token) = leading.as_ref() {
                 if_token.pos().clone()
@@ -213,17 +209,16 @@ fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResul
         result.insert(0, Inst::JMP(condition_len + true_branch_len + 3));
         result.push(Inst::MAKE_CLOSURE(-4 - (condition_len + true_branch_len)));
     }
-    result.push(Inst::CALL);
 
     return Ok(result);
 }
 
-fn emit_while<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult<'a> {
+fn emit_while<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult {
     let leading = expressions.first().unwrap();
 
     if expressions.len() < 3 {
         return Err(SquareError::SyntaxError(
-            input,
+            input.to_string(),
             "failed to emit_while, expect condition and body".to_string(),
             if let Node::Token(while_token) = leading.as_ref() {
                 while_token.pos().clone()
@@ -249,41 +244,59 @@ fn emit_while<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitRe
     result.push(Inst::JMP(-((condition_len + body_len + 2) as i32)));
     result.push(Inst::RET);
     result.push(Inst::MAKE_CLOSURE(-4 - offset));
-    result.push(Inst::CALL);
 
     return Ok(result);
 }
 
-fn emit_begin<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult<'a> {
+fn emit_begin<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult {
     let body = emit(input, &expressions[1..].to_vec())?;
-    let offset = body.len();
-    let mut result = vec![Inst::JMP(1 + offset as i32)];
+    let offset = body.len() as i32;
+    let mut result = vec![Inst::JMP(1 + offset)];
     result.extend(body);
     result.push(Inst::RET);
-    result.push(Inst::MAKE_CLOSURE(-2 - offset as i32));
-    result.push(Inst::CALL);
+    result.push(Inst::MAKE_CLOSURE(-2 - offset));
     return Ok(result);
 }
 
-fn emit_call<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult<'a> {
+fn emit_call<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult {
     if expressions.len() == 0 {
         todo!(); // TODO: []
     }
 
     let first = expressions.first().unwrap();
+    let mut result = vec![];
 
     match first.as_ref() {
-        Node::Token(keyword) => match keyword.source() {
-            "if" => emit_if(input, expressions),
-            "while" => emit_while(input, expressions),
-            "begin" => emit_begin(input, expressions),
-            _ => emit(input, expressions),
-        },
-        _ => emit(input, expressions),
+        Node::Token(keyword) => {
+            match keyword.source() {
+                "if" => result.extend(emit_if(input, expressions)?),
+                "while" => result.extend(emit_while(input, expressions)?),
+                "begin" => result.extend(emit_begin(input, expressions)?),
+                _ => result.extend(emit(input, expressions)?),
+            }
+            result.push(Inst::CALL);
+        }
+        Node::Fn(_, params, body) => {
+            result.extend(emit_fn(input, params, body)?);
+            result.push(Inst::CALL);
+        }
+        _ => result.extend(emit(input, expressions)?),
     }
+
+    return Ok(result);
 }
 
-fn emit_expr<'a, 'b>(input: &'a str, node: &'b Box<Node>) -> EmitResult<'a> {
+fn emit_fn<'a, 'b>(input: &'a str, _params: &'b Box<Node>, body: &'b Box<Node>) -> EmitResult {
+    let body_result = emit_expr(input, body)?;
+    let offset = body_result.len() as i32;
+    let mut result = vec![Inst::JMP(offset + 1)];
+    result.extend(body_result);
+    result.push(Inst::RET);
+    result.push(Inst::MAKE_CLOSURE(-(offset + 2)));
+    return Ok(result);
+}
+
+fn emit_expr<'a, 'b>(input: &'a str, node: &'b Box<Node>) -> EmitResult {
     match node.as_ref() {
         Node::Token(token) => emit_token(input, token),
         Node::Assign(_, target, properties, expression) => {
@@ -291,11 +304,12 @@ fn emit_expr<'a, 'b>(input: &'a str, node: &'b Box<Node>) -> EmitResult<'a> {
         }
         Node::Op(op, expressions) => emit_op(input, op, expressions),
         Node::Call(_, _, expressions) => emit_call(input, expressions),
+        Node::Fn(_, params, body) => emit_fn(input, params, body),
         _ => todo!(),
     }
 }
 
-pub fn emit<'a, 'b>(input: &'a str, ast: &'b Vec<Box<Node>>) -> Result<Vec<Inst>, SquareError<'a>> {
+pub fn emit<'a, 'b>(input: &'a str, ast: &'b Vec<Box<Node>>) -> Result<Vec<Inst>, SquareError> {
     let mut insts = vec![];
 
     for node in ast {

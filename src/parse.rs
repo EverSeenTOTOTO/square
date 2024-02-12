@@ -12,7 +12,7 @@ use crate::code_frame::Position;
 use crate::errors::SquareError;
 use crate::scan::{expect, lookahead, raise_token, skip_whitespace, RaiseResult, Token};
 
-type ParseResult<'a> = Result<Box<Node>, SquareError<'a>>;
+pub type ParseResult = Result<Box<Node>, SquareError>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -73,8 +73,8 @@ impl fmt::Display for Node {
 }
 
 // wrap scanner error to parser error
-fn create_wrapper<'a>(fn_name: &'static str) -> Box<dyn Fn(RaiseResult<'a>) -> RaiseResult<'a>> {
-    return Box::new(move |result: RaiseResult<'a>| {
+fn create_wrapper<'a>(fn_name: &'static str) -> Box<dyn Fn(RaiseResult) -> RaiseResult> {
+    return Box::new(move |result: RaiseResult| {
         if let Err(SquareError::UnexpectedToken(input, message, position)) = result {
             return Err(SquareError::SyntaxError(
                 input,
@@ -88,7 +88,7 @@ fn create_wrapper<'a>(fn_name: &'static str) -> Box<dyn Fn(RaiseResult<'a>) -> R
     });
 }
 
-fn expect_whitespace<'a>(input: &'a str, pos: &mut Position) -> Result<Token, SquareError<'a>> {
+fn expect_whitespace<'a>(input: &'a str, pos: &mut Position) -> Result<Token, SquareError> {
     return expect(
         &|token| {
             if let Token::Whitespace(..) = token {
@@ -101,7 +101,7 @@ fn expect_whitespace<'a>(input: &'a str, pos: &mut Position) -> Result<Token, Sq
     );
 }
 
-fn parse_expand<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_expand<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_expand");
 
     let left_bracket = wrap(expect(
@@ -138,7 +138,7 @@ fn parse_expand<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
                     }
                 } else {
                     return Err(SquareError::SyntaxError(
-                        input,
+                        input.to_string(),
                         format!(
                             "faield to parse_expand, expect identifier or placeholders, got {}",
                             token.to_string()
@@ -236,7 +236,7 @@ fn test_parse_expand_error() {
     assert_eq!(
         err,
         Err(SquareError::SyntaxError(
-            input,
+            input.to_string(),
             "failed to parse_expand, expect WHITESPACE, got Id(x)".to_string(),
             pos,
             None
@@ -250,7 +250,7 @@ fn test_parse_expand_error() {
     assert_eq!(
         err,
         Err(SquareError::SyntaxError(
-            input,
+            input.to_string(),
             "failed to parse_expand, expect WHITESPACE, got Op(.)".to_string(),
             pos,
             None
@@ -264,7 +264,7 @@ fn test_parse_expand_error() {
     assert_eq!(
         err,
         Err(SquareError::SyntaxError(
-            input,
+            input.to_string(),
             "failed to parse_expand, expect WHITESPACE, got Op(...)".to_string(),
             pos,
             None
@@ -272,14 +272,16 @@ fn test_parse_expand_error() {
     );
 }
 
-fn parse_fn<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_fn<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_fn");
 
     let slash = wrap(expect(
-        &|token| (token.source() == "/", "expect /".to_string()),
+        &|token| (token.source() == "/[", "expect  /[".to_string()),
         input,
         pos,
     ))?;
+    pos.cursor -= 1;
+    pos.column -= 1;
     let expand = parse_expand(input, pos)?;
 
     wrap(skip_whitespace(input, pos))?;
@@ -372,7 +374,7 @@ fn test_parse_fn_high_order() {
     panic!();
 }
 
-fn parse_prop<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_prop<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_prop");
     let dot = wrap(expect(
         &|token| (token.source() == ".", "expect .".to_string()),
@@ -410,10 +412,7 @@ fn test_parse_prop() {
     panic!()
 }
 
-fn parse_prop_chain<'a>(
-    input: &'a str,
-    pos: &mut Position,
-) -> Result<Vec<Box<Node>>, SquareError<'a>> {
+fn parse_prop_chain<'a>(input: &'a str, pos: &mut Position) -> Result<Vec<Box<Node>>, SquareError> {
     let wrap = create_wrapper("parse_prop_chain");
     let mut nodes = vec![];
 
@@ -452,7 +451,7 @@ fn test_parse_prop_chain() {
     panic!()
 }
 
-fn parse_assign<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_assign<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_assign");
     let eq = wrap(expect(
         &|token| (token.source() == "=", "expect =".to_string()),
@@ -472,7 +471,7 @@ fn parse_assign<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
         Box::new(Node::Token(token))
     } else {
         return Err(SquareError::SyntaxError(
-            input,
+            input.to_string(),
             format!(
                 "faield to parse_assign, expect identifier or expansion, got {}",
                 token.to_string()
@@ -553,7 +552,7 @@ fn is_op<'a>(op: &'a str) -> bool {
     return is_binary_op(op) || is_binary_assign_op(op);
 }
 
-fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_op");
     let operator = wrap(raise_token(input, pos))?;
 
@@ -581,7 +580,7 @@ fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
         }
         _ => {
             return Err(SquareError::SyntaxError(
-                input,
+                input.to_string(),
                 format!(
                     "faield to parse_op, expect operator, got {}",
                     operator.source()
@@ -619,7 +618,7 @@ fn test_parse_op_binary_assign() {
     assert_eq!(
         parse_op(input, &mut pos),
         Err(SquareError::SyntaxError(
-            input,
+            input.to_string(),
             "faield to parse_dot, expect identifier or call expression, got Num(42)".to_string(),
             Position {
                 line: 1,
@@ -631,7 +630,7 @@ fn test_parse_op_binary_assign() {
     );
 }
 
-fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_call");
     let left_bracket = wrap(expect(
         &|token| (token.source() == "[", "expect [".to_string()),
@@ -693,7 +692,7 @@ fn test_parse_call_assign() {
     panic!();
 }
 
-fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_dot");
     let leading = wrap(lookahead(input, pos))?;
 
@@ -719,7 +718,7 @@ fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
             }
         }
         _ => Err(SquareError::SyntaxError(
-            input,
+            input.to_string(),
             format!(
                 "faield to parse_dot, expect identifier or call expression, got {}",
                 leading.to_string()
@@ -772,12 +771,12 @@ fn test_parse_dot() {
     panic!();
 }
 
-fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
+fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_expr");
     let leading = wrap(lookahead(input, pos))?;
 
     match leading {
-        _ if leading.source() == "/" => parse_fn(input, pos),
+        _ if leading.source() == "/[" => parse_fn(input, pos),
         _ if leading.source() == "-" => {
             let minus = wrap(raise_token(input, pos))?;
             let target = if let Token::Num(..) = wrap(lookahead(input, pos))? {
@@ -803,7 +802,7 @@ fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult<'a> {
     }
 }
 
-pub fn parse<'a>(input: &'a str, pos: &mut Position) -> Result<Vec<Box<Node>>, SquareError<'a>> {
+pub fn parse<'a>(input: &'a str, pos: &mut Position) -> Result<Vec<Box<Node>>, SquareError> {
     let wrap = create_wrapper("parse");
     let mut ast = vec![];
 

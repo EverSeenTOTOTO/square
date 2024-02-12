@@ -7,13 +7,14 @@ use alloc::{format, string::String};
 use core::fmt;
 
 #[derive(Debug, PartialEq)]
-pub enum SquareError<'a> {
-    UnexpectedToken(&'a str, String, Position),
-    SyntaxError(&'a str, String, Position, Option<Position>),
+pub enum SquareError {
+    UnexpectedToken(String, String, Position),
+    SyntaxError(String, String, Position, Option<Position>),
     RuntimeError(String, Inst, usize),
+    TypeError(String),
 }
 
-impl<'a> fmt::Display for SquareError<'a> {
+impl fmt::Display for SquareError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SquareError::UnexpectedToken(source, msg, pos) => {
@@ -31,6 +32,9 @@ impl<'a> fmt::Display for SquareError<'a> {
                     msg,
                     format!("{:>4}: {}\n", pc, inst)
                 )
+            }
+            SquareError::TypeError(msg) => {
+                write!(f, "{}", msg)
             }
         }
     }

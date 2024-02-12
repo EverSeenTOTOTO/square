@@ -1,9 +1,12 @@
-use alloc::rc::Rc;
-use alloc::string::String;
-use core::cmp::PartialEq;
-use core::fmt;
-use core::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
+use alloc::{format, rc::Rc, string::String};
+use core::{
+    cmp::PartialEq,
+    fmt,
+    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
+};
 use hashbrown::HashMap;
+
+use crate::errors::SquareError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
@@ -67,15 +70,17 @@ impl PartialEq for Value {
     }
 }
 
+pub type CalcResult = Result<Value, SquareError>;
+
 macro_rules! impl_binop {
     ($trait:ty, $method:ident, $op:tt) => {
         impl $trait for &Value {
-            type Output = Value;
+            type Output = CalcResult;
 
             fn $method(self, another: Self) -> Self::Output {
                 match (self, another) {
-                    (Value::Num(lhs), Value::Num(rhs)) => Value::Num(lhs $op rhs),
-                    _ => unimplemented!(),
+                    (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(lhs $op rhs)),
+                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {:?} and {:?}", self, another)))
                 }
             }
         }
@@ -85,12 +90,12 @@ macro_rules! impl_binop {
 macro_rules! impl_bitop {
     ($trait:ty, $method:ident, $op:tt) => {
         impl $trait for &Value {
-            type Output = Value;
+            type Output = CalcResult;
 
             fn $method(self, another: Self) -> Self::Output {
                 match (self, another) {
-                    (Value::Num(lhs), Value::Num(rhs)) => Value::Num(((*lhs as i64) $op (*rhs as i64)) as f64),
-                    _ => unimplemented!(),
+                    (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(((*lhs as i64) $op (*rhs as i64)) as f64)),
+                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {:?} and {:?}", self, another)))
                 }
             }
         }
@@ -110,13 +115,16 @@ impl_bitop!(Shr, shr, >>);
 
 // bitwise not ~
 impl Not for &Value {
-    type Output = Value;
+    type Output = CalcResult;
 
     fn not(self) -> Self::Output {
         match self {
-            Value::Bool(val) => Value::Bool(!*val),
-            Value::Num(val) => Value::Num(!(*val as i64) as f64),
-            _ => unimplemented!(),
+            Value::Bool(val) => Ok(Value::Bool(!*val)),
+            Value::Num(val) => Ok(Value::Num(!(*val as i64) as f64)),
+            _ => Err(SquareError::TypeError(format!(
+                "cannot perform operation on {:?}",
+                self
+            ))),
         }
     }
 }
@@ -147,19 +155,19 @@ fn test_binop_overflow() {
     let lhs = Value::Num(2i64.pow(53) as f64);
     let rhs = Value::Num(1.0);
 
-    assert_eq!(&lhs + &rhs, Value::Num(2i64.pow(53) as f64));
+    assert_eq!((&lhs + &rhs).unwrap(), Value::Num(2i64.pow(53) as f64));
 }
 
 #[test]
 fn test_binop_precison() {
     let mut lhs = Value::Num(0.2);
-    lhs = &lhs + &Value::Num(0.1);
-    lhs = &lhs - &Value::Num(0.3);
+    lhs = (&lhs + &Value::Num(0.1)).unwrap();
+    lhs = (&lhs - &Value::Num(0.3)).unwrap();
 
     let mut i = Value::Num(0.0);
     while &lhs < &Value::Num(1.0) {
-        lhs = &lhs + &lhs;
-        i = &i + &Value::Num(1.0);
+        lhs = (&lhs + &lhs).unwrap();
+        i = (&i + &Value::Num(1.0)).unwrap();
         println!("{}", lhs);
     }
 
@@ -172,9 +180,9 @@ fn test_bitop_xor() {
     let mut lhs = Value::Num(0x1ff as f64);
     let mut rhs = Value::Num(0xfec as f64);
 
-    lhs = &rhs ^ &lhs;
-    rhs = &lhs ^ &rhs;
-    lhs = &lhs ^ &rhs;
+    lhs = (&rhs ^ &lhs).unwrap();
+    rhs = (&lhs ^ &rhs).unwrap();
+    lhs = (&lhs ^ &rhs).unwrap();
 
     assert_eq!(lhs, Value::Num(0xfec as f64));
     assert_eq!(rhs, Value::Num(0x1ff as f64));
@@ -182,6 +190,6 @@ fn test_bitop_xor() {
 
 #[test]
 fn test_bitop_not() {
-    assert_eq!(!&Value::Num(0x1ff as f64), Value::Num(!0x1ff as f64));
-    assert_eq!(!&Value::Bool(false), Value::Bool(true));
+    assert_eq!(!&Value::Num(0x1ff as f64), Ok(Value::Num(!0x1ff as f64)));
+    assert_eq!(!&Value::Bool(false), Ok(Value::Bool(true)));
 }

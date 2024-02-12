@@ -9,14 +9,14 @@ use crate::println;
 use crate::{
     errors::SquareError,
     vm_insts::Inst,
-    vm_value::{Closure, Value},
+    vm_value::{CalcResult, Closure, Value},
 };
 
-type OpFn = dyn Fn(&Value, &Value) -> Value;
-type ExecResult<'a> = Result<(), SquareError<'a>>;
+type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
+pub type ExecResult = Result<(), SquareError>;
 
 impl Inst {
-    fn exec<'a>(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult<'a> {
+    fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         match self {
             Inst::PUSH(value) => self.push(vm, value.clone(), pc),
             Inst::POP => self.pop(vm, pc),
@@ -29,12 +29,12 @@ impl Inst {
             Inst::BITAND => self.binop(vm, &|a, b| a & b, pc),
             Inst::BITOR => self.binop(vm, &|a, b| a | b, pc),
             Inst::BITXOR => self.binop(vm, &|a, b| a ^ b, pc),
-            Inst::EQ => self.binop(vm, &|a, b| Value::Bool(a == b), pc),
-            Inst::NE => self.binop(vm, &|a, b| Value::Bool(a != b), pc),
-            Inst::LT => self.binop(vm, &|a, b| Value::Bool(a < b), pc),
-            Inst::LE => self.binop(vm, &|a, b| Value::Bool(a <= b), pc),
-            Inst::GT => self.binop(vm, &|a, b| Value::Bool(a > b), pc),
-            Inst::GE => self.binop(vm, &|a, b| Value::Bool(a >= b), pc),
+            Inst::EQ => self.binop(vm, &|a, b| Ok(Value::Bool(a == b)), pc),
+            Inst::NE => self.binop(vm, &|a, b| Ok(Value::Bool(a != b)), pc),
+            Inst::LT => self.binop(vm, &|a, b| Ok(Value::Bool(a < b)), pc),
+            Inst::LE => self.binop(vm, &|a, b| Ok(Value::Bool(a <= b)), pc),
+            Inst::GT => self.binop(vm, &|a, b| Ok(Value::Bool(a > b)), pc),
+            Inst::GE => self.binop(vm, &|a, b| Ok(Value::Bool(a >= b)), pc),
             Inst::SHL => self.binop(vm, &|a, b| a << b, pc),
             Inst::SHR => self.binop(vm, &|a, b| a >> b, pc),
             Inst::BITNOT => {
@@ -48,7 +48,13 @@ impl Inst {
                     ));
                 }
 
-                frame.stack[frame.sp - 1] = !&frame.stack[frame.sp - 1];
+                let result = !&frame.stack[frame.sp - 1];
+
+                if let Err(SquareError::TypeError(msg)) = result {
+                    return Err(SquareError::RuntimeError(msg, self.clone(), *pc));
+                }
+
+                frame.stack[frame.sp - 1] = result?;
                 Ok(())
             }
 
@@ -150,7 +156,7 @@ impl Inst {
         }
     }
 
-    fn push<'a>(&self, vm: &mut VM, value: Value, _pc: &mut usize) -> ExecResult<'a> {
+    fn push(&self, vm: &mut VM, value: Value, _pc: &mut usize) -> ExecResult {
         let frame = vm.current_frame();
 
         if frame.sp >= frame.stack.len() {
@@ -162,7 +168,7 @@ impl Inst {
         Ok(())
     }
 
-    fn pop<'a>(&self, vm: &mut VM, pc: &mut usize) -> ExecResult<'a> {
+    fn pop(&self, vm: &mut VM, pc: &mut usize) -> ExecResult {
         let frame = vm.current_frame();
 
         if frame.sp < 1 {
@@ -176,7 +182,7 @@ impl Inst {
         Ok(())
     }
 
-    fn binop<'a>(&self, vm: &mut VM, op_fn: &OpFn, pc: &mut usize) -> ExecResult<'a> {
+    fn binop(&self, vm: &mut VM, op_fn: &OpFn, pc: &mut usize) -> ExecResult {
         let frame = vm.current_frame();
 
         if frame.sp < 2 {
@@ -187,12 +193,18 @@ impl Inst {
             ));
         }
 
-        frame.stack[frame.sp - 2] = op_fn(&frame.stack[frame.sp - 2], &frame.stack[frame.sp - 1]);
+        let result = op_fn(&frame.stack[frame.sp - 2], &frame.stack[frame.sp - 1]);
+
+        if let Err(SquareError::TypeError(msg)) = result {
+            return Err(SquareError::RuntimeError(msg, self.clone(), *pc));
+        }
+
+        frame.stack[frame.sp - 2] = result?;
         frame.sp -= 1;
         Ok(())
     }
 
-    fn jump<'a>(&self, insts: &Vec<Inst>, pc: &mut usize, offset: i32) -> ExecResult<'a> {
+    fn jump(&self, insts: &Vec<Inst>, pc: &mut usize, offset: i32) -> ExecResult {
         let new_pc = *pc as i32 + offset;
         if new_pc < 0 || new_pc >= insts.len() as i32 {
             return Err(SquareError::RuntimeError(
@@ -338,7 +350,7 @@ impl VM {
         self.call_frame = Some(Box::new(CallFrame::new()));
     }
 
-    pub fn step<'a>(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult<'a> {
+    pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
         inst.exec(self, insts, pc)?;
         *pc += 1;
@@ -348,7 +360,7 @@ impl VM {
         Ok(())
     }
 
-    pub fn run<'a>(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult<'a> {
+    pub fn run(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         while *pc < insts.len() {
             self.step(insts, pc)?;
         }
