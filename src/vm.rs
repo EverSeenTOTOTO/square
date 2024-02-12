@@ -1,5 +1,5 @@
 use alloc::{boxed::Box, format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
-use core::fmt;
+use core::{cell::RefCell, fmt};
 
 use hashbrown::HashMap;
 
@@ -135,7 +135,7 @@ impl Inst {
                 // always return the top value
                 self.push(vm, top, pc)
             }
-            Inst::MAKE_CLOSURE(offset) => {
+            Inst::PUSH_CLOSURE(offset) => {
                 let ip = (*pc as i32) + offset;
 
                 if ip < 0 {
@@ -152,6 +152,23 @@ impl Inst {
                 };
 
                 self.push(vm, Value::Closure(Rc::new(closure)), pc)
+            }
+            Inst::PUSH_VEC(len) => {
+                let frame = vm.current_frame();
+
+                if frame.sp < *len {
+                    return Err(SquareError::RuntimeError(
+                        format!("bad pack, {} requied, {} provided", len, frame.sp),
+                        self.clone(),
+                        *pc,
+                    ));
+                }
+
+                let mut result = vec![];
+                for index in frame.sp - len..frame.sp {
+                    result.push(frame.stack[index].clone());
+                }
+                self.push(vm, Value::Vec(Rc::new(RefCell::new(result))), pc)
             }
         }
     }
@@ -469,7 +486,7 @@ fn test_call_ret() {
         Inst::PUSH(Value::Num(1.0)),
         Inst::STORE("a".to_string()),
         // test call before define
-        Inst::MAKE_CLOSURE(2),
+        Inst::PUSH_CLOSURE(2),
         Inst::CALL,
         // skip fn def
         Inst::JMP(4),
@@ -477,7 +494,7 @@ fn test_call_ret() {
         Inst::LOAD("a".to_string()),
         Inst::ADD,
         Inst::RET,
-        Inst::MAKE_CLOSURE(-5),
+        Inst::PUSH_CLOSURE(-5),
         // test store closure as local variable
         Inst::STORE("foo".to_string()),
         Inst::LOAD("foo".to_string()),

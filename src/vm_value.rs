@@ -1,5 +1,6 @@
-use alloc::{format, rc::Rc, string::String};
+use alloc::{format, rc::Rc, string::String, vec::Vec};
 use core::{
+    cell::RefCell,
     cmp::PartialEq,
     fmt,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
@@ -19,6 +20,7 @@ pub enum Value {
     Bool(bool),
     Num(f64),
     Str(String),
+    Vec(Rc<RefCell<Vec<Value>>>),
     Closure(Rc<Closure>),
     Nil,
 }
@@ -34,6 +36,9 @@ impl fmt::Display for Value {
             }
             Value::Str(val) => {
                 write!(f, "Str({})", val)
+            }
+            Value::Vec(val) => {
+                write!(f, "Vec({:?})", val.borrow())
             }
             Value::Closure(closure) => {
                 write!(f, "Closure({})", closure.ip)
@@ -80,7 +85,7 @@ macro_rules! impl_binop {
             fn $method(self, another: Self) -> Self::Output {
                 match (self, another) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(lhs $op rhs)),
-                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {:?} and {:?}", self, another)))
+                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {} and {}", self, another)))
                 }
             }
         }
@@ -95,7 +100,7 @@ macro_rules! impl_bitop {
             fn $method(self, another: Self) -> Self::Output {
                 match (self, another) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(((*lhs as i64) $op (*rhs as i64)) as f64)),
-                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {:?} and {:?}", self, another)))
+                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {} and {}", self, another)))
                 }
             }
         }
@@ -122,7 +127,7 @@ impl Not for &Value {
             Value::Bool(val) => Ok(Value::Bool(!*val)),
             Value::Num(val) => Ok(Value::Num(!(*val as i64) as f64)),
             _ => Err(SquareError::TypeError(format!(
-                "cannot perform operation on {:?}",
+                "cannot perform operation on {}",
                 self
             ))),
         }

@@ -30,7 +30,9 @@ pub enum Inst {
     LOAD(String),
     CALL,
     RET,
-    MAKE_CLOSURE(i32), // relative offset
+
+    PUSH_CLOSURE(i32), // relative offset
+    PUSH_VEC(usize),   // length of packed elements
 }
 
 impl fmt::Display for Inst {
@@ -61,7 +63,8 @@ impl fmt::Display for Inst {
             Inst::LOAD(name) => write!(f, "LOAD {}", name),
             Inst::CALL => write!(f, "CALL"),
             Inst::RET => write!(f, "RET"),
-            Inst::MAKE_CLOSURE(offset) => write!(f, "MAKE_CLOSURE {}", offset),
+            Inst::PUSH_CLOSURE(offset) => write!(f, "MAKE_CLOSURE {}", offset),
+            Inst::PUSH_VEC(len) => write!(f, "PUSH_VEC {}", len),
         }
     }
 }
