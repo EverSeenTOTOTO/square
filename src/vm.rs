@@ -92,12 +92,12 @@ impl Inst {
             }
             Inst::LOAD(name) => {
                 let frame = vm.current_frame();
-                let mut tmp = Value::Nil;
-
-                if let Some(val) = frame.resolve_local(name) {
-                    tmp = val.clone(); // avoid mutable ref and immutable ref of vm at the same time
-                }
-                self.push(vm, tmp, pc)
+                let result = if let Some(val) = frame.resolve_local(name) {
+                    val.clone()
+                } else {
+                    Value::Nil
+                };
+                self.push(vm, result, pc)
             }
 
             Inst::CALL => {
@@ -105,7 +105,8 @@ impl Inst {
 
                 if let Some(Value::Closure(ref closure)) = frame.top() {
                     let new_pc = closure.ip;
-                    frame.sp -= 1;
+                    let params = frame.stack[frame.sp - 2].clone();
+                    frame.sp -= 2; // pop params and closure
 
                     let mut new_frame = CallFrame::new();
                     new_frame.prev = vm.call_frame.take();
@@ -116,7 +117,8 @@ impl Inst {
 
                     vm.call_frame = Some(Box::new(new_frame));
 
-                    return Ok(());
+                    // always push top value of last call_frame as params, the value should be a pack
+                    return self.push(vm, params, pc);
                 }
 
                 Err(SquareError::RuntimeError(
@@ -148,12 +150,13 @@ impl Inst {
 
                 let closure = Closure {
                     ip,
-                    captures: HashMap::new(),
+                    captures: HashMap::new(), // TODO: capture
                 };
 
                 self.push(vm, Value::Closure(Rc::new(closure)), pc)
             }
-            Inst::PUSH_VEC(len) => {
+
+            Inst::PACK(len) => {
                 let frame = vm.current_frame();
 
                 if frame.sp < *len {
@@ -168,7 +171,43 @@ impl Inst {
                 for index in frame.sp - len..frame.sp {
                     result.push(frame.stack[index].clone());
                 }
+                frame.sp -= *len;
                 self.push(vm, Value::Vec(Rc::new(RefCell::new(result))), pc)
+            }
+            Inst::PEEK(offset, i) => {
+                let top = vm.current_frame().top();
+                let result = if let Some(Value::Vec(val)) = top {
+                    let pack = val.borrow();
+
+                    if *offset >= pack.len() {
+                        return Err(SquareError::RuntimeError(
+                            format!("bad peek, offset {} out of range", offset),
+                            self.clone(),
+                            *pc,
+                        ));
+                    }
+
+                    let len = (pack.len() - offset) as i32;
+                    let index = if *i > 0 { *i } else { (i + len) % len } as usize + offset;
+
+                    if index < pack.len() {
+                        Ok(pack.get(index).unwrap().clone())
+                    } else {
+                        Err(SquareError::RuntimeError(
+                            format!("bad peek, index {} out of range", index),
+                            self.clone(),
+                            *pc,
+                        ))
+                    }
+                } else {
+                    Err(SquareError::RuntimeError(
+                        "bad peek, top value is not a pack".to_string(),
+                        self.clone(),
+                        *pc,
+                    ))
+                };
+
+                self.push(vm, result?, pc)
             }
         }
     }
@@ -271,7 +310,7 @@ impl CallFrame {
     fn new() -> Self {
         Self {
             locals: HashMap::new(),
-            stack: vec![Value::Nil; 16], // item count, not byte length
+            stack: vec![Value::Nil; 16],
             sp: 0,
             ra: 0,
             prev: None,
@@ -510,4 +549,30 @@ fn test_call_ret() {
 
     let callframe = vm.current_frame();
     assert_eq!(callframe.top(), Some(&Value::Num(43.0)));
+}
+
+#[test]
+fn test_vec() {
+    let mut vm = VM::new();
+
+    let insts = vec![
+        Inst::PUSH(Value::Num(0.0)),
+        Inst::PUSH(Value::Num(1.0)),
+        Inst::PUSH(Value::Num(2.0)),
+        Inst::PUSH(Value::Num(3.0)),
+        Inst::PACK(3),
+        Inst::PEEK(0, -2),
+        Inst::STORE("a".to_string()),
+        Inst::PEEK(0, 0),
+        Inst::LOAD("a".to_string()),
+        Inst::ADD,
+        Inst::STORE("b".to_string()),
+        Inst::POP,
+    ];
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.top(), Some(&Value::Num(0.0)));
+    assert_eq!(callframe.resolve_local("b"), Some(&Value::Num(3.0)));
 }

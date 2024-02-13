@@ -23,13 +23,13 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 [= x [.. 1 4]] ; x = [1 2 3 4], `..` can concat strings, ranges and vectors
 
 ; expansion
-[= [x y] [1 2]] ; x = 1, y = 2
-[= [. x] [1 2 3]] ; x = 2, `.` is a placehoder that must occupy one position
+[= [x y] [vec 1 2]] ; x = 1, y = 2
+[= [. x] [vec 1 2 3]] ; x = 2, `.` is a placehoder that must occupy one position
 
 ; convenient placehoders in expansion
 [= [... x] [.. 1 10]] ; x = 10, `...` is a placehoder that can occupy zero or as many positions as possible
-[= [x ... y] [1]] ; x = 1, y = 1
-[= [. [x] ... y] [1 [2] 3 4 5]] ; x = 2, y = 5
+[= [x ... y] [vec 1]] ; x = 1, y = 1
+[= [. [x] ... y] [vec 1 [vec 2] 3 4 5]] ; x = 2, y = 5
 ```
 
 ## Control flow
@@ -52,7 +52,7 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
     [+= i 1]]]
 ```
 
-## Function
+## Function(first class)
 
 ```lisp
 ; function starts with /[ as it looks like λ
@@ -76,7 +76,7 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 [print [[.. 1 10].map /[x] [fib x]]]
 ```
 
-## Continuation
+## Continuation(first class)
 
 ```lisp
 [= gen /[yield]

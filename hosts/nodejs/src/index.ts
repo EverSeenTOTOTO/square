@@ -68,7 +68,9 @@ type WasmExports = {
     const vmAddr = square.init_vm();
 
     const code = `
-[= x [1 2 3]]
+[= x [vec 1 2]]
+[= foo /[x [. y]] [+ x y]]
+[foo 1 x]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);

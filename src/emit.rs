@@ -1,6 +1,6 @@
 use crate::{errors::SquareError, parse::Node, scan::Token, vm_insts::Inst, vm_value::Value};
 
-use alloc::{boxed::Box, format, rc::Rc, string::ToString, vec, vec::Vec};
+use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
 
 type EmitResult = Result<Vec<Inst>, SquareError>;
 
@@ -15,6 +15,7 @@ fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult {
         }
         Token::Id(_, id) => {
             let inst = match id.as_str() {
+                // build-in literals
                 "true" => Inst::PUSH(Value::Bool(true)),
                 "false" => Inst::PUSH(Value::Bool(false)),
                 "nil" => Inst::PUSH(Value::Nil),
@@ -61,7 +62,10 @@ fn emit_assign<'a, 'b>(
                 ));
             }
         }
-        _ => todo!(),
+        Node::Expand(.., placehoders) => {
+            insts.extend(emit_expand(input, placehoders)?);
+        }
+        _ => unreachable!(),
     }
 
     return Ok(insts);
@@ -72,7 +76,7 @@ fn emit_op<'a, 'b>(input: &'a str, op: &'b Token, expressions: &'b Vec<Box<Node>
         if expressions.len() != 2 {
             return Err(SquareError::SyntaxError(
                 input.to_string(),
-                "failed to emit_op, operands count not match".to_string(),
+                "failed to emit_op, operands size not match".to_string(),
                 op.pos().clone(),
                 None,
             ));
@@ -86,7 +90,7 @@ fn emit_op<'a, 'b>(input: &'a str, op: &'b Token, expressions: &'b Vec<Box<Node>
         if expressions.len() != 2 {
             return Err(SquareError::SyntaxError(
                 input.to_string(),
-                "failed to emit_op, operands count not match".to_string(),
+                "failed to emit_op, operands size not match".to_string(),
                 op.pos().clone(),
                 None,
             ));
@@ -165,7 +169,7 @@ fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResul
     if expressions.len() < 3 {
         return Err(SquareError::SyntaxError(
             input.to_string(),
-            "failed to emit_if, expect condition and true_branch".to_string(),
+            "failed to emit_if, expect at least condition and true_branch".to_string(),
             if let Node::Token(if_token) = leading.as_ref() {
                 if_token.pos().clone()
             } else {
@@ -258,34 +262,65 @@ fn emit_begin<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitRe
     return Ok(result);
 }
 
-fn emit_call<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult {
+fn emit_call<'a, 'b>(
+    input: &'a str,
+    left_bracket: &'b Token,
+    expressions: &'b Vec<Box<Node>>,
+) -> EmitResult {
     if expressions.len() == 0 {
-        return Ok(vec![Inst::PUSH_VEC(0)]);
+        return Err(SquareError::SyntaxError(
+            input.to_string(),
+            "failed to emit_call, expect function name".to_string(),
+            left_bracket.pos().clone(),
+            None,
+        ));
     }
 
     let first = expressions.first().unwrap();
     let mut result = vec![];
 
     match first.as_ref() {
-        Node::Token(keyword) => match keyword.source() {
-            "if" => {
-                result.extend(emit_if(input, expressions)?);
-                result.push(Inst::CALL);
-            }
-            "while" => {
-                result.extend(emit_while(input, expressions)?);
-                result.push(Inst::CALL);
-            }
-            "begin" => {
-                result.extend(emit_begin(input, expressions)?);
-                result.push(Inst::CALL);
-            }
+        Node::Token(id) => match id {
+            Token::Id(_, id) => match id.as_str() {
+                // build-in functions
+                "if" => {
+                    result.extend(emit_if(input, expressions)?);
+                    result.push(Inst::CALL);
+                }
+                "while" => {
+                    result.extend(emit_while(input, expressions)?);
+                    result.push(Inst::CALL);
+                }
+                "begin" => {
+                    result.extend(emit_begin(input, expressions)?);
+                    result.push(Inst::CALL);
+                }
+                "vec" => {
+                    result.extend(emit(input, &expressions[1..].to_vec())?);
+                    result.push(Inst::PACK(expressions.len() - 1));
+                }
+                _ => {
+                    result.extend(emit(input, &expressions[1..].to_vec())?); // provided params
+                    result.push(Inst::PACK(expressions.len() - 1));
+                    result.push(Inst::LOAD(id.clone()));
+                    result.push(Inst::CALL);
+                }
+            },
             _ => {
-                result.extend(emit(input, expressions)?);
-                result.push(Inst::PUSH_VEC(expressions.len()));
+                return Err(SquareError::SyntaxError(
+                    input.to_string(),
+                    format!(
+                        "failed to emit_call, expect function name, got {}",
+                        id.to_string()
+                    ),
+                    id.pos().clone(),
+                    None,
+                ));
             }
         },
         Node::Fn(_, params, body) => {
+            result.extend(emit(input, &expressions[1..].to_vec())?);
+            result.push(Inst::PACK(expressions.len() - 1));
             result.extend(emit_fn(input, params, body)?);
             result.push(Inst::CALL);
         }
@@ -294,33 +329,106 @@ fn emit_call<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitRes
             result.extend(emit_assign(input, expansion, dot, body)?)
         }
         _ => {
-            result.extend(emit(input, expressions)?);
-            result.push(Inst::PUSH_VEC(expressions.len()));
+            return Err(SquareError::SyntaxError(
+                input.to_string(),
+                format!(
+                    "failed to emit_call, expect function name, got {}",
+                    first.to_string()
+                ),
+                left_bracket.pos().clone(),
+                None,
+            ));
         }
     }
 
     return Ok(result);
 }
 
-fn emit_fn<'a, 'b>(input: &'a str, _params: &'b Box<Node>, body: &'b Box<Node>) -> EmitResult {
-    let body_result = emit_node(input, body)?;
-    let offset = body_result.len() as i32;
-    let mut result = vec![Inst::JMP(offset + 1)];
-    result.extend(body_result);
-    result.push(Inst::RET);
-    result.push(Inst::PUSH_CLOSURE(-(offset + 2)));
+fn emit_fn<'a, 'b>(input: &'a str, params: &'b Box<Node>, body: &'b Box<Node>) -> EmitResult {
+    if let Node::Expand(.., placehoders) = params.as_ref() {
+        let params_result = emit_expand(input, placehoders)?;
+        let body_result = emit_node(input, body)?;
+        let offset = (params_result.len() + body_result.len()) as i32;
+        let mut result = vec![Inst::JMP(offset + 1)];
+        result.extend(params_result);
+        result.extend(body_result);
+        result.push(Inst::RET);
+        result.push(Inst::PUSH_CLOSURE(-(offset + 2)));
+        return Ok(result);
+    }
+
+    unreachable!()
+}
+
+fn emit_expand<'a, 'b>(input: &'a str, placeholders: &'b Vec<Box<Node>>) -> EmitResult {
+    let mut result = vec![];
+    let mut greedy_pos: Option<usize> = None;
+
+    for (i, placeholder) in placeholders.iter().enumerate() {
+        let (offset, index) = if greedy_pos.is_some() {
+            (i - 1, -((placeholders.len() - i) as i32))
+        } else {
+            (0, i as i32)
+        };
+
+        match placeholder.as_ref() {
+            Node::Expand(.., nested) => {
+                result.push(Inst::PEEK(offset, index));
+                result.extend(emit_expand(input, nested)?);
+            }
+            Node::Token(token) => match token {
+                Token::Id(_, source) => {
+                    result.push(Inst::PEEK(offset, index));
+                    result.push(Inst::STORE(source.clone()));
+                }
+                Token::Op(pos, op) => {
+                    if op == "." {
+                        result.push(Inst::PEEK(offset, index));
+                        result.push(Inst::POP);
+                    } else if op == "..." {
+                        if greedy_pos.is_some() {
+                            return Err(SquareError::SyntaxError(
+                                input.to_string(),
+                                format!("failed to emit_expand, multiple greedy placeholder, first occurs at index {}", greedy_pos.unwrap()),
+                                pos.clone(),
+                                None,
+                            ));
+                        } else {
+                            greedy_pos = Some(i);
+                        }
+                    } else {
+                        return Err(SquareError::SyntaxError(
+                            input.to_string(),
+                            format!(
+                                "failed to emit_expand, expect identifier or placeholder, got {}",
+                                token.to_string()
+                            ),
+                            pos.clone(),
+                            None,
+                        ));
+                    }
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    result.push(Inst::POP); // drop the vec on top of operand stack
+
     return Ok(result);
 }
 
 fn emit_node<'a, 'b>(input: &'a str, node: &'b Box<Node>) -> EmitResult {
     match node.as_ref() {
         Node::Token(token) => emit_token(input, token),
+        Node::Expand(.., placehoders) => emit_expand(input, placehoders),
         Node::Assign(_, target, properties, expression) => {
             emit_assign(input, target, properties, expression)
         }
-        Node::Op(op, expressions) => emit_op(input, op, expressions),
-        Node::Call(left_bracket, _, expressions) => emit_call(input, expressions),
         Node::Fn(_, params, body) => emit_fn(input, params, body),
+        Node::Op(op, expressions) => emit_op(input, op, expressions),
+        Node::Call(left_bracket, _, expressions) => emit_call(input, left_bracket, expressions),
         _ => todo!(),
     }
 }

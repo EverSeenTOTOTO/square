@@ -66,34 +66,31 @@ pub extern "C" fn dealloc(ptr: *mut u8, size: usize) {
 pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: usize) {
     let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
     let code = memory::read(source_addr as usize, source_length);
-    let mut pos = Position::default();
-    let ast = parse::parse(code, &mut pos);
 
-    println!("");
-    if let Err(e) = ast {
-        println!("{}", e);
-        return;
-    }
+    println!();
+    let ast = match parse::parse(code, &mut Position::default()) {
+        Err(e) => {
+            println!("{}", e);
+            return;
+        }
+        Ok(node) => node,
+    };
 
-    for node in ast.as_ref().unwrap() {
-        println!("{}", node);
-    }
+    ast.iter().for_each(|node| println!("{}", node));
 
-    let insts = emit::emit(code, ast.as_ref().unwrap());
+    println!();
+    let insts = match emit::emit(code, &ast) {
+        Err(e) => {
+            println!("\n{}", e);
+            return;
+        }
+        Ok(inst) => inst,
+    };
 
-    println!("");
-    if let Err(e) = insts {
-        println!("{}", e);
-        return;
-    }
+    insts.iter().for_each(|inst| println!("{}", inst));
 
-    for inst in insts.as_ref().unwrap() {
-        println!("{}", inst);
-    }
-
-    println!("");
-    let mut pc = 0;
-    if let Err(e) = vm.run(insts.as_ref().unwrap(), &mut pc) {
+    println!();
+    if let Err(e) = vm.run(&insts, &mut 0) {
         println!("{}", e);
     }
 }

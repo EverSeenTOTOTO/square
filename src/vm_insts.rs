@@ -7,6 +7,7 @@ use core::fmt;
 pub enum Inst {
     PUSH(Value),
     POP,
+
     ADD,    // +
     SUB,    // -
     MUL,    // *
@@ -24,15 +25,22 @@ pub enum Inst {
     GE,     // >=
     SHL,    // <<
     SHR,    // >>
+
     JMP(i32),
     JNE(i32), // jump if false
+
     STORE(String),
     LOAD(String),
+
     CALL,
     RET,
+    PUSH_CLOSURE(i32), // relative address to the function
 
-    PUSH_CLOSURE(i32), // relative offset
-    PUSH_VEC(usize),   // length of packed elements
+    PACK(usize), // pack n elements on top of the operand stack
+
+    PEEK(usize, i32), // (offset, index), peek an element within the top pack of the operand stack.
+                      // 'offset' is either 0 or the number of elements consumed once greedy
+                      // placehoder already appeared.
 }
 
 impl fmt::Display for Inst {
@@ -64,7 +72,8 @@ impl fmt::Display for Inst {
             Inst::CALL => write!(f, "CALL"),
             Inst::RET => write!(f, "RET"),
             Inst::PUSH_CLOSURE(offset) => write!(f, "MAKE_CLOSURE {}", offset),
-            Inst::PUSH_VEC(len) => write!(f, "PUSH_VEC {}", len),
+            Inst::PACK(len) => write!(f, "PACK {}", len),
+            Inst::PEEK(offset, index) => write!(f, "PEEK {} {}", offset, index),
         }
     }
 }
