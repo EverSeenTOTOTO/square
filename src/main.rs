@@ -6,10 +6,7 @@
 use alloc::boxed::Box;
 
 #[cfg(not(test))]
-use crate::{
-    code_frame::Position,
-    externs::{memory, wasm},
-};
+use crate::externs::{memory, wasm};
 
 extern crate alloc;
 
@@ -64,6 +61,11 @@ pub extern "C" fn dealloc(ptr: *mut u8, size: usize) {
 #[cfg(not(test))]
 #[no_mangle]
 pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: usize) {
+    use core::cell::RefCell;
+
+    use code_frame::Position;
+    use emit::EmitContext;
+
     let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
     let code = memory::read(source_addr as usize, source_length);
 
@@ -79,7 +81,7 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
     ast.iter().for_each(|node| println!("{}", node));
 
     println!();
-    let insts = match emit::emit(code, &ast) {
+    let insts = match emit::emit(code, &ast, &mut RefCell::new(EmitContext::new())) {
         Err(e) => {
             println!("\n{}", e);
             return;

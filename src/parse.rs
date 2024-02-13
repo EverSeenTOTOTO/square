@@ -26,7 +26,7 @@ pub enum Node {
     Dot(Box<Node>, Vec<Box<Node>>),                      // id | call, (dot property)*
 }
 
-fn print_nodevec<'a>(nodevec: &'a Vec<Box<Node>>) -> String {
+fn print_nodevec(nodevec: &Vec<Box<Node>>) -> String {
     return match nodevec.is_empty() {
         true => "Empty".to_string(),
         _ => nodevec
@@ -73,7 +73,7 @@ impl fmt::Display for Node {
 }
 
 // wrap scanner error to parser error
-fn create_wrapper<'a>(fn_name: &'static str) -> Box<dyn Fn(RaiseResult) -> RaiseResult> {
+fn create_wrapper(fn_name: &'static str) -> Box<dyn Fn(RaiseResult) -> RaiseResult> {
     return Box::new(move |result: RaiseResult| {
         if let Err(SquareError::UnexpectedToken(input, message, position)) = result {
             return Err(SquareError::SyntaxError(
@@ -88,7 +88,7 @@ fn create_wrapper<'a>(fn_name: &'static str) -> Box<dyn Fn(RaiseResult) -> Raise
     });
 }
 
-fn expect_whitespace<'a>(input: &'a str, pos: &mut Position) -> Result<Token, SquareError> {
+fn expect_whitespace(input: &str, pos: &mut Position) -> Result<Token, SquareError> {
     return expect(
         &|token| {
             if let Token::Whitespace(..) = token {
@@ -101,7 +101,7 @@ fn expect_whitespace<'a>(input: &'a str, pos: &mut Position) -> Result<Token, Sq
     );
 }
 
-fn parse_expand<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
+fn parse_expand(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_expand");
 
     let left_bracket = wrap(expect(
@@ -272,7 +272,7 @@ fn test_parse_expand_error() {
     );
 }
 
-fn parse_fn<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
+fn parse_fn(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_fn");
 
     let slash = wrap(expect(
@@ -374,7 +374,7 @@ fn test_parse_fn_high_order() {
     panic!();
 }
 
-fn parse_prop<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
+fn parse_prop(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_prop");
     let dot = wrap(expect(
         &|token| (token.source() == ".", "expect .".to_string()),
@@ -412,7 +412,7 @@ fn test_parse_prop() {
     panic!()
 }
 
-fn parse_prop_chain<'a>(input: &'a str, pos: &mut Position) -> Result<Vec<Box<Node>>, SquareError> {
+fn parse_prop_chain(input: &str, pos: &mut Position) -> Result<Vec<Box<Node>>, SquareError> {
     let wrap = create_wrapper("parse_prop_chain");
     let mut nodes = vec![];
 
@@ -451,7 +451,7 @@ fn test_parse_prop_chain() {
     panic!()
 }
 
-fn parse_assign<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
+fn parse_assign(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_assign");
     let eq = wrap(expect(
         &|token| (token.source() == "=", "expect =".to_string()),
@@ -533,7 +533,7 @@ fn test_parse_assign_expand() {
     panic!();
 }
 
-fn is_binary_op<'a>(op: &'a str) -> bool {
+fn is_binary_op(op: &str) -> bool {
     match op {
         "+" | "-" | "*" | "/" | "^" | "%" | "&" | "|" | "==" | "!=" | ">" | "<" | ">=" | "<="
         | ".." => true,
@@ -541,18 +541,18 @@ fn is_binary_op<'a>(op: &'a str) -> bool {
     }
 }
 
-fn is_binary_assign_op<'a>(op: &'a str) -> bool {
+fn is_binary_assign_op(op: &str) -> bool {
     match op {
         "+=" | "-=" | "*=" | "/=" | "^=" | "%=" | "&=" | "|=" => true,
         _ => false,
     }
 }
 
-fn is_op<'a>(op: &'a str) -> bool {
+fn is_op(op: &str) -> bool {
     return is_binary_op(op) || is_binary_assign_op(op);
 }
 
-fn parse_op<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
+fn parse_op(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_op");
     let operator = wrap(raise_token(input, pos))?;
 
@@ -630,7 +630,7 @@ fn test_parse_op_binary_assign() {
     );
 }
 
-fn parse_call<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
+fn parse_call(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_call");
     let left_bracket = wrap(expect(
         &|token| (token.source() == "[", "expect [".to_string()),
@@ -692,7 +692,7 @@ fn test_parse_call_assign() {
     panic!();
 }
 
-fn parse_dot<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
+fn parse_dot(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_dot");
     let leading = wrap(lookahead(input, pos))?;
 
@@ -771,7 +771,7 @@ fn test_parse_dot() {
     panic!();
 }
 
-fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
+fn parse_expr(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_expr");
     let leading = wrap(lookahead(input, pos))?;
 
@@ -802,7 +802,7 @@ fn parse_expr<'a>(input: &'a str, pos: &mut Position) -> ParseResult {
     }
 }
 
-pub fn parse<'a>(input: &'a str, pos: &mut Position) -> Result<Vec<Box<Node>>, SquareError> {
+pub fn parse(input: &str, pos: &mut Position) -> Result<Vec<Box<Node>>, SquareError> {
     let wrap = create_wrapper("parse");
     let mut ast = vec![];
 

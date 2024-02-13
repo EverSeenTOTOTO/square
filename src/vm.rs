@@ -103,9 +103,17 @@ impl Inst {
             Inst::CALL => {
                 let frame = vm.current_frame();
 
-                if let Some(Value::Closure(ref closure)) = frame.top() {
+                if frame.sp < 2 {
+                    return Err(SquareError::RuntimeError(
+                        "bad call, closure and params required".to_string(),
+                        self.clone(),
+                        *pc,
+                    ));
+                }
+
+                if let Value::Closure(ref closure) = &frame.stack[frame.sp - 2] {
                     let new_pc = closure.ip;
-                    let params = frame.stack[frame.sp - 2].clone();
+                    let params = frame.stack[frame.sp - 1].clone();
                     frame.sp -= 2; // pop params and closure
 
                     let mut new_frame = CallFrame::new();
@@ -122,7 +130,7 @@ impl Inst {
                 }
 
                 Err(SquareError::RuntimeError(
-                    "invalid call".to_string(),
+                    format!("bad call, cannot call with {}", frame.stack[frame.sp - 2]),
                     self.clone(),
                     *pc,
                 ))
@@ -525,7 +533,8 @@ fn test_call_ret() {
         Inst::PUSH(Value::Num(1.0)),
         Inst::STORE("a".to_string()),
         // test call before define
-        Inst::PUSH_CLOSURE(2),
+        Inst::PUSH_CLOSURE(3),
+        Inst::PACK(0),
         Inst::CALL,
         // skip fn def
         Inst::JMP(4),
@@ -534,15 +543,9 @@ fn test_call_ret() {
         Inst::ADD,
         Inst::RET,
         Inst::PUSH_CLOSURE(-5),
-        // test store closure as local variable
-        Inst::STORE("foo".to_string()),
-        Inst::LOAD("foo".to_string()),
+        Inst::PACK(0),
         Inst::CALL,
-        Inst::LOAD("foo".to_string()),
-        Inst::CALL,
-        // there should be three 43.0 on operand stack
-        Inst::POP,
-        Inst::POP,
+        Inst::POP
     ];
 
     vm.run(&insts, &mut 0).unwrap();

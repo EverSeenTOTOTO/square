@@ -1,10 +1,42 @@
+use core::cell::RefCell;
+
 use crate::{errors::SquareError, parse::Node, scan::Token, vm_insts::Inst, vm_value::Value};
 
-use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
+use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
+use hashbrown::HashSet;
 
-type EmitResult = Result<Vec<Inst>, SquareError>;
+pub type EmitResult = Result<Vec<Inst>, SquareError>;
 
-fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult {
+#[derive(Debug)]
+pub struct EmitContext {
+    depth_info: Vec<HashSet<String>>,
+}
+
+impl EmitContext {
+    pub fn new() -> Self {
+        return EmitContext {
+            depth_info: vec![HashSet::new()],
+        };
+    }
+
+    pub fn add_local(&mut self, name: String) {
+        self.depth_info.last_mut().unwrap().insert(name);
+    }
+
+    pub fn is_local(&self, name: &String) -> bool {
+        return self.depth_info.last().unwrap().contains(name);
+    }
+
+    pub fn push_scope(&mut self) {
+        self.depth_info.push(HashSet::new());
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.depth_info.pop();
+    }
+}
+
+fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitResult {
     match token {
         Token::Num(_, num) => {
             return Ok(vec![Inst::PUSH(Value::Num(num.parse::<f64>().unwrap()))]);
@@ -38,17 +70,21 @@ fn emit_token<'a, 'b>(input: &'a str, token: &'b Token) -> EmitResult {
     }
 }
 
-fn emit_assign<'a, 'b>(
-    input: &'a str,
-    target: &'b Box<Node>,
-    _properties: &'b Vec<Box<Node>>,
-    expression: &'b Box<Node>,
+fn emit_assign(
+    input: &str,
+    target: &Box<Node>,
+    _properties: &Vec<Box<Node>>,
+    expression: &Box<Node>,
+    ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    let mut insts = emit_node(input, expression)?;
+    let mut insts = emit_node(input, expression, ctx)?;
 
     match target.as_ref() {
         Node::Token(id) => {
             if let Token::Id(_, source) = id {
+                // remember scope depth info
+                ctx.borrow_mut().add_local(source.clone());
+
                 insts.push(Inst::STORE(source.clone()));
             } else {
                 return Err(SquareError::SyntaxError(
@@ -63,7 +99,7 @@ fn emit_assign<'a, 'b>(
             }
         }
         Node::Expand(.., placehoders) => {
-            insts.extend(emit_expand(input, placehoders)?);
+            insts.extend(emit_expand(input, placehoders, ctx)?);
         }
         _ => unreachable!(),
     }
@@ -71,7 +107,12 @@ fn emit_assign<'a, 'b>(
     return Ok(insts);
 }
 
-fn emit_op<'a, 'b>(input: &'a str, op: &'b Token, expressions: &'b Vec<Box<Node>>) -> EmitResult {
+fn emit_op(
+    input: &str,
+    op: &Token,
+    expressions: &Vec<Box<Node>>,
+    ctx: &RefCell<EmitContext>,
+) -> EmitResult {
     let op_action = |action: Inst| {
         if expressions.len() != 2 {
             return Err(SquareError::SyntaxError(
@@ -82,7 +123,7 @@ fn emit_op<'a, 'b>(input: &'a str, op: &'b Token, expressions: &'b Vec<Box<Node>
             ));
         }
 
-        let mut result = emit(input, expressions)?;
+        let mut result = emit(input, expressions, ctx)?;
         result.push(action);
         return Ok(result);
     };
@@ -102,7 +143,7 @@ fn emit_op<'a, 'b>(input: &'a str, op: &'b Token, expressions: &'b Vec<Box<Node>
         match first.as_ref() {
             Node::Token(token) => {
                 if let Token::Id(_, source) = token {
-                    result.extend(emit(input, expressions)?);
+                    result.extend(emit(input, expressions, ctx)?);
                     result.push(action);
                     result.push(Inst::STORE(source.clone()));
                     return Ok(result);
@@ -163,7 +204,7 @@ fn emit_op<'a, 'b>(input: &'a str, op: &'b Token, expressions: &'b Vec<Box<Node>
     ));
 }
 
-fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult {
+fn emit_if(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitContext>) -> EmitResult {
     let leading = expressions.first().unwrap();
 
     if expressions.len() < 3 {
@@ -181,19 +222,26 @@ fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResul
 
     let mut result = vec![];
     let condition = expressions.get(1).unwrap();
-    let condition_result = emit_node(input, condition)?;
+    let condition_result = emit_node(input, condition, ctx)?;
     let condition_len = condition_result.len() as i32;
     result.extend(condition_result);
 
     let true_branch = expressions.get(2).unwrap();
-    let true_branch_result = emit_node(input, true_branch)?;
+
+    ctx.borrow_mut().push_scope();
+    let true_branch_result = emit_node(input, true_branch, ctx)?;
+    ctx.borrow_mut().pop_scope();
+
     let true_branch_len = true_branch_result.len() as i32;
     // skip true branch, +1 for one extra JMP instcurtion
     result.push(Inst::JNE(true_branch_len + 1));
     result.extend(true_branch_result);
 
     if let Some(false_branch) = expressions.get(3) {
-        let false_branch_result = emit_node(input, false_branch)?;
+        ctx.borrow_mut().push_scope();
+        let false_branch_result = emit_node(input, false_branch, ctx)?;
+        ctx.borrow_mut().pop_scope();
+
         let false_branch_len = false_branch_result.len() as i32;
         // skip false branch
         result.push(Inst::JMP(false_branch_len));
@@ -217,7 +265,7 @@ fn emit_if<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResul
     return Ok(result);
 }
 
-fn emit_while<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult {
+fn emit_while(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitContext>) -> EmitResult {
     let leading = expressions.first().unwrap();
 
     if expressions.len() < 3 {
@@ -234,10 +282,14 @@ fn emit_while<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitRe
     }
 
     let condition = expressions.get(1).unwrap();
-    let condition_result = emit_node(input, condition)?;
+    let condition_result = emit_node(input, condition, ctx)?;
     let condition_len = condition_result.len() as i32;
     let body = expressions.get(2).unwrap();
-    let body_result = emit_node(input, body)?;
+
+    ctx.borrow_mut().push_scope();
+    let body_result = emit_node(input, body, ctx)?;
+    ctx.borrow_mut().pop_scope();
+
     let body_len = body_result.len() as i32;
     let offset = condition_len + body_len;
 
@@ -252,20 +304,25 @@ fn emit_while<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitRe
     return Ok(result);
 }
 
-fn emit_begin<'a, 'b>(input: &'a str, expressions: &'b Vec<Box<Node>>) -> EmitResult {
-    let body = emit(input, &expressions[1..].to_vec())?;
+fn emit_begin(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitContext>) -> EmitResult {
+    ctx.borrow_mut().push_scope();
+    let body = emit(input, &expressions[1..].to_vec(), ctx)?;
+    ctx.borrow_mut().pop_scope();
+
     let offset = body.len() as i32;
     let mut result = vec![Inst::JMP(1 + offset)];
     result.extend(body);
     result.push(Inst::RET);
     result.push(Inst::PUSH_CLOSURE(-2 - offset));
+
     return Ok(result);
 }
 
-fn emit_call<'a, 'b>(
-    input: &'a str,
-    left_bracket: &'b Token,
-    expressions: &'b Vec<Box<Node>>,
+fn emit_call(
+    input: &str,
+    left_bracket: &Token,
+    expressions: &Vec<Box<Node>>,
+    ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
     if expressions.len() == 0 {
         return Err(SquareError::SyntaxError(
@@ -284,25 +341,28 @@ fn emit_call<'a, 'b>(
             Token::Id(_, id) => match id.as_str() {
                 // build-in functions
                 "if" => {
-                    result.extend(emit_if(input, expressions)?);
+                    result.extend(emit_if(input, expressions, ctx)?);
+                    result.push(Inst::PACK(0));
                     result.push(Inst::CALL);
                 }
                 "while" => {
-                    result.extend(emit_while(input, expressions)?);
+                    result.extend(emit_while(input, expressions, ctx)?);
+                    result.push(Inst::PACK(0));
                     result.push(Inst::CALL);
                 }
                 "begin" => {
-                    result.extend(emit_begin(input, expressions)?);
+                    result.extend(emit_begin(input, expressions, ctx)?);
+                    result.push(Inst::PACK(0));
                     result.push(Inst::CALL);
                 }
                 "vec" => {
-                    result.extend(emit(input, &expressions[1..].to_vec())?);
+                    result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
                     result.push(Inst::PACK(expressions.len() - 1));
                 }
                 _ => {
-                    result.extend(emit(input, &expressions[1..].to_vec())?); // provided params
-                    result.push(Inst::PACK(expressions.len() - 1));
                     result.push(Inst::LOAD(id.clone()));
+                    result.extend(emit(input, &expressions[1..].to_vec(), ctx)?); // provided params
+                    result.push(Inst::PACK(expressions.len() - 1));
                     result.push(Inst::CALL);
                 }
             },
@@ -319,14 +379,14 @@ fn emit_call<'a, 'b>(
             }
         },
         Node::Fn(_, params, body) => {
-            result.extend(emit(input, &expressions[1..].to_vec())?);
+            result.extend(emit_fn(input, params, body, ctx)?);
+            result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
             result.push(Inst::PACK(expressions.len() - 1));
-            result.extend(emit_fn(input, params, body)?);
             result.push(Inst::CALL);
         }
-        Node::Op(op, body) => result.extend(emit_op(input, op, body)?),
+        Node::Op(op, body) => result.extend(emit_op(input, op, body, ctx)?),
         Node::Assign(_, expansion, dot, body) => {
-            result.extend(emit_assign(input, expansion, dot, body)?)
+            result.extend(emit_assign(input, expansion, dot, body, ctx)?)
         }
         _ => {
             return Err(SquareError::SyntaxError(
@@ -344,10 +404,19 @@ fn emit_call<'a, 'b>(
     return Ok(result);
 }
 
-fn emit_fn<'a, 'b>(input: &'a str, params: &'b Box<Node>, body: &'b Box<Node>) -> EmitResult {
+fn emit_fn(
+    input: &str,
+    params: &Box<Node>,
+    body: &Box<Node>,
+    ctx: &RefCell<EmitContext>,
+) -> EmitResult {
     if let Node::Expand(.., placehoders) = params.as_ref() {
-        let params_result = emit_expand(input, placehoders)?;
-        let body_result = emit_node(input, body)?;
+        let params_result = emit_expand(input, placehoders, ctx)?;
+
+        ctx.borrow_mut().push_scope();
+        let body_result = emit_node(input, body, ctx)?;
+        ctx.borrow_mut().pop_scope();
+
         let offset = (params_result.len() + body_result.len()) as i32;
         let mut result = vec![Inst::JMP(offset + 1)];
         result.extend(params_result);
@@ -360,7 +429,11 @@ fn emit_fn<'a, 'b>(input: &'a str, params: &'b Box<Node>, body: &'b Box<Node>) -
     unreachable!()
 }
 
-fn emit_expand<'a, 'b>(input: &'a str, placeholders: &'b Vec<Box<Node>>) -> EmitResult {
+fn emit_expand(
+    input: &str,
+    placeholders: &Vec<Box<Node>>,
+    ctx: &RefCell<EmitContext>,
+) -> EmitResult {
     let mut result = vec![];
     let mut greedy_pos: Option<usize> = None;
 
@@ -374,10 +447,13 @@ fn emit_expand<'a, 'b>(input: &'a str, placeholders: &'b Vec<Box<Node>>) -> Emit
         match placeholder.as_ref() {
             Node::Expand(.., nested) => {
                 result.push(Inst::PEEK(offset, index));
-                result.extend(emit_expand(input, nested)?);
+                result.extend(emit_expand(input, nested, ctx)?);
             }
             Node::Token(token) => match token {
                 Token::Id(_, source) => {
+                    // scope depth
+                    ctx.borrow_mut().add_local(source.clone());
+
                     result.push(Inst::PEEK(offset, index));
                     result.push(Inst::STORE(source.clone()));
                 }
@@ -419,25 +495,31 @@ fn emit_expand<'a, 'b>(input: &'a str, placeholders: &'b Vec<Box<Node>>) -> Emit
     return Ok(result);
 }
 
-fn emit_node<'a, 'b>(input: &'a str, node: &'b Box<Node>) -> EmitResult {
+fn emit_node(input: &str, node: &Box<Node>, ctx: &RefCell<EmitContext>) -> EmitResult {
     match node.as_ref() {
-        Node::Token(token) => emit_token(input, token),
-        Node::Expand(.., placehoders) => emit_expand(input, placehoders),
+        Node::Token(token) => emit_token(input, token, ctx),
+        Node::Expand(.., placehoders) => emit_expand(input, placehoders, ctx),
         Node::Assign(_, target, properties, expression) => {
-            emit_assign(input, target, properties, expression)
+            emit_assign(input, target, properties, expression, ctx)
         }
-        Node::Fn(_, params, body) => emit_fn(input, params, body),
-        Node::Op(op, expressions) => emit_op(input, op, expressions),
-        Node::Call(left_bracket, _, expressions) => emit_call(input, left_bracket, expressions),
+        Node::Fn(_, params, body) => emit_fn(input, params, body, ctx),
+        Node::Op(op, expressions) => emit_op(input, op, expressions, ctx),
+        Node::Call(left_bracket, _, expressions) => {
+            emit_call(input, left_bracket, expressions, ctx)
+        }
         _ => todo!(),
     }
 }
 
-pub fn emit<'a, 'b>(input: &'a str, ast: &'b Vec<Box<Node>>) -> Result<Vec<Inst>, SquareError> {
+pub fn emit(
+    input: &str,
+    ast: &Vec<Box<Node>>,
+    ctx: &RefCell<EmitContext>,
+) -> Result<Vec<Inst>, SquareError> {
     let mut insts = vec![];
 
     for node in ast {
-        let result = emit_node(input, node)?;
+        let result = emit_node(input, node, ctx)?;
         insts.extend(result);
     }
 

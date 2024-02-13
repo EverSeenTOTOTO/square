@@ -22,7 +22,7 @@ pub enum Token {
 }
 
 impl Token {
-    pub fn source<'a>(&'a self) -> &'a str {
+    pub fn source(&self) -> &str {
         match self {
             Token::Comment(_, source) => source,
             Token::Eof(_) => "",
@@ -34,7 +34,7 @@ impl Token {
         }
     }
 
-    pub fn pos<'a>(&'a self) -> &'a Position {
+    pub fn pos(&self) -> &Position {
         match self {
             Token::Comment(pos, _) => pos,
             Token::Eof(pos) => pos,
@@ -63,7 +63,7 @@ impl fmt::Display for Token {
     }
 }
 
-pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+pub fn raise_token(input: &str, pos: &mut Position) -> RaiseResult {
     let input_chars: Vec<char> = input.chars().collect();
 
     if pos.cursor >= input_chars.len() {
@@ -91,7 +91,7 @@ pub fn raise_token<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
     }
 }
 
-fn eat_n_hex<'a>(
+fn eat_n_hex(
     chars: &mut Peekable<core::slice::Iter<'_, char>>,
     pos: &mut Position,
     n: usize,
@@ -109,7 +109,7 @@ fn eat_n_hex<'a>(
         });
 }
 
-fn raise_string<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+fn raise_string(input: &str, pos: &mut Position) -> RaiseResult {
     let input_chars: Vec<char> = input.chars().collect();
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
@@ -309,7 +309,7 @@ fn test_raise_string_unicode_error() {
     );
 }
 
-fn raise_number<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+fn raise_number(input: &str, pos: &mut Position) -> RaiseResult {
     let input_chars: Vec<char> = input.chars().collect();
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
@@ -491,7 +491,7 @@ fn test_raise_number_min_max() {
     );
 }
 
-fn raise_ident<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+fn raise_ident(input: &str, pos: &mut Position) -> RaiseResult {
     let input_chars: Vec<char> = input.chars().collect();
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
@@ -518,7 +518,7 @@ fn test_raise_id() {
     assert_eq!(token.source(), "_demo");
 }
 
-fn raise_operator<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
     let input_chars: Vec<char> = input.chars().collect();
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
@@ -689,7 +689,7 @@ fn test_raise_dot3() {
     assert_eq!(token.source(), "...");
 }
 
-fn raise_comment<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+fn raise_comment(input: &str, pos: &mut Position) -> RaiseResult {
     let input_chars: Vec<char> = input.chars().collect();
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
@@ -759,7 +759,7 @@ fn test_raise_comment_newline() {
     assert_eq!(token.source(), ";123\n");
 }
 
-fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+fn raise_whitespace(input: &str, pos: &mut Position) -> RaiseResult {
     let input_chars: Vec<char> = input.chars().collect();
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
@@ -780,7 +780,7 @@ fn raise_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
     Ok(Token::Whitespace(start_pos, source))
 }
 
-pub fn skip_whitespace<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+pub fn skip_whitespace(input: &str, pos: &mut Position) -> RaiseResult {
     let mut token = raise_token(input, pos)?;
 
     loop {
@@ -822,7 +822,7 @@ fn test_skip_whitespace_empty() {
     assert_eq!(pos, Position::default());
 }
 
-pub fn lookahead<'a>(input: &'a str, pos: &mut Position) -> RaiseResult {
+pub fn lookahead(input: &str, pos: &mut Position) -> RaiseResult {
     let backup = pos.clone();
     let token = raise_token(input, pos);
 
@@ -845,11 +845,8 @@ fn test_lookahead() {
 }
 
 type TokenFn<'a, R> = dyn Fn(&Token) -> R + 'a;
-pub fn expect<'a, 'b>(
-    pred: &TokenFn<'a, (bool, String)>,
-    input: &'a str,
-    pos: &mut Position,
-) -> RaiseResult {
+
+pub fn expect(pred: &TokenFn<(bool, String)>, input: &str, pos: &mut Position) -> RaiseResult {
     let token = raise_token(input, pos)?;
     let (result, message) = pred(&token);
 
