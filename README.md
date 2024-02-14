@@ -24,11 +24,10 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 
 ; expansion
 [= [x y] [vec 1 2]] ; x = 1, y = 2
-[= [. x] [vec 1 2 3]] ; x = 2, `.` is a placehoder that must occupy one position
 
 ; convenient placehoders in expansion
+[= [. x] [vec 1 2 3]] ; x = 2, `.` is a placehoder that MUST occupy one position
 [= [... x] [.. 1 10]] ; x = 10, `...` is a placehoder that can occupy zero or as many positions as possible
-[= [x ... y] [vec 1]] ; x = 1, y = 1
 [= [. [x] ... y] [vec 1 [vec 2] 3 4 5]] ; x = 2, y = 5
 ```
 
@@ -108,25 +107,16 @@ A toy Lisp-like language written in Rust, aims to be both fun and expressive.
 ## Structure
 
 ```lisp
-; use built-in function `obj` to create an object
-[= stack /[vec] [begin 
-  [= this [obj]] ; `this` is just a variable name
+[= stack [obj
+    ['new' /[initial] [= this.vec initial]]
+    ['clear' /[] [= this.vec [vec]]]
+    ['push' /[x] [= this.vec [.. this.vec [x]]]]
+    ['pop' /[] [begin
+        [= [... last] this.vec]
+        [= this.vec [this.vec.slice 0 -1]]
+        last]]]]
 
-  [= this.vec vec]
-
-  [= this.clear /[] [= this.vec []]]
-
-  [= this.push /[x] [begin 
-    [= this.vec [.. this.vec [x]]]]]
-
-  [= this.pop /[] [begin
-    [= [... x] this.vec]
-    [= this.vec [this.vec.slice 0 -1]]
-    x]]
-
-  this]]
-
-[= s [stack [vec 1 2 3]]]
+[= s [stack.new [vec 1 2 3]]]
 [= x [s.pop]] ; x = 3
 [s.push 42] ; s = [1 2 42]
 ```

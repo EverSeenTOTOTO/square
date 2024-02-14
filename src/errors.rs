@@ -10,8 +10,8 @@ use core::fmt;
 pub enum SquareError {
     UnexpectedToken(String, String, Position),
     SyntaxError(String, String, Position, Option<Position>),
-    RuntimeError(String, Inst, usize),
-    TypeError(String),
+    InstructionError(String, Inst, usize),
+    RuntimeError(String),
 }
 
 impl fmt::Display for SquareError {
@@ -25,16 +25,16 @@ impl fmt::Display for SquareError {
                 let frame = code_frame(source, start, end.as_ref().unwrap_or(start));
                 write!(f, "Syntax error at {:?}, {}:\n{}", start, msg, frame)
             }
-            SquareError::RuntimeError(msg, inst, pc) => {
+            SquareError::InstructionError(msg, inst, pc) => {
                 write!(
                     f,
-                    "Runtime error, {}:\n{}",
+                    "Instruction error, {}:\n{}",
                     msg,
                     format!("{:>4}: {}\n", pc, inst)
                 )
             }
-            SquareError::TypeError(msg) => {
-                write!(f, "{}", msg)
+            SquareError::RuntimeError(msg) => {
+                write!(f, "Runtime error: {}", msg)
             }
         }
     }

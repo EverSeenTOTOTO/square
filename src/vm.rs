@@ -3,9 +3,6 @@ use core::{cell::RefCell, fmt};
 
 use hashbrown::HashMap;
 
-#[cfg(not(test))]
-use crate::println;
-
 use crate::{
     errors::SquareError,
     vm_insts::Inst,
@@ -18,6 +15,7 @@ pub type ExecResult = Result<(), SquareError>;
 impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         match self {
+            Inst::COMMENT(_) => Ok(()),
             Inst::PUSH(value) => self.push(vm, value.clone(), pc),
             Inst::POP => self.pop(vm, pc),
 
@@ -41,7 +39,7 @@ impl Inst {
                 let frame = vm.current_frame();
 
                 if frame.sp < 1 {
-                    return Err(SquareError::RuntimeError(
+                    return Err(SquareError::InstructionError(
                         format!("bad binary operation, operand stack length is {}", frame.sp),
                         self.clone(),
                         *pc,
@@ -50,8 +48,8 @@ impl Inst {
 
                 let result = !&frame.stack[frame.sp - 1];
 
-                if let Err(SquareError::TypeError(msg)) = result {
-                    return Err(SquareError::RuntimeError(msg, self.clone(), *pc));
+                if let Err(SquareError::RuntimeError(msg)) = result {
+                    return Err(SquareError::InstructionError(msg, self.clone(), *pc));
                 }
 
                 frame.stack[frame.sp - 1] = result?;
@@ -63,7 +61,7 @@ impl Inst {
                 let frame = vm.current_frame();
 
                 if frame.sp < 1 {
-                    return Err(SquareError::RuntimeError(
+                    return Err(SquareError::InstructionError(
                         "bad jne, operand stack empty".to_string(),
                         self.clone(),
                         *pc,
@@ -101,22 +99,25 @@ impl Inst {
             }
 
             Inst::CALL => {
+                // call closure
                 let frame = vm.current_frame();
 
                 if frame.sp < 2 {
-                    return Err(SquareError::RuntimeError(
+                    return Err(SquareError::InstructionError(
                         "bad call, closure and params required".to_string(),
                         self.clone(),
                         *pc,
                     ));
                 }
 
+                // operand top should be [closure, params]<-
                 if let Value::Closure(ref closure) = &frame.stack[frame.sp - 2] {
                     let new_pc = closure.ip;
                     let params = frame.stack[frame.sp - 1].clone();
                     frame.sp -= 2; // pop params and closure
 
                     let mut new_frame = CallFrame::new();
+                    // fill up captures
                     closure
                         .captures
                         .iter()
@@ -124,16 +125,16 @@ impl Inst {
                     new_frame.prev = vm.call_frame.take();
                     new_frame.ra = *pc;
 
-                    // jump to function definition
+                    // jump to function
                     *pc = new_pc as usize;
 
                     vm.call_frame = Some(Box::new(new_frame));
 
-                    // always push top value of last call_frame as params, the value should be a pack
+                    // always push param pack
                     return self.push(vm, params, pc);
                 }
 
-                Err(SquareError::RuntimeError(
+                Err(SquareError::InstructionError(
                     format!("bad call, cannot call with {}", frame.stack[frame.sp - 2]),
                     self.clone(),
                     *pc,
@@ -150,11 +151,12 @@ impl Inst {
                 self.push(vm, top, pc)
             }
             Inst::PUSH_CLOSURE(meta) => {
+                // create closure
                 let mut closure = meta.clone();
                 closure.ip = (*pc as i32) + closure.ip;
 
                 if closure.ip < 0 {
-                    return Err(SquareError::RuntimeError(
+                    return Err(SquareError::InstructionError(
                         format!("invalid function address: {}", closure.ip),
                         self.clone(),
                         *pc,
@@ -163,12 +165,13 @@ impl Inst {
 
                 let frame = vm.current_frame();
 
-                // upgrade value to capture
+                // upgrade value to captured
                 let keys: Vec<_> = closure.captures.keys().cloned().collect();
                 for name in keys {
+                    let target_frame = frame.find_frame_by_varname(&name).unwrap();
                     let value =
-                        Value::UpValue(Rc::new(frame.resolve_local(&name).unwrap().clone()));
-                    frame.define_local(&name, value.clone());
+                        Value::UpValue(Rc::new(target_frame.locals.get(&name).unwrap().clone()));
+                    target_frame.locals.remove(&name).unwrap();
                     closure.captures.insert(name, value.clone());
                 }
 
@@ -179,7 +182,7 @@ impl Inst {
                 let frame = vm.current_frame();
 
                 if frame.sp < *len {
-                    return Err(SquareError::RuntimeError(
+                    return Err(SquareError::InstructionError(
                         format!("bad pack, {} requied, {} provided", len, frame.sp),
                         self.clone(),
                         *pc,
@@ -199,7 +202,7 @@ impl Inst {
                     let pack = val.borrow();
 
                     if *offset >= pack.len() {
-                        return Err(SquareError::RuntimeError(
+                        return Err(SquareError::InstructionError(
                             format!("bad peek, offset {} out of range", offset),
                             self.clone(),
                             *pc,
@@ -212,14 +215,14 @@ impl Inst {
                     if index < pack.len() {
                         Ok(pack.get(index).unwrap().clone())
                     } else {
-                        Err(SquareError::RuntimeError(
+                        Err(SquareError::InstructionError(
                             format!("bad peek, index {} out of range", index),
                             self.clone(),
                             *pc,
                         ))
                     }
                 } else {
-                    Err(SquareError::RuntimeError(
+                    Err(SquareError::InstructionError(
                         "bad peek, top value is not a pack".to_string(),
                         self.clone(),
                         *pc,
@@ -247,7 +250,7 @@ impl Inst {
         let frame = vm.current_frame();
 
         if frame.sp < 1 {
-            return Err(SquareError::RuntimeError(
+            return Err(SquareError::InstructionError(
                 "bad pop, operand stack empty".to_string(),
                 self.clone(),
                 *pc,
@@ -261,7 +264,7 @@ impl Inst {
         let frame = vm.current_frame();
 
         if frame.sp < 2 {
-            return Err(SquareError::RuntimeError(
+            return Err(SquareError::InstructionError(
                 format!("bad binary operation, operand stack length is {}", frame.sp),
                 self.clone(),
                 *pc,
@@ -270,8 +273,8 @@ impl Inst {
 
         let result = op_fn(&frame.stack[frame.sp - 2], &frame.stack[frame.sp - 1]);
 
-        if let Err(SquareError::TypeError(msg)) = result {
-            return Err(SquareError::RuntimeError(msg, self.clone(), *pc));
+        if let Err(SquareError::RuntimeError(msg)) = result {
+            return Err(SquareError::InstructionError(msg, self.clone(), *pc));
         }
 
         frame.stack[frame.sp - 2] = result?;
@@ -282,7 +285,7 @@ impl Inst {
     fn jump(&self, insts: &Vec<Inst>, pc: &mut usize, offset: i32) -> ExecResult {
         let new_pc = *pc as i32 + offset;
         if new_pc < 0 || new_pc >= insts.len() as i32 {
-            return Err(SquareError::RuntimeError(
+            return Err(SquareError::InstructionError(
                 "bad pc".to_string(),
                 self.clone(),
                 *pc,
@@ -299,7 +302,7 @@ pub struct CallFrame {
 
     // operand stack
     stack: Vec<Value>,
-    // fake length, avoid frequent operand stak push/pop
+    // fake stack pointer, avoid frequent operand stak push/pop
     sp: usize,
 
     ra: usize, // return address
@@ -308,8 +311,7 @@ pub struct CallFrame {
 
 impl fmt::Display for CallFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "--- Call Frame ---")?;
-        writeln!(f, "Return Address: {}", self.ra)?;
+        writeln!(f, "--- Call Frame(RA: {}) ---", self.ra)?;
         writeln!(f, "Locals:")?;
         for (key, value) in &self.locals {
             writeln!(f, "{:>8}: {}", key, value)?;
@@ -329,14 +331,14 @@ impl CallFrame {
     fn new() -> Self {
         Self {
             locals: HashMap::new(),
-            stack: vec![Value::Nil; 16],
+            stack: vec![Value::Nil; 8],
             sp: 0,
             ra: 0,
             prev: None,
         }
     }
 
-    fn find_frame_by_varname<'a>(&mut self, name: &'a str) -> Option<&mut CallFrame> {
+    pub fn find_frame_by_varname<'a>(&mut self, name: &'a str) -> Option<&mut CallFrame> {
         if self.locals.contains_key(name) {
             return Some(self);
         }
@@ -430,7 +432,12 @@ impl VM {
         inst.exec(self, insts, pc)?;
         *pc += 1;
 
-        println!("{}:\n{}\n", inst, self.current_frame());
+        #[cfg(not(test))]
+        use crate::println;
+        match inst {
+            Inst::COMMENT(_) => {}
+            _ => println!("{}:\n{}\n", inst, self.current_frame()),
+        }
 
         Ok(())
     }
@@ -463,7 +470,7 @@ fn test_many_operands() {
 }
 
 #[test]
-fn test_load_undefined() {
+fn test_load_nil() {
     let mut vm = VM::new();
     let insts = vec![
         Inst::LOAD("a".to_string()),
@@ -478,7 +485,7 @@ fn test_load_undefined() {
 }
 
 #[test]
-fn test_store_undefined() {
+fn test_store_nil() {
     let mut vm = VM::new();
     let insts = vec![Inst::STORE("a".to_string())];
 

@@ -12,8 +12,8 @@ use crate::errors::SquareError;
 // meta at compile time, instance at runtime
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
-    pub ip: i32, // offset at compile time, function location at runtime
-    pub captures: HashMap<String, Value>, // name: nil at compile time, name: captured at runtime
+    pub ip: i32, // offset at compile time, function address at runtime
+    pub captures: HashMap<String, Value>, // (name: nil) at compile time, (name: upvalue) at runtime
 }
 
 impl Closure {
@@ -100,7 +100,6 @@ impl PartialEq for Value {
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
             (Value::Closure(lhs), Value::Closure(rhs)) => lhs == rhs,
             (Value::Nil, Value::Nil) => true,
-            (Value::UpValue(lhs), Value::UpValue(rhs)) => lhs == rhs,
             _ => false,
         }
     }
@@ -124,7 +123,7 @@ macro_rules! impl_binop {
                 };
                 match (lhs, rhs) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(lhs $op rhs)),
-                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {} and {}", self, other)))
+                    _ => Err(SquareError::RuntimeError(format!("cannot perform operation on {} and {}", self, other)))
                 }
             }
         }
@@ -147,7 +146,7 @@ macro_rules! impl_bitop {
                 };
                 match (lhs, rhs) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(((*lhs as i64) $op (*rhs as i64)) as f64)),
-                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {} and {}", self, other)))
+                    _ => Err(SquareError::RuntimeError(format!("cannot perform operation on {} and {}", self, other)))
                 }
             }
         }
@@ -174,7 +173,7 @@ impl Not for &Value {
             Value::Bool(val) => Ok(Value::Bool(!*val)),
             Value::Num(val) => Ok(Value::Num(!(*val as i64) as f64)),
             Value::UpValue(val) => (&**val).not(),
-            _ => Err(SquareError::TypeError(format!(
+            _ => Err(SquareError::RuntimeError(format!(
                 "cannot perform operation on {}",
                 self
             ))),

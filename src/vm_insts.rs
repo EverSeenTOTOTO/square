@@ -35,12 +35,13 @@ pub enum Inst {
 
     CALL,
     RET,
-    PUSH_CLOSURE(Closure), // relative address to the function
+    PUSH_CLOSURE(Closure), // closure meta at compile time, which contains function address and capture names
 
     PACK(usize), // pack n elements on top of the operand stack
 
     PEEK(usize, i32), // (offset, index), peek an element within the top pack of the operand stack.
-                      // 'offset' is either 0 or the number of elements consumed once greedy placehoder already appeared.
+    // 'offset' is either 0 or the number of elements consumed once greedy placehoder already appeared.
+    COMMENT(String),
 }
 
 impl fmt::Display for Inst {
@@ -85,6 +86,7 @@ impl fmt::Display for Inst {
             ),
             Inst::PACK(len) => write!(f, "PACK {}", len),
             Inst::PEEK(offset, index) => write!(f, "PEEK {} {}", offset, index),
+            Inst::COMMENT(comment) => write!(f, "\n# {}\n", comment),
         }
     }
 }

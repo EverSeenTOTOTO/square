@@ -53,9 +53,7 @@ impl fmt::Display for Token {
             Token::Comment(_, source) => write!(f, "Comment({})", source),
             Token::Eof(_) => write!(f, "Eof"),
             Token::Id(_, source) => write!(f, "Id({})", source),
-            Token::Num(_, source) => {
-                write!(f, "Num({})", source)
-            }
+            Token::Num(_, source) => write!(f, "Num({})", source),
             Token::Op(_, source) => write!(f, "Op({})", source),
             Token::Str(_, source) => write!(f, "Str({})", source),
             Token::Whitespace(_, source) => write!(f, "Whitespace({})", source),
