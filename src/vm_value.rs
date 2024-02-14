@@ -52,7 +52,17 @@ impl fmt::Display for Value {
                 write!(f, "Vec({:?})", val.borrow())
             }
             Value::Closure(closure) => {
-                write!(f, "Closure({})", closure.ip)
+                write!(
+                    f,
+                    "Closure({} {})",
+                    closure.ip,
+                    closure
+                        .captures
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, v))
+                        .collect::<Vec<String>>()
+                        .join(",")
+                )
             }
             Value::UpValue(val) => {
                 write!(f, "UpValue({})", val)
@@ -189,6 +199,13 @@ impl Value {
             Value::Str(val) => !val.is_empty(),
             Value::UpValue(val) => (&**val).to_bool(),
             _ => true,
+        }
+    }
+
+    pub fn upgrade(&self) -> Value {
+        match self {
+            Value::UpValue(val) => (&**val).upgrade(),
+            _ => Value::UpValue(Rc::new(self.clone())),
         }
     }
 }

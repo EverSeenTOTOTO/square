@@ -1,15 +1,16 @@
 use core::cell::RefCell;
 
 use crate::{
+    code_frame::Position,
     errors::SquareError,
-    parse::Node,
+    parse::{parse, Node},
     scan::Token,
     vm_insts::Inst,
     vm_value::{Closure, Value},
 };
 
 use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
-use hashbrown::HashSet;
+use hashbrown::{HashMap, HashSet};
 
 pub type EmitResult = Result<Vec<Inst>, SquareError>;
 
@@ -30,10 +31,13 @@ impl EmitContext {
     }
 
     pub fn mark_if_capture(&mut self, name: &String) {
-        let (locals, ref mut captures) = self.depth_info.last_mut().unwrap();
-
-        if !locals.contains(name) {
-            captures.insert(name.clone());
+        // once a value is captured, it will be captured in all upper scopes until where it is defined
+        for (locals, ref mut captures) in self.depth_info.iter_mut().rev() {
+            if !locals.contains(name) {
+                captures.insert(name.clone());
+            } else {
+                break;
+            }
         }
     }
 
@@ -83,6 +87,42 @@ fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitRes
     }
 }
 
+#[test]
+fn test_emit_token_num() {
+    let code = "42";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(insts, vec![Inst::PUSH(Value::Num(42.0))]);
+}
+
+#[test]
+fn test_emit_token_str() {
+    let code = "'42'";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(insts, vec![Inst::PUSH(Value::Str("'42'".to_string()))]);
+}
+
+#[test]
+fn test_emit_token_lit() {
+    let code = "nil";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(insts, vec![Inst::PUSH(Value::Nil)]);
+}
+
+#[test]
+fn test_emit_token_id() {
+    let code = "a";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(insts, vec![Inst::LOAD("a".to_string())]);
+}
+
 fn emit_assign(
     input: &str,
     target: &Box<Node>,
@@ -118,6 +158,18 @@ fn emit_assign(
     }
 
     return Ok(insts);
+}
+
+#[test]
+fn test_emit_assign_id() {
+    let code = "[= a 42]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![Inst::PUSH(Value::Num(42.0)), Inst::STORE("a".to_string())]
+    );
 }
 
 fn emit_op(
@@ -159,6 +211,7 @@ fn emit_op(
                     result.extend(emit(input, expressions, ctx)?);
                     result.push(action);
                     result.push(Inst::STORE(source.clone()));
+                    // always push latest value to operand stack
                     result.push(Inst::LOAD(source.clone()));
                     return Ok(result);
                 } else {
@@ -218,6 +271,40 @@ fn emit_op(
     ));
 }
 
+#[test]
+fn test_emit_op() {
+    let code = "[+ a b]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("a".to_string()),
+            Inst::LOAD("b".to_string()),
+            Inst::ADD,
+        ]
+    );
+}
+
+#[test]
+fn test_emit_op_assign() {
+    let code = "[+= a b]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("a".to_string()),
+            Inst::LOAD("b".to_string()),
+            Inst::ADD,
+            Inst::STORE("a".to_string()),
+            Inst::LOAD("a".to_string()),
+        ]
+    );
+}
+
 fn emit_if(
     input: &str,
     if_token: &Token,
@@ -233,11 +320,7 @@ fn emit_if(
         ));
     }
 
-    let mut result = vec![Inst::COMMENT(format!(
-        "if at line {}, col {} start",
-        if_token.pos().line,
-        if_token.pos().column
-    ))];
+    let mut result = vec![];
     let condition = expressions.get(1).unwrap();
     let condition_result = emit_node(input, condition, ctx)?;
     let condition_len = condition_result.len() as i32;
@@ -269,12 +352,20 @@ fn emit_if(
         result.push(Inst::JMP(1));
         result.push(Inst::PUSH(Value::Nil)); // FIXME: else { nil }
         result.push(Inst::RET);
-        result.insert(0, Inst::JMP(condition_len + true_branch_len + 3));
+        result.insert(0, Inst::JMP(condition_len + true_branch_len + 4));
         result.push(Inst::PUSH_CLOSURE(Closure::new(
-            -4 - (condition_len + true_branch_len),
+            -5 - (condition_len + true_branch_len),
         )));
     }
 
+    result.insert(
+        0,
+        Inst::COMMENT(format!(
+            "if at line {}, col {} start",
+            if_token.pos().line,
+            if_token.pos().column
+        )),
+    );
     result.push(Inst::COMMENT(format!(
         "if at line {}, col {} end",
         if_token.pos().line,
@@ -282,6 +373,56 @@ fn emit_if(
     )));
 
     return Ok(result);
+}
+
+#[test]
+fn test_emit_if_true() {
+    let code = "[if true 42]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::COMMENT("if at line 1, col 2 start".to_string()),
+            Inst::JMP(6),
+            Inst::PUSH(Value::Bool(true)),
+            Inst::JNE(2),
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::JMP(1),
+            Inst::PUSH(Value::Nil),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure::new(-7)),
+            Inst::COMMENT("if at line 1, col 2 end".to_string()),
+            Inst::PACK(0),
+            Inst::CALL
+        ]
+    );
+}
+
+#[test]
+fn test_emit_if_true_false() {
+    let code = "[if true 42 24]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::COMMENT("if at line 1, col 2 start".to_string()),
+            Inst::JMP(6),
+            Inst::PUSH(Value::Bool(true)),
+            Inst::JNE(2),
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::JMP(1),
+            Inst::PUSH(Value::Num(24.0)),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure::new(-7)),
+            Inst::COMMENT("if at line 1, col 2 end".to_string()),
+            Inst::PACK(0),
+            Inst::CALL
+        ]
+    );
 }
 
 fn emit_while(
@@ -308,20 +449,22 @@ fn emit_while(
     let body_len = body_result.len() as i32;
     let offset = condition_len + body_len;
 
-    let mut result = vec![
-        Inst::COMMENT(format!(
-            "while at line {}, col {} start",
-            while_token.pos().line,
-            while_token.pos().column
-        )),
-        Inst::JMP(3 + offset),
-    ];
+    let mut result = vec![Inst::JMP(3 + offset)];
     result.extend(condition_result);
     result.push(Inst::JNE(body_len + 1));
     result.extend(body_result);
     result.push(Inst::JMP(-((condition_len + body_len + 2) as i32)));
     result.push(Inst::RET);
     result.push(Inst::PUSH_CLOSURE(Closure::new(-4 - offset)));
+
+    result.insert(
+        0,
+        Inst::COMMENT(format!(
+            "while at line {}, col {} start",
+            while_token.pos().line,
+            while_token.pos().column
+        )),
+    );
     result.push(Inst::COMMENT(format!(
         "while at line {}, col {} end",
         while_token.pos().line,
@@ -329,6 +472,30 @@ fn emit_while(
     )));
 
     return Ok(result);
+}
+
+#[test]
+fn test_emit_while() {
+    let code = "[while true 42]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::COMMENT("while at line 1, col 2 start".to_string()),
+            Inst::JMP(5),
+            Inst::PUSH(Value::Bool(true)),
+            Inst::JNE(2),
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::JMP(-4),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure::new(-6)),
+            Inst::COMMENT("while at line 1, col 2 end".to_string()),
+            Inst::PACK(0),
+            Inst::CALL
+        ]
+    );
 }
 
 fn emit_begin(
@@ -339,17 +506,19 @@ fn emit_begin(
 ) -> EmitResult {
     let body = emit(input, &expressions[1..].to_vec(), ctx)?;
     let offset = body.len() as i32;
-    let mut result = vec![
+    let mut result = vec![Inst::JMP(1 + offset)];
+    result.extend(body);
+    result.push(Inst::RET);
+    result.push(Inst::PUSH_CLOSURE(Closure::new(-2 - offset)));
+
+    result.insert(
+        0,
         Inst::COMMENT(format!(
             "begin at line {}, col {} start",
             begin_token.pos().line,
             begin_token.pos().column
         )),
-        Inst::JMP(1 + offset),
-    ];
-    result.extend(body);
-    result.push(Inst::RET);
-    result.push(Inst::PUSH_CLOSURE(Closure::new(-2 - offset)));
+    );
     result.push(Inst::COMMENT(format!(
         "begin at line {}, col {} end",
         begin_token.pos().line,
@@ -357,6 +526,27 @@ fn emit_begin(
     )));
 
     return Ok(result);
+}
+
+#[test]
+fn test_emit_begin() {
+    let code = "[begin 42]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::COMMENT("begin at line 1, col 2 start".to_string()),
+            Inst::JMP(2),
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure::new(-3)),
+            Inst::COMMENT("begin at line 1, col 2 end".to_string()),
+            Inst::PACK(0),
+            Inst::CALL
+        ]
+    );
 }
 
 fn emit_call(
@@ -457,6 +647,35 @@ fn emit_call(
     return Ok(result);
 }
 
+#[test]
+fn test_emit_call_no_params() {
+    let code = "[foo]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![Inst::LOAD("foo".to_string()), Inst::PACK(0), Inst::CALL]
+    );
+}
+
+#[test]
+fn test_emit_call_with_params() {
+    let code = "[foo bar]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("foo".to_string()),
+            Inst::LOAD("bar".to_string()),
+            Inst::PACK(1),
+            Inst::CALL
+        ]
+    );
+}
+
 fn emit_fn(
     input: &str,
     params: &Box<Node>,
@@ -470,14 +689,7 @@ fn emit_fn(
         let captures = ctx.borrow_mut().pop_scope();
         let offset = (params_result.len() + body_result.len()) as i32;
 
-        let mut result = vec![
-            Inst::COMMENT(format!(
-                "fn at line {}, col {} start",
-                left_bracket.pos().line,
-                left_bracket.pos().column
-            )),
-            Inst::JMP(offset + 1),
-        ];
+        let mut result = vec![Inst::JMP(offset + 1)];
         result.extend(params_result);
         result.extend(body_result);
         result.push(Inst::RET);
@@ -486,6 +698,15 @@ fn emit_fn(
             closure_meta.captures.insert(name.clone(), Value::Nil);
         });
         result.push(Inst::PUSH_CLOSURE(closure_meta));
+
+        result.insert(
+            0,
+            Inst::COMMENT(format!(
+                "fn at line {}, col {} start",
+                left_bracket.pos().line,
+                left_bracket.pos().column
+            )),
+        );
         result.push(Inst::COMMENT(format!(
             "fn at line {}, col {} end",
             left_bracket.pos().line,
@@ -496,6 +717,131 @@ fn emit_fn(
     }
 
     unreachable!()
+}
+
+#[test]
+fn test_emit_fn() {
+    let code = "/[] 42";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::COMMENT("fn at line 1, col 2 start".to_string()),
+            Inst::JMP(3),
+            Inst::POP, // pop param pack
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure::new(-4)),
+            Inst::COMMENT("fn at line 1, col 2 end".to_string())
+        ]
+    );
+}
+
+#[test]
+fn test_emit_fn_params() {
+    let code = "/[x] 42";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::COMMENT("fn at line 1, col 2 start".to_string()),
+            Inst::JMP(5),
+            Inst::PEEK(0, 0), // peek param
+            Inst::STORE("x".to_string()),
+            Inst::POP, // pop param pack
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure::new(-6)),
+            Inst::COMMENT("fn at line 1, col 2 end".to_string())
+        ]
+    );
+}
+
+#[test]
+fn test_emit_fn_capture() {
+    let code = "/[] y";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let ctx = RefCell::new(EmitContext::new());
+
+    ctx.borrow_mut().add_local("y".to_string());
+
+    let insts = emit(code, &ast, &ctx).unwrap();
+
+    let mut captures = HashMap::new();
+    // should capture y
+    captures.insert("y".to_string(), Value::Nil);
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::COMMENT("fn at line 1, col 2 start".to_string()),
+            Inst::JMP(3),
+            Inst::POP,
+            Inst::LOAD("y".to_string()),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure { ip: -4, captures }),
+            Inst::COMMENT("fn at line 1, col 2 end".to_string())
+        ]
+    );
+}
+
+#[test]
+fn test_emit_fn_capture_nested() {
+    let code = "/[] [begin 
+        [= x 1]
+        /[] [+ x y]]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let ctx = RefCell::new(EmitContext::new());
+
+    ctx.borrow_mut().add_local("y".to_string());
+
+    let insts = emit(code, &ast, &ctx).unwrap();
+
+    let mut capture_y = HashMap::new();
+    capture_y.insert("y".to_string(), Value::Nil);
+    let mut capture_xy = HashMap::new();
+    capture_xy.insert("x".to_string(), Value::Nil);
+    capture_xy.insert("y".to_string(), Value::Nil);
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::COMMENT("fn at line 1, col 2 start".to_string()),
+            Inst::JMP(20),
+            Inst::POP,
+            Inst::COMMENT("begin at line 1, col 6 start".to_string()),
+            Inst::JMP(12),
+            Inst::PUSH(Value::Num(1.0)),
+            Inst::STORE("x".to_string()),
+            Inst::COMMENT("fn at line 3, col 10 start".to_string()),
+            Inst::JMP(5),
+            Inst::POP,
+            Inst::LOAD("x".to_string()),
+            Inst::LOAD("y".to_string()),
+            Inst::ADD,
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure {
+                ip: -6,
+                captures: capture_xy
+            }),
+            Inst::COMMENT("fn at line 3, col 10 end".to_string()),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure::new(-13)),
+            Inst::COMMENT("begin at line 1, col 6 end".to_string()),
+            Inst::PACK(0),
+            Inst::CALL,
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure {
+                ip: -21,
+                captures: capture_y
+            }),
+            Inst::COMMENT("fn at line 1, col 2 end".to_string())
+        ]
+    );
 }
 
 fn emit_expand(
@@ -562,6 +908,103 @@ fn emit_expand(
     result.push(Inst::POP); // drop the vec on top of operand stack
 
     return Ok(result);
+}
+
+#[test]
+fn test_emit_expand_base() {
+    let code = "[= [a b] c]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("c".to_string()),
+            Inst::PEEK(0, 0),
+            Inst::STORE("a".to_string()),
+            Inst::PEEK(0, 1),
+            Inst::STORE("b".to_string()),
+            Inst::POP
+        ]
+    );
+}
+
+#[test]
+fn test_emit_expand_dot() {
+    let code = "[= [. b] c]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("c".to_string()),
+            Inst::PEEK(0, 0),
+            Inst::POP,
+            Inst::PEEK(0, 1),
+            Inst::STORE("b".to_string()),
+            Inst::POP
+        ]
+    );
+}
+
+#[test]
+fn test_emit_expand_greed() {
+    let code = "[= [... b] c]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("c".to_string()),
+            Inst::PEEK(0, -1),
+            Inst::STORE("b".to_string()),
+            Inst::POP
+        ]
+    );
+}
+
+#[test]
+fn test_emit_expand_greed_offset() {
+    let code = "[= [. ... . b] c]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("c".to_string()),
+            Inst::PEEK(0, 0),
+            Inst::POP,
+            Inst::PEEK(1, -2),
+            Inst::POP,
+            Inst::PEEK(2, -1),
+            Inst::STORE("b".to_string()),
+            Inst::POP
+        ]
+    );
+}
+
+#[test]
+fn test_emit_expand_nested() {
+    let code = "[= [[[b]]] c]";
+    let ast = parse(code, &mut Position::default()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("c".to_string()),
+            Inst::PEEK(0, 0),
+            Inst::PEEK(0, 0),
+            Inst::PEEK(0, 0),
+            Inst::STORE("b".to_string()),
+            Inst::POP,
+            Inst::POP,
+            Inst::POP,
+        ]
+    );
 }
 
 fn emit_node(input: &str, node: &Box<Node>, ctx: &RefCell<EmitContext>) -> EmitResult {
