@@ -1,6 +1,12 @@
 use core::cell::RefCell;
 
-use crate::{errors::SquareError, parse::Node, scan::Token, vm_insts::Inst, vm_value::Value};
+use crate::{
+    errors::SquareError,
+    parse::Node,
+    scan::Token,
+    vm_insts::Inst,
+    vm_value::{Closure, Value},
+};
 
 use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 use hashbrown::HashSet;
@@ -9,12 +15,14 @@ pub type EmitResult = Result<Vec<Inst>, SquareError>;
 
 #[derive(Debug)]
 pub struct EmitContext {
+    closure_metas: Vec<Closure>,
     depth_info: Vec<HashSet<String>>,
 }
 
 impl EmitContext {
     pub fn new() -> Self {
-        return EmitContext {
+        return Self {
+            closure_metas: vec![],
             depth_info: vec![HashSet::new()],
         };
     }
@@ -23,16 +31,30 @@ impl EmitContext {
         self.depth_info.last_mut().unwrap().insert(name);
     }
 
-    pub fn is_local(&self, name: &String) -> bool {
-        return self.depth_info.last().unwrap().contains(name);
+    pub fn mark_if_capture(&mut self, name: &String) {
+        if !self.depth_info.last().unwrap().contains(name) && self.closure_metas.last().is_some() {
+            self.closure_metas
+                .last_mut()
+                .unwrap()
+                .captures
+                .insert(name.clone(), Value::Nil);
+        }
     }
 
-    pub fn push_scope(&mut self) {
+    pub fn push_scope(&mut self, is_closure: bool) {
         self.depth_info.push(HashSet::new());
+        if is_closure {
+            self.closure_metas.push(Closure::new(0));
+        }
     }
 
-    pub fn pop_scope(&mut self) {
+    pub fn pop_scope(&mut self, is_closure: bool) -> Option<Closure> {
         self.depth_info.pop();
+        if is_closure {
+            self.closure_metas.pop()
+        } else {
+            None
+        }
     }
 }
 
@@ -51,7 +73,10 @@ fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitRes
                 "true" => Inst::PUSH(Value::Bool(true)),
                 "false" => Inst::PUSH(Value::Bool(false)),
                 "nil" => Inst::PUSH(Value::Nil),
-                _ => Inst::LOAD(id.clone()),
+                _ => {
+                    ctx.borrow_mut().mark_if_capture(id);
+                    Inst::LOAD(id.clone())
+                }
             };
 
             return Ok(vec![inst]);
@@ -146,6 +171,7 @@ fn emit_op(
                     result.extend(emit(input, expressions, ctx)?);
                     result.push(action);
                     result.push(Inst::STORE(source.clone()));
+                    result.push(Inst::LOAD(source.clone()));
                     return Ok(result);
                 } else {
                     return Err(SquareError::SyntaxError(
@@ -228,9 +254,9 @@ fn emit_if(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitContext>
 
     let true_branch = expressions.get(2).unwrap();
 
-    ctx.borrow_mut().push_scope();
+    ctx.borrow_mut().push_scope(false);
     let true_branch_result = emit_node(input, true_branch, ctx)?;
-    ctx.borrow_mut().pop_scope();
+    ctx.borrow_mut().pop_scope(false);
 
     let true_branch_len = true_branch_result.len() as i32;
     // skip true branch, +1 for one extra JMP instcurtion
@@ -238,9 +264,9 @@ fn emit_if(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitContext>
     result.extend(true_branch_result);
 
     if let Some(false_branch) = expressions.get(3) {
-        ctx.borrow_mut().push_scope();
+        ctx.borrow_mut().push_scope(false);
         let false_branch_result = emit_node(input, false_branch, ctx)?;
-        ctx.borrow_mut().pop_scope();
+        ctx.borrow_mut().pop_scope(false);
 
         let false_branch_len = false_branch_result.len() as i32;
         // skip false branch
@@ -251,15 +277,17 @@ fn emit_if(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitContext>
             0,
             Inst::JMP(condition_len + true_branch_len + false_branch_len + 3),
         );
-        result.push(Inst::PUSH_CLOSURE(
+        result.push(Inst::PUSH_CLOSURE(Closure::new(
             -4 - (condition_len + true_branch_len + false_branch_len),
-        ));
+        )));
     } else {
         result.push(Inst::JMP(1));
         result.push(Inst::PUSH(Value::Nil)); // FIXME: else { nil }
         result.push(Inst::RET);
         result.insert(0, Inst::JMP(condition_len + true_branch_len + 3));
-        result.push(Inst::PUSH_CLOSURE(-4 - (condition_len + true_branch_len)));
+        result.push(Inst::PUSH_CLOSURE(Closure::new(
+            -4 - (condition_len + true_branch_len),
+        )));
     }
 
     return Ok(result);
@@ -286,9 +314,9 @@ fn emit_while(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitConte
     let condition_len = condition_result.len() as i32;
     let body = expressions.get(2).unwrap();
 
-    ctx.borrow_mut().push_scope();
+    ctx.borrow_mut().push_scope(false);
     let body_result = emit_node(input, body, ctx)?;
-    ctx.borrow_mut().pop_scope();
+    ctx.borrow_mut().pop_scope(false);
 
     let body_len = body_result.len() as i32;
     let offset = condition_len + body_len;
@@ -299,21 +327,21 @@ fn emit_while(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitConte
     result.extend(body_result);
     result.push(Inst::JMP(-((condition_len + body_len + 2) as i32)));
     result.push(Inst::RET);
-    result.push(Inst::PUSH_CLOSURE(-4 - offset));
+    result.push(Inst::PUSH_CLOSURE(Closure::new(-4 - offset)));
 
     return Ok(result);
 }
 
 fn emit_begin(input: &str, expressions: &Vec<Box<Node>>, ctx: &RefCell<EmitContext>) -> EmitResult {
-    ctx.borrow_mut().push_scope();
+    ctx.borrow_mut().push_scope(false);
     let body = emit(input, &expressions[1..].to_vec(), ctx)?;
-    ctx.borrow_mut().pop_scope();
+    ctx.borrow_mut().pop_scope(false);
 
     let offset = body.len() as i32;
     let mut result = vec![Inst::JMP(1 + offset)];
     result.extend(body);
     result.push(Inst::RET);
-    result.push(Inst::PUSH_CLOSURE(-2 - offset));
+    result.push(Inst::PUSH_CLOSURE(Closure::new(-2 - offset)));
 
     return Ok(result);
 }
@@ -360,6 +388,7 @@ fn emit_call(
                     result.push(Inst::PACK(expressions.len() - 1));
                 }
                 _ => {
+                    ctx.borrow_mut().mark_if_capture(id);
                     result.push(Inst::LOAD(id.clone()));
                     result.extend(emit(input, &expressions[1..].to_vec(), ctx)?); // provided params
                     result.push(Inst::PACK(expressions.len() - 1));
@@ -413,16 +442,17 @@ fn emit_fn(
     if let Node::Expand(.., placehoders) = params.as_ref() {
         let params_result = emit_expand(input, placehoders, ctx)?;
 
-        ctx.borrow_mut().push_scope();
+        ctx.borrow_mut().push_scope(true);
         let body_result = emit_node(input, body, ctx)?;
-        ctx.borrow_mut().pop_scope();
+        let mut closure_meta = ctx.borrow_mut().pop_scope(true).unwrap();
 
         let offset = (params_result.len() + body_result.len()) as i32;
         let mut result = vec![Inst::JMP(offset + 1)];
         result.extend(params_result);
         result.extend(body_result);
         result.push(Inst::RET);
-        result.push(Inst::PUSH_CLOSURE(-(offset + 2)));
+        closure_meta.ip = -(offset + 2);
+        result.push(Inst::PUSH_CLOSURE(closure_meta));
         return Ok(result);
     }
 

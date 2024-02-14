@@ -9,20 +9,31 @@ use hashbrown::HashMap;
 
 use crate::errors::SquareError;
 
+// meta at compile time, instance at runtime
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
-    pub ip: i32, // function location
-    pub captures: HashMap<String, Value>,
+    pub ip: i32, // offset at compile time, function location at runtime
+    pub captures: HashMap<String, Value>, // name: nil at compile time, name: captured at runtime
+}
+
+impl Closure {
+    pub fn new(ip: i32) -> Self {
+        Self {
+            ip,
+            captures: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Nil,
     Bool(bool),
     Num(f64),
     Str(String),
-    Vec(Rc<RefCell<Vec<Value>>>),
+    UpValue(Rc<Value>),
     Closure(Rc<Closure>),
-    Nil,
+    Vec(Rc<RefCell<Vec<Value>>>),
 }
 
 impl fmt::Display for Value {
@@ -43,6 +54,9 @@ impl fmt::Display for Value {
             Value::Closure(closure) => {
                 write!(f, "Closure({})", closure.ip)
             }
+            Value::UpValue(val) => {
+                write!(f, "UpValue({})", val)
+            }
             Value::Nil => {
                 write!(f, "Nil")
             }
@@ -52,7 +66,15 @@ impl fmt::Display for Value {
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        match (self, other) {
+        let lhs = match self {
+            Value::UpValue(value) => &**value,
+            _ => self,
+        };
+        let rhs = match other {
+            Value::UpValue(value) => &**value,
+            _ => other,
+        };
+        match (lhs, rhs) {
             (Value::Bool(lhs), Value::Bool(rhs)) => lhs.partial_cmp(rhs),
             (Value::Num(lhs), Value::Num(rhs)) => lhs.partial_cmp(rhs),
             (Value::Str(lhs), Value::Str(rhs)) => lhs.partial_cmp(rhs),
@@ -64,12 +86,21 @@ impl PartialOrd for Value {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
+        let lhs = match self {
+            Value::UpValue(value) => &**value,
+            _ => self,
+        };
+        let rhs = match other {
+            Value::UpValue(value) => &**value,
+            _ => other,
+        };
+        match (lhs, rhs) {
             (Value::Bool(lhs), Value::Bool(rhs)) => lhs == rhs,
             (Value::Num(lhs), Value::Num(rhs)) => lhs == rhs,
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
             (Value::Closure(lhs), Value::Closure(rhs)) => lhs == rhs,
             (Value::Nil, Value::Nil) => true,
+            (Value::UpValue(lhs), Value::UpValue(rhs)) => lhs == rhs,
             _ => false,
         }
     }
@@ -82,10 +113,18 @@ macro_rules! impl_binop {
         impl $trait for &Value {
             type Output = CalcResult;
 
-            fn $method(self, another: Self) -> Self::Output {
-                match (self, another) {
+            fn $method(self, other: Self) -> Self::Output {
+                let lhs = match self {
+                    Value::UpValue(value) => &**value,
+                    _ => self,
+                };
+                let rhs = match other {
+                    Value::UpValue(value) => &**value,
+                    _ => other,
+                };
+                match (lhs, rhs) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(lhs $op rhs)),
-                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {} and {}", self, another)))
+                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {} and {}", self, other)))
                 }
             }
         }
@@ -97,10 +136,18 @@ macro_rules! impl_bitop {
         impl $trait for &Value {
             type Output = CalcResult;
 
-            fn $method(self, another: Self) -> Self::Output {
-                match (self, another) {
+            fn $method(self, other: Self) -> Self::Output {
+                let lhs = match self {
+                    Value::UpValue(value) => &**value,
+                    _ => self,
+                };
+                let rhs = match other {
+                    Value::UpValue(value) => &**value,
+                    _ => other,
+                };
+                match (lhs, rhs) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(((*lhs as i64) $op (*rhs as i64)) as f64)),
-                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {} and {}", self, another)))
+                    _ => Err(SquareError::TypeError(format!("cannot perform operation on {} and {}", self, other)))
                 }
             }
         }
@@ -126,6 +173,7 @@ impl Not for &Value {
         match self {
             Value::Bool(val) => Ok(Value::Bool(!*val)),
             Value::Num(val) => Ok(Value::Num(!(*val as i64) as f64)),
+            Value::UpValue(val) => (&**val).not(),
             _ => Err(SquareError::TypeError(format!(
                 "cannot perform operation on {}",
                 self
@@ -140,7 +188,8 @@ impl Value {
             Value::Bool(val) => *val,
             Value::Num(val) => *val != 0.0,
             Value::Str(val) => !val.is_empty(),
-            _ => false,
+            Value::UpValue(val) => (&**val).to_bool(),
+            _ => true,
         }
     }
 }
@@ -197,4 +246,12 @@ fn test_bitop_xor() {
 fn test_bitop_not() {
     assert_eq!(!&Value::Num(0x1ff as f64), Ok(Value::Num(!0x1ff as f64)));
     assert_eq!(!&Value::Bool(false), Ok(Value::Bool(true)));
+}
+
+#[test]
+fn test_up_value() {
+    let val = Rc::new(Value::Num(1.0));
+    let upval = Value::UpValue(val.clone());
+    assert_eq!(upval == Value::UpValue(val), true);
+    assert_eq!(&upval + &upval, Ok(Value::Num(2.0)));
 }

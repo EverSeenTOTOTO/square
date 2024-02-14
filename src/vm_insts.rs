@@ -1,9 +1,10 @@
-use crate::vm_value::Value;
+use crate::vm_value::{Closure, Value};
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Inst {
     PUSH(Value),
     POP,
@@ -34,13 +35,12 @@ pub enum Inst {
 
     CALL,
     RET,
-    PUSH_CLOSURE(i32), // relative address to the function
+    PUSH_CLOSURE(Closure), // relative address to the function
 
     PACK(usize), // pack n elements on top of the operand stack
 
     PEEK(usize, i32), // (offset, index), peek an element within the top pack of the operand stack.
-                      // 'offset' is either 0 or the number of elements consumed once greedy
-                      // placehoder already appeared.
+                      // 'offset' is either 0 or the number of elements consumed once greedy placehoder already appeared.
 }
 
 impl fmt::Display for Inst {
@@ -71,7 +71,18 @@ impl fmt::Display for Inst {
             Inst::LOAD(name) => write!(f, "LOAD {}", name),
             Inst::CALL => write!(f, "CALL"),
             Inst::RET => write!(f, "RET"),
-            Inst::PUSH_CLOSURE(offset) => write!(f, "MAKE_CLOSURE {}", offset),
+            Inst::PUSH_CLOSURE(closure) => write!(
+                // closure meta
+                f,
+                "MAKE_CLOSURE {} {}",
+                closure.ip,
+                closure
+                    .captures
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<String>>()
+                    .join(",")
+            ),
             Inst::PACK(len) => write!(f, "PACK {}", len),
             Inst::PEEK(offset, index) => write!(f, "PEEK {} {}", offset, index),
         }

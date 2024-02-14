@@ -117,6 +117,10 @@ impl Inst {
                     frame.sp -= 2; // pop params and closure
 
                     let mut new_frame = CallFrame::new();
+                    closure
+                        .captures
+                        .iter()
+                        .for_each(|(key, value)| new_frame.define_local(key, value.clone()));
                     new_frame.prev = vm.call_frame.take();
                     new_frame.ra = *pc;
 
@@ -145,21 +149,28 @@ impl Inst {
                 // always return the top value
                 self.push(vm, top, pc)
             }
-            Inst::PUSH_CLOSURE(offset) => {
-                let ip = (*pc as i32) + offset;
+            Inst::PUSH_CLOSURE(meta) => {
+                let mut closure = meta.clone();
+                closure.ip = (*pc as i32) + closure.ip;
 
-                if ip < 0 {
+                if closure.ip < 0 {
                     return Err(SquareError::RuntimeError(
-                        format!("invalid function address: {}", ip),
+                        format!("invalid function address: {}", closure.ip),
                         self.clone(),
                         *pc,
                     ));
                 }
 
-                let closure = Closure {
-                    ip,
-                    captures: HashMap::new(), // TODO: capture
-                };
+                let frame = vm.current_frame();
+
+                // upgrade value to capture
+                let keys: Vec<_> = closure.captures.keys().cloned().collect();
+                for name in keys {
+                    let value =
+                        Value::UpValue(Rc::new(frame.resolve_local(&name).unwrap().clone()));
+                    frame.define_local(&name, value.clone());
+                    closure.captures.insert(name, value.clone());
+                }
 
                 self.push(vm, Value::Closure(Rc::new(closure)), pc)
             }
@@ -533,19 +544,20 @@ fn test_call_ret() {
         Inst::PUSH(Value::Num(1.0)),
         Inst::STORE("a".to_string()),
         // test call before define
-        Inst::PUSH_CLOSURE(3),
+        Inst::PUSH_CLOSURE(Closure::new(3)),
         Inst::PACK(0),
         Inst::CALL,
         // skip fn def
-        Inst::JMP(4),
+        Inst::JMP(5),
+        Inst::POP,
         Inst::PUSH(Value::Num(42.0)),
         Inst::LOAD("a".to_string()),
         Inst::ADD,
         Inst::RET,
-        Inst::PUSH_CLOSURE(-5),
+        Inst::PUSH_CLOSURE(Closure::new(-6)),
         Inst::PACK(0),
         Inst::CALL,
-        Inst::POP
+        Inst::POP,
     ];
 
     vm.run(&insts, &mut 0).unwrap();
