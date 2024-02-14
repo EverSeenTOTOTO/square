@@ -15,40 +15,34 @@ pub type EmitResult = Result<Vec<Inst>, SquareError>;
 
 #[derive(Debug)]
 pub struct EmitContext {
-    closure_metas: Vec<Closure>,
-    depth_info: Vec<HashSet<String>>,
+    depth_info: Vec<(HashSet<String>, HashSet<String>)>, // (locals, captures)
 }
 
 impl EmitContext {
     pub fn new() -> Self {
         return Self {
-            closure_metas: vec![],
-            depth_info: vec![HashSet::new()],
+            depth_info: vec![(HashSet::new(), HashSet::new())],
         };
     }
 
     pub fn add_local(&mut self, name: String) {
-        self.depth_info.last_mut().unwrap().insert(name);
+        self.depth_info.last_mut().unwrap().0.insert(name);
     }
 
     pub fn mark_if_capture(&mut self, name: &String) {
-        if !self.depth_info.last().unwrap().contains(name) && self.closure_metas.last().is_some() {
-            self.closure_metas
-                .last_mut()
-                .unwrap()
-                .captures
-                .insert(name.clone(), Value::Nil);
+        let (locals, ref mut captures) = self.depth_info.last_mut().unwrap();
+
+        if !locals.contains(name) {
+            captures.insert(name.clone());
         }
     }
 
     pub fn push_scope(&mut self) {
-        self.depth_info.push(HashSet::new());
-        self.closure_metas.push(Closure::new(0));
+        self.depth_info.push((HashSet::new(), HashSet::new()));
     }
 
-    pub fn pop_scope(&mut self) -> Option<Closure> {
-        self.depth_info.pop();
-        self.closure_metas.pop()
+    pub fn pop_scope(&mut self) -> HashSet<String> {
+        self.depth_info.pop().unwrap().1
     }
 }
 
@@ -473,7 +467,7 @@ fn emit_fn(
         ctx.borrow_mut().push_scope();
         let params_result = emit_expand(input, placehoders, ctx)?;
         let body_result = emit_node(input, body, ctx)?;
-        let mut closure_meta = ctx.borrow_mut().pop_scope().unwrap();
+        let captures = ctx.borrow_mut().pop_scope();
         let offset = (params_result.len() + body_result.len()) as i32;
 
         let mut result = vec![
@@ -487,7 +481,10 @@ fn emit_fn(
         result.extend(params_result);
         result.extend(body_result);
         result.push(Inst::RET);
-        closure_meta.ip = -(offset + 2);
+        let mut closure_meta = Closure::new(-(offset + 2));
+        captures.iter().for_each(|name| {
+            closure_meta.captures.insert(name.clone(), Value::Nil);
+        });
         result.push(Inst::PUSH_CLOSURE(closure_meta));
         result.push(Inst::COMMENT(format!(
             "fn at line {}, col {} end",

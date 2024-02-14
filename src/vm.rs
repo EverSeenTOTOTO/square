@@ -9,8 +9,9 @@ use crate::{
     vm_value::{CalcResult, Closure, Value},
 };
 
-type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 pub type ExecResult = Result<(), SquareError>;
+
+type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 
 impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
@@ -110,7 +111,7 @@ impl Inst {
                     ));
                 }
 
-                // operand top should be [closure, params]<-
+                // operand stack top should be [closure, params]<-
                 if let Value::Closure(ref closure) = &frame.stack[frame.sp - 2] {
                     let new_pc = closure.ip;
                     let params = frame.stack[frame.sp - 1].clone();

@@ -1,6 +1,6 @@
 # square
 
-A toy Lisp-like language written in Rust, aims to be both fun and expressive.
+A toy Lisp-like language written in Rust, support first-class function and continuation, aims to be both fun and expressive.
 
 ## Q & A
 
