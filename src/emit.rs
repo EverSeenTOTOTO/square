@@ -686,18 +686,18 @@ fn emit_fn(
         ctx.borrow_mut().push_scope();
         let params_result = emit_expand(input, placehoders, ctx)?;
         let body_result = emit_node(input, body, ctx)?;
-        let captures = ctx.borrow_mut().pop_scope();
+        let unresolved = ctx.borrow_mut().pop_scope();
         let offset = (params_result.len() + body_result.len()) as i32;
 
         let mut result = vec![Inst::JMP(offset + 1)];
         result.extend(params_result);
         result.extend(body_result);
         result.push(Inst::RET);
-        let mut closure_meta = Closure::new(-(offset + 2));
-        captures.iter().for_each(|name| {
-            closure_meta.captures.insert(name.clone(), Value::Nil);
-        });
-        result.push(Inst::PUSH_CLOSURE(closure_meta));
+
+        let mut meta = Closure::new(-(offset + 2));
+        meta.captures = unresolved;
+
+        result.push(Inst::PUSH_CLOSURE(meta));
 
         result.insert(
             0,
@@ -765,15 +765,10 @@ fn test_emit_fn_params() {
 fn test_emit_fn_capture() {
     let code = "/[] y";
     let ast = parse(code, &mut Position::default()).unwrap();
-    let ctx = RefCell::new(EmitContext::new());
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    ctx.borrow_mut().add_local("y".to_string());
-
-    let insts = emit(code, &ast, &ctx).unwrap();
-
-    let mut captures = HashMap::new();
-    // should capture y
-    captures.insert("y".to_string(), Value::Nil);
+    let mut captures = HashSet::new();
+    captures.insert("y".to_string());
 
     assert_eq!(
         insts,
@@ -783,7 +778,11 @@ fn test_emit_fn_capture() {
             Inst::POP,
             Inst::LOAD("y".to_string()),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure { ip: -4, captures }),
+            Inst::PUSH_CLOSURE(Closure {
+                ip: -4,
+                upvalues: HashMap::new(),
+                captures
+            }),
             Inst::COMMENT("fn at line 1, col 2 end".to_string())
         ]
     );
@@ -795,17 +794,13 @@ fn test_emit_fn_capture_nested() {
         [= x 1]
         /[] [+ x y]]";
     let ast = parse(code, &mut Position::default()).unwrap();
-    let ctx = RefCell::new(EmitContext::new());
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    ctx.borrow_mut().add_local("y".to_string());
-
-    let insts = emit(code, &ast, &ctx).unwrap();
-
-    let mut capture_y = HashMap::new();
-    capture_y.insert("y".to_string(), Value::Nil);
-    let mut capture_xy = HashMap::new();
-    capture_xy.insert("x".to_string(), Value::Nil);
-    capture_xy.insert("y".to_string(), Value::Nil);
+    let mut unresolved_y = HashSet::new();
+    unresolved_y.insert("y".to_string());
+    let mut unresolved_xy = HashSet::new();
+    unresolved_xy.insert("x".to_string());
+    unresolved_xy.insert("y".to_string());
 
     assert_eq!(
         insts,
@@ -826,7 +821,8 @@ fn test_emit_fn_capture_nested() {
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure {
                 ip: -6,
-                captures: capture_xy
+                upvalues: HashMap::new(),
+                captures: unresolved_xy
             }),
             Inst::COMMENT("fn at line 3, col 10 end".to_string()),
             Inst::RET,
@@ -837,7 +833,8 @@ fn test_emit_fn_capture_nested() {
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure {
                 ip: -21,
-                captures: capture_y
+                upvalues: HashMap::new(),
+                captures: unresolved_y
             }),
             Inst::COMMENT("fn at line 1, col 2 end".to_string())
         ]

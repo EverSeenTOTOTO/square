@@ -65,6 +65,7 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
 
     use code_frame::Position;
     use emit::EmitContext;
+    use vm_insts::Inst;
 
     let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
     let code = memory::read(source_addr as usize, source_length);
@@ -89,7 +90,12 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
         Ok(inst) => inst,
     };
 
-    insts.iter().for_each(|inst| println!("{}", inst));
+    for (index, inst) in insts.iter().enumerate() {
+        match inst {
+            Inst::COMMENT(_) => println!("{}", inst),
+            _ => println!("{}: {}", index, inst),
+        }
+    }
 
     println!();
     if let Err(e) = vm.run(&insts, &mut 0) {

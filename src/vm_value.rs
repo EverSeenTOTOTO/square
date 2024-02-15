@@ -5,22 +5,68 @@ use core::{
     fmt,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 use crate::errors::SquareError;
 
-// meta at compile time, instance at runtime
+// use at both runtime and compile time
+// at compile time, captures is empty, unresolved contains variable names
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
     pub ip: i32, // offset at compile time, function address at runtime
-    pub captures: HashMap<String, Value>, // (name: nil) at compile time, (name: upvalue) at runtime
+    pub upvalues: HashMap<String, Value>,
+    pub captures: HashSet<String>,
 }
 
 impl Closure {
     pub fn new(ip: i32) -> Self {
         Self {
             ip,
-            captures: HashMap::new(),
+            upvalues: HashMap::new(),
+            captures: HashSet::new(),
+        }
+    }
+
+    pub fn capture(&mut self, name: &String, upvalue: &Value) -> bool {
+        if self.captures.contains(name) {
+            self.upvalues.insert(name.clone(), upvalue.clone());
+            return true;
+        }
+        false
+    }
+
+    pub fn first_unresolved(&self) -> Option<String> {
+        for name in self.captures.iter() {
+            if !self.upvalues.contains_key(name) {
+                return Some(name.clone());
+            }
+        }
+        None
+    }
+}
+
+impl fmt::Display for Closure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.captures.is_empty() {
+            write!(f, "Closure({})", self.ip)
+        } else {
+            write!(
+                f,
+                "Closure({}, {})",
+                self.ip,
+                self.captures
+                    .iter()
+                    .map(|k| {
+                        // NOTE: do not print value, as it may contain circular
+                        if self.upvalues.contains_key(k) {
+                            format!("{}✓", k)
+                        } else {
+                            format!("{}?", k)
+                        }
+                    })
+                    .collect::<Vec<String>>()
+                    .join(",")
+            )
         }
     }
 }
@@ -32,7 +78,7 @@ pub enum Value {
     Num(f64),
     Str(String),
     UpValue(Rc<Value>),
-    Closure(Rc<Closure>),
+    Closure(Rc<RefCell<Closure>>),
     Vec(Rc<RefCell<Vec<Value>>>),
 }
 
@@ -51,19 +97,7 @@ impl fmt::Display for Value {
             Value::Vec(val) => {
                 write!(f, "Vec({:?})", val.borrow())
             }
-            Value::Closure(closure) => {
-                write!(
-                    f,
-                    "Closure({} {})",
-                    closure.ip,
-                    closure
-                        .captures
-                        .iter()
-                        .map(|(k, v)| format!("{}: {}", k, v))
-                        .collect::<Vec<String>>()
-                        .join(",")
-                )
-            }
+            Value::Closure(closure) => closure.borrow().fmt(f),
             Value::UpValue(val) => {
                 write!(f, "UpValue({})", val)
             }
@@ -76,15 +110,7 @@ impl fmt::Display for Value {
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        let lhs = match self {
-            Value::UpValue(value) => &**value,
-            _ => self,
-        };
-        let rhs = match other {
-            Value::UpValue(value) => &**value,
-            _ => other,
-        };
-        match (lhs, rhs) {
+        match (self.refer(), other.refer()) {
             (Value::Bool(lhs), Value::Bool(rhs)) => lhs.partial_cmp(rhs),
             (Value::Num(lhs), Value::Num(rhs)) => lhs.partial_cmp(rhs),
             (Value::Str(lhs), Value::Str(rhs)) => lhs.partial_cmp(rhs),
@@ -96,15 +122,7 @@ impl PartialOrd for Value {
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        let lhs = match self {
-            Value::UpValue(value) => &**value,
-            _ => self,
-        };
-        let rhs = match other {
-            Value::UpValue(value) => &**value,
-            _ => other,
-        };
-        match (lhs, rhs) {
+        match (self.refer(), other.refer()) {
             (Value::Bool(lhs), Value::Bool(rhs)) => lhs == rhs,
             (Value::Num(lhs), Value::Num(rhs)) => lhs == rhs,
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
@@ -123,15 +141,7 @@ macro_rules! impl_binop {
             type Output = CalcResult;
 
             fn $method(self, other: Self) -> Self::Output {
-                let lhs = match self {
-                    Value::UpValue(value) => &**value,
-                    _ => self,
-                };
-                let rhs = match other {
-                    Value::UpValue(value) => &**value,
-                    _ => other,
-                };
-                match (lhs, rhs) {
+                match (self.refer(), other.refer()) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(lhs $op rhs)),
                     _ => Err(SquareError::RuntimeError(format!("cannot perform operation on {} and {}", self, other)))
                 }
@@ -146,15 +156,7 @@ macro_rules! impl_bitop {
             type Output = CalcResult;
 
             fn $method(self, other: Self) -> Self::Output {
-                let lhs = match self {
-                    Value::UpValue(value) => &**value,
-                    _ => self,
-                };
-                let rhs = match other {
-                    Value::UpValue(value) => &**value,
-                    _ => other,
-                };
-                match (lhs, rhs) {
+                match (self.refer(), other.refer()) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(((*lhs as i64) $op (*rhs as i64)) as f64)),
                     _ => Err(SquareError::RuntimeError(format!("cannot perform operation on {} and {}", self, other)))
                 }
@@ -182,7 +184,7 @@ impl Not for &Value {
         match self {
             Value::Bool(val) => Ok(Value::Bool(!*val)),
             Value::Num(val) => Ok(Value::Num(!(*val as i64) as f64)),
-            Value::UpValue(val) => (&**val).not(),
+            Value::UpValue(val) => val.refer().not(),
             _ => Err(SquareError::RuntimeError(format!(
                 "cannot perform operation on {}",
                 self
@@ -197,15 +199,30 @@ impl Value {
             Value::Bool(val) => *val,
             Value::Num(val) => *val != 0.0,
             Value::Str(val) => !val.is_empty(),
-            Value::UpValue(val) => (&**val).to_bool(),
+            Value::UpValue(val) => val.refer().to_bool(),
             _ => true,
+        }
+    }
+
+    pub fn refer(&self) -> &Value {
+        match self {
+            Value::UpValue(val) => &**val,
+            _ => self,
         }
     }
 
     pub fn upgrade(&self) -> Value {
         match self {
-            Value::UpValue(val) => (&**val).upgrade(),
+            Value::UpValue(_) => self.clone(), // Rc::clone
             _ => Value::UpValue(Rc::new(self.clone())),
+        }
+    }
+
+    pub fn scope_lift(&self, name: &String, upvalue: &Value) -> bool {
+        match self {
+            Value::Closure(c) => c.borrow_mut().capture(name, upvalue),
+            Value::UpValue(val) => val.refer().scope_lift(name, upvalue),
+            _ => false,
         }
     }
 }

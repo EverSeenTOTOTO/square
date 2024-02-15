@@ -75,14 +75,8 @@ impl fmt::Display for Inst {
             Inst::PUSH_CLOSURE(closure) => write!(
                 // closure meta
                 f,
-                "MAKE_CLOSURE {} {}",
-                closure.ip,
-                closure
-                    .captures
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<String>>()
-                    .join(",")
+                "PUSH_CLOSURE {}",
+                closure,
             ),
             Inst::PACK(len) => write!(f, "PACK {}", len),
             Inst::PEEK(offset, index) => write!(f, "PEEK {} {}", offset, index),
