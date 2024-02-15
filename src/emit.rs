@@ -16,23 +16,23 @@ pub type EmitResult = Result<Vec<Inst>, SquareError>;
 
 #[derive(Debug)]
 pub struct EmitContext {
-    depth_info: Vec<(HashSet<String>, HashSet<String>)>, // (locals, captures)
+    scopes: Vec<(HashSet<String>, HashSet<String>)>, // (locals, captures)
 }
 
 impl EmitContext {
     pub fn new() -> Self {
         return Self {
-            depth_info: vec![(HashSet::new(), HashSet::new())],
+            scopes: vec![(HashSet::new(), HashSet::new())],
         };
     }
 
     pub fn add_local(&mut self, name: String) {
-        self.depth_info.last_mut().unwrap().0.insert(name);
+        self.scopes.last_mut().unwrap().0.insert(name);
     }
 
     pub fn mark_if_capture(&mut self, name: &String) {
         // once a value is captured, it will be captured in all upper scopes until where it is defined
-        for (locals, ref mut captures) in self.depth_info.iter_mut().rev() {
+        for (locals, ref mut captures) in self.scopes.iter_mut().rev() {
             if !locals.contains(name) {
                 captures.insert(name.clone());
             } else {
@@ -42,11 +42,11 @@ impl EmitContext {
     }
 
     pub fn push_scope(&mut self) {
-        self.depth_info.push((HashSet::new(), HashSet::new()));
+        self.scopes.push((HashSet::new(), HashSet::new()));
     }
 
     pub fn pop_scope(&mut self) -> HashSet<String> {
-        self.depth_info.pop().unwrap().1
+        self.scopes.pop().unwrap().1
     }
 }
 
@@ -125,20 +125,23 @@ fn test_emit_token_id() {
 
 fn emit_assign(
     input: &str,
+    eq: &Token,
     target: &Box<Node>,
     _properties: &Vec<Box<Node>>,
     expression: &Box<Node>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
     let mut insts = emit_node(input, expression, ctx)?;
+    let is_define = eq.source() == "let";
 
     match target.as_ref() {
         Node::Token(id) => {
             if let Token::Id(_, source) = id {
-                // remember scope depth info
-                ctx.borrow_mut().add_local(source.clone());
+                if is_define {
+                    ctx.borrow_mut().add_local(source.clone());
+                }
 
-                insts.push(Inst::STORE(source.clone()));
+                insts.push(Inst::STORE(if is_define { 0 } else { -1 }, source.clone()));
             } else {
                 return Err(SquareError::SyntaxError(
                     input.to_string(),
@@ -152,7 +155,7 @@ fn emit_assign(
             }
         }
         Node::Expand(.., placehoders) => {
-            insts.extend(emit_expand(input, placehoders, ctx)?);
+            insts.extend(emit_expand(input, is_define, placehoders, ctx)?);
         }
         _ => unreachable!(),
     }
@@ -161,14 +164,32 @@ fn emit_assign(
 }
 
 #[test]
-fn test_emit_assign_id() {
+fn test_emit_assign() {
     let code = "[= a 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
-        vec![Inst::PUSH(Value::Num(42.0)), Inst::STORE("a".to_string())]
+        vec![
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::STORE(-1, "a".to_string())
+        ]
+    );
+}
+
+#[test]
+fn test_emit_define() {
+    let code = "[let a 42]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::STORE(0, "a".to_string())
+        ]
     );
 }
 
@@ -210,23 +231,15 @@ fn emit_op(
                 if let Token::Id(_, source) = token {
                     result.extend(emit(input, expressions, ctx)?);
                     result.push(action);
-                    result.push(Inst::STORE(source.clone()));
+                    result.push(Inst::STORE(-1, source.clone()));
                     // always push latest value to operand stack
                     result.push(Inst::LOAD(source.clone()));
                     return Ok(result);
                 } else {
-                    return Err(SquareError::SyntaxError(
-                        input.to_string(),
-                        format!(
-                            "failed to emit_assign_op, expect identifier, got {}",
-                            token.to_string()
-                        ),
-                        token.pos().clone(),
-                        None,
-                    ));
+                    unreachable!()
                 }
             }
-            _ => todo!(),
+            _ => unreachable!(),
         }
     };
 
@@ -299,7 +312,7 @@ fn test_emit_op_assign() {
             Inst::LOAD("a".to_string()),
             Inst::LOAD("b".to_string()),
             Inst::ADD,
-            Inst::STORE("a".to_string()),
+            Inst::STORE(-1, "a".to_string()),
             Inst::LOAD("a".to_string()),
         ]
     );
@@ -622,8 +635,8 @@ fn emit_call(
             result.push(Inst::CALL);
         }
         Node::Op(op, body) => result.extend(emit_op(input, op, body, ctx)?),
-        Node::Assign(_, expansion, dot, body) => {
-            result.extend(emit_assign(input, expansion, dot, body, ctx)?)
+        Node::Assign(eq, expansion, dot, body) => {
+            result.extend(emit_assign(input, eq, expansion, dot, body, ctx)?)
         }
         Node::Call(left_bracket, _, exprs) => {
             result.extend(emit_call(input, left_bracket, exprs, ctx)?);
@@ -684,7 +697,7 @@ fn emit_fn(
 ) -> EmitResult {
     if let Node::Expand(left_bracket, _, placehoders) = params.as_ref() {
         ctx.borrow_mut().push_scope();
-        let params_result = emit_expand(input, placehoders, ctx)?;
+        let params_result = emit_expand(input, true, placehoders, ctx)?;
         let body_result = emit_node(input, body, ctx)?;
         let unresolved = ctx.borrow_mut().pop_scope();
         let offset = (params_result.len() + body_result.len()) as i32;
@@ -751,7 +764,7 @@ fn test_emit_fn_params() {
             Inst::COMMENT("fn at line 1, col 2 start".to_string()),
             Inst::JMP(5),
             Inst::PEEK(0, 0), // peek param
-            Inst::STORE("x".to_string()),
+            Inst::STORE(0, "x".to_string()),
             Inst::POP, // pop param pack
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
@@ -791,7 +804,7 @@ fn test_emit_fn_capture() {
 #[test]
 fn test_emit_fn_capture_nested() {
     let code = "/[] [begin 
-        [= x 1]
+        [let x 1]
         /[] [+ x y]]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
@@ -811,7 +824,7 @@ fn test_emit_fn_capture_nested() {
             Inst::COMMENT("begin at line 1, col 6 start".to_string()),
             Inst::JMP(12),
             Inst::PUSH(Value::Num(1.0)),
-            Inst::STORE("x".to_string()),
+            Inst::STORE(0, "x".to_string()),
             Inst::COMMENT("fn at line 3, col 10 start".to_string()),
             Inst::JMP(5),
             Inst::POP,
@@ -843,6 +856,7 @@ fn test_emit_fn_capture_nested() {
 
 fn emit_expand(
     input: &str,
+    is_define: bool,
     placeholders: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
@@ -859,15 +873,16 @@ fn emit_expand(
         match placeholder.as_ref() {
             Node::Expand(.., nested) => {
                 result.push(Inst::PEEK(offset, index));
-                result.extend(emit_expand(input, nested, ctx)?);
+                result.extend(emit_expand(input, is_define, nested, ctx)?);
             }
             Node::Token(token) => match token {
                 Token::Id(_, source) => {
-                    // scope depth
-                    ctx.borrow_mut().add_local(source.clone());
+                    if is_define {
+                        ctx.borrow_mut().add_local(source.clone());
+                    }
 
                     result.push(Inst::PEEK(offset, index));
-                    result.push(Inst::STORE(source.clone()));
+                    result.push(Inst::STORE(if is_define { 0 } else { -1 }, source.clone()));
                 }
                 Token::Op(pos, op) => {
                     if op == "." {
@@ -908,7 +923,7 @@ fn emit_expand(
 }
 
 #[test]
-fn test_emit_expand_base() {
+fn test_emit_expand() {
     let code = "[= [a b] c]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
@@ -918,9 +933,9 @@ fn test_emit_expand_base() {
         vec![
             Inst::LOAD("c".to_string()),
             Inst::PEEK(0, 0),
-            Inst::STORE("a".to_string()),
+            Inst::STORE(-1, "a".to_string()),
             Inst::PEEK(0, 1),
-            Inst::STORE("b".to_string()),
+            Inst::STORE(-1, "b".to_string()),
             Inst::POP
         ]
     );
@@ -939,7 +954,7 @@ fn test_emit_expand_dot() {
             Inst::PEEK(0, 0),
             Inst::POP,
             Inst::PEEK(0, 1),
-            Inst::STORE("b".to_string()),
+            Inst::STORE(-1, "b".to_string()),
             Inst::POP
         ]
     );
@@ -956,7 +971,7 @@ fn test_emit_expand_greed() {
         vec![
             Inst::LOAD("c".to_string()),
             Inst::PEEK(0, -1),
-            Inst::STORE("b".to_string()),
+            Inst::STORE(-1, "b".to_string()),
             Inst::POP
         ]
     );
@@ -977,7 +992,7 @@ fn test_emit_expand_greed_offset() {
             Inst::PEEK(1, -2),
             Inst::POP,
             Inst::PEEK(2, -1),
-            Inst::STORE("b".to_string()),
+            Inst::STORE(-1, "b".to_string()),
             Inst::POP
         ]
     );
@@ -996,7 +1011,7 @@ fn test_emit_expand_nested() {
             Inst::PEEK(0, 0),
             Inst::PEEK(0, 0),
             Inst::PEEK(0, 0),
-            Inst::STORE("b".to_string()),
+            Inst::STORE(-1, "b".to_string()),
             Inst::POP,
             Inst::POP,
             Inst::POP,
@@ -1007,9 +1022,8 @@ fn test_emit_expand_nested() {
 fn emit_node(input: &str, node: &Box<Node>, ctx: &RefCell<EmitContext>) -> EmitResult {
     match node.as_ref() {
         Node::Token(token) => emit_token(input, token, ctx),
-        Node::Expand(.., placehoders) => emit_expand(input, placehoders, ctx),
-        Node::Assign(_, target, properties, expression) => {
-            emit_assign(input, target, properties, expression, ctx)
+        Node::Assign(eq, target, properties, expression) => {
+            emit_assign(input, eq, target, properties, expression, ctx)
         }
         Node::Fn(_, params, body) => emit_fn(input, params, body, ctx),
         Node::Op(op, expressions) => emit_op(input, op, expressions, ctx),

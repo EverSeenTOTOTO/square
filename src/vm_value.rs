@@ -1,4 +1,10 @@
-use alloc::{format, rc::Rc, string::String, vec::Vec};
+use alloc::{
+    format,
+    rc::Rc,
+    string::{String, ToString},
+    vec::Vec,
+};
+
 use core::{
     cell::RefCell,
     cmp::PartialEq,
@@ -27,9 +33,9 @@ impl Closure {
         }
     }
 
-    pub fn capture(&mut self, name: &String, upvalue: &Value) -> bool {
+    pub fn capture(&mut self, name: &str, upvalue: &Value) -> bool {
         if self.captures.contains(name) {
-            self.upvalues.insert(name.clone(), upvalue.clone());
+            self.upvalues.insert(name.to_string(), upvalue.clone());
             return true;
         }
         false
@@ -73,13 +79,13 @@ impl fmt::Display for Closure {
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    Nil,
     Bool(bool),
     Num(f64),
     Str(String),
-    UpValue(Rc<Value>),
-    Closure(Rc<RefCell<Closure>>),
     Vec(Rc<RefCell<Vec<Value>>>),
+    Closure(Rc<RefCell<Closure>>),
+    UpValue(Rc<RefCell<Value>>),
+    Nil,
 }
 
 impl fmt::Display for Value {
@@ -99,7 +105,7 @@ impl fmt::Display for Value {
             }
             Value::Closure(closure) => closure.borrow().fmt(f),
             Value::UpValue(val) => {
-                write!(f, "UpValue({})", val)
+                write!(f, "UpValue({})", val.borrow())
             }
             Value::Nil => {
                 write!(f, "Nil")
@@ -110,27 +116,60 @@ impl fmt::Display for Value {
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        match (self.refer(), other.refer()) {
+        match (self, other) {
             (Value::Bool(lhs), Value::Bool(rhs)) => lhs.partial_cmp(rhs),
             (Value::Num(lhs), Value::Num(rhs)) => lhs.partial_cmp(rhs),
             (Value::Str(lhs), Value::Str(rhs)) => lhs.partial_cmp(rhs),
             (Value::Nil, Value::Nil) => Some(core::cmp::Ordering::Equal),
+
+            (Value::UpValue(lhs), Value::UpValue(rhs)) => lhs.borrow().partial_cmp(&rhs.borrow()),
+            (Value::UpValue(lhs), rhs) => lhs.borrow().partial_cmp(rhs),
+            (lhs, Value::UpValue(rhs)) => lhs.partial_cmp(&rhs.borrow()),
             _ => None,
         }
     }
 }
 
+#[test]
+fn test_partial_cmp() {
+    assert_eq!(
+        Value::Num(core::f64::INFINITY) > Value::Num(core::i64::MAX as f64),
+        true
+    );
+    assert_eq!(Value::Num(0.0) == Value::Num(0 as f64), true);
+    assert_eq!(Value::Nil == Value::Bool(false), false);
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
-        match (self.refer(), other.refer()) {
+        match (self, other) {
+            (Value::Nil, Value::Nil) => true,
             (Value::Bool(lhs), Value::Bool(rhs)) => lhs == rhs,
             (Value::Num(lhs), Value::Num(rhs)) => lhs == rhs,
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
-            (Value::Closure(lhs), Value::Closure(rhs)) => lhs == rhs,
-            (Value::Nil, Value::Nil) => true,
+            (Value::Vec(lhs), Value::Vec(rhs)) => Rc::ptr_eq(lhs, rhs),
+            (Value::Closure(lhs), Value::Closure(rhs)) => Rc::ptr_eq(lhs, rhs),
+            (Value::UpValue(lhs), Value::UpValue(rhs)) => Rc::ptr_eq(lhs, rhs),
+            (Value::UpValue(lhs), rhs) => lhs.borrow().eq(rhs),
+            (lhs, Value::UpValue(rhs)) => lhs.eq(&rhs.borrow()),
+
             _ => false,
         }
     }
+}
+
+#[test]
+fn test_partial_eq() {
+    let closure = Rc::new(RefCell::new(Closure::new(0)));
+    let lhs = Value::Closure(closure.clone());
+    let rhs = Value::Closure(closure.clone());
+
+    assert_eq!(lhs, rhs);
+
+    closure.borrow_mut().captures.insert("lhs".to_string());
+    closure.borrow_mut().capture("lhs", &lhs);
+
+    assert_eq!(lhs, rhs);
 }
 
 pub type CalcResult = Result<Value, SquareError>;
@@ -141,8 +180,13 @@ macro_rules! impl_binop {
             type Output = CalcResult;
 
             fn $method(self, other: Self) -> Self::Output {
-                match (self.refer(), other.refer()) {
+                match (self, other) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(lhs $op rhs)),
+
+                    (Value::UpValue(lhs), Value::UpValue(rhs)) => &*lhs.borrow() $op &*rhs.borrow(),
+                    (Value::UpValue(lhs), rhs) => &*lhs.borrow() $op rhs,
+                    (lhs, Value::UpValue(rhs)) => lhs $op &*rhs.borrow(),
+
                     _ => Err(SquareError::RuntimeError(format!("cannot perform operation on {} and {}", self, other)))
                 }
             }
@@ -156,8 +200,13 @@ macro_rules! impl_bitop {
             type Output = CalcResult;
 
             fn $method(self, other: Self) -> Self::Output {
-                match (self.refer(), other.refer()) {
+                match (self, other) {
                     (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(((*lhs as i64) $op (*rhs as i64)) as f64)),
+
+                    (Value::UpValue(lhs), Value::UpValue(rhs)) => &*lhs.borrow() $op &*rhs.borrow(),
+                    (Value::UpValue(lhs), rhs) => &*lhs.borrow() $op rhs,
+                    (lhs, Value::UpValue(rhs)) => lhs $op &*rhs.borrow(),
+
                     _ => Err(SquareError::RuntimeError(format!("cannot perform operation on {} and {}", self, other)))
                 }
             }
@@ -184,57 +233,13 @@ impl Not for &Value {
         match self {
             Value::Bool(val) => Ok(Value::Bool(!*val)),
             Value::Num(val) => Ok(Value::Num(!(*val as i64) as f64)),
-            Value::UpValue(val) => val.refer().not(),
+            Value::UpValue(val) => val.borrow().not(),
             _ => Err(SquareError::RuntimeError(format!(
                 "cannot perform operation on {}",
                 self
             ))),
         }
     }
-}
-
-impl Value {
-    pub fn to_bool(&self) -> bool {
-        match self {
-            Value::Bool(val) => *val,
-            Value::Num(val) => *val != 0.0,
-            Value::Str(val) => !val.is_empty(),
-            Value::UpValue(val) => val.refer().to_bool(),
-            _ => true,
-        }
-    }
-
-    pub fn refer(&self) -> &Value {
-        match self {
-            Value::UpValue(val) => &**val,
-            _ => self,
-        }
-    }
-
-    pub fn upgrade(&self) -> Value {
-        match self {
-            Value::UpValue(_) => self.clone(), // Rc::clone
-            _ => Value::UpValue(Rc::new(self.clone())),
-        }
-    }
-
-    pub fn scope_lift(&self, name: &String, upvalue: &Value) -> bool {
-        match self {
-            Value::Closure(c) => c.borrow_mut().capture(name, upvalue),
-            Value::UpValue(val) => val.refer().scope_lift(name, upvalue),
-            _ => false,
-        }
-    }
-}
-
-#[test]
-fn test_partial_cmp() {
-    assert_eq!(
-        Value::Num(core::f64::INFINITY) > Value::Num(core::i64::MAX as f64),
-        true
-    );
-    assert_eq!(Value::Num(0.0) == Value::Num(0 as f64), true);
-    assert_eq!(Value::Nil == Value::Bool(false), false);
 }
 
 #[test]
@@ -281,10 +286,62 @@ fn test_bitop_not() {
     assert_eq!(!&Value::Bool(false), Ok(Value::Bool(true)));
 }
 
+impl Value {
+    pub fn to_bool(&self) -> bool {
+        match self {
+            Value::Bool(val) => *val,
+            Value::Num(val) => *val != 0.0,
+            Value::Str(val) => !val.is_empty(),
+            Value::UpValue(val) => val.borrow().to_bool(),
+            _ => true,
+        }
+    }
+
+    pub fn upgrade(&self) -> Value {
+        match self {
+            Value::UpValue(_) => self.clone(), // Rc::clone
+            _ => Value::UpValue(Rc::new(RefCell::new(self.clone()))),
+        }
+    }
+
+    pub fn capture(&self, name: &str, upvalue: &Value) -> bool {
+        match self {
+            Value::Closure(c) => c.borrow_mut().capture(name, upvalue),
+            Value::UpValue(val) => val.borrow().capture(name, upvalue),
+            _ => false,
+        }
+    }
+}
+
 #[test]
-fn test_up_value() {
-    let val = Rc::new(Value::Num(1.0));
+fn test_upvalue() {
+    let val = Rc::new(RefCell::new(Value::Num(1.0)));
     let upval = Value::UpValue(val.clone());
-    assert_eq!(upval == Value::UpValue(val), true);
+    assert_eq!(upval == Value::Num(1.0), true);
+    assert_eq!(&Value::Num(1.0) + &upval, Ok(Value::Num(2.0)));
     assert_eq!(&upval + &upval, Ok(Value::Num(2.0)));
+}
+
+#[test]
+fn test_upgrade() {
+    let num = Value::Num(1.0);
+    let upgraded = Value::UpValue(Rc::new(RefCell::new(num.clone())));
+    assert_eq!(upgraded, upgraded.upgrade(),)
+}
+
+#[test]
+fn test_scope_lift() {
+    let closure = Rc::new(RefCell::new(Closure::new(0)));
+    let value = Value::Closure(closure.clone());
+
+    closure.borrow_mut().captures.insert("self".to_string());
+    closure.borrow_mut().captures.insert("a".to_string());
+    value.capture("self", &value);
+    value.capture("a", &Value::Num(42.0));
+
+    assert_eq!(closure.borrow().upvalues.get("self").unwrap(), &value);
+    assert_eq!(
+        closure.borrow().upvalues.get("a").unwrap(),
+        &Value::Num(42.0)
+    );
 }

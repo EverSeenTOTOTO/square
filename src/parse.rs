@@ -20,7 +20,7 @@ pub enum Node {
     Expand(Token, Token, Vec<Box<Node>>),                // '[', ']', placeholders*
     Fn(Token, Box<Node>, Box<Node>),                     // '/', params, body
     Prop(Token, Token),                                  // '.', prop
-    Assign(Token, Box<Node>, Vec<Box<Node>>, Box<Node>), // '=', expansion | id, (dot property)*, expression
+    Assign(Token, Box<Node>, Vec<Box<Node>>, Box<Node>), // '=' | 'let', expansion | id, (dot property)*, expression
     Op(Token, Vec<Box<Node>>),                           // operator, expressions+
     Call(Token, Token, Vec<Box<Node>>),                  // '[', ']', expressions+
     Dot(Box<Node>, Vec<Box<Node>>),                      // id | call, (dot property)*
@@ -174,7 +174,7 @@ fn test_parse_expand_empty() {
 }
 
 #[test]
-fn test_parse_expand_base() {
+fn test_parse_expand() {
     let input = "[ x ;comment; y z   \t ]";
     let mut pos = Position::new();
     let node = parse_expand(input, &mut pos).unwrap();
@@ -292,7 +292,7 @@ fn parse_fn(input: &str, pos: &mut Position) -> ParseResult {
 }
 
 #[test]
-fn test_parse_fn_base() {
+fn test_parse_fn() {
     let input = "/[] 42";
     let mut pos = Position::new();
     let node = parse_fn(input, &mut pos).unwrap();
@@ -436,7 +436,8 @@ fn parse_prop_chain(input: &str, pos: &mut Position) -> Result<Vec<Box<Node>>, S
 
 #[test]
 fn test_parse_prop_chain() {
-    let input = r#".foo
+    let input = r#"
+.foo
 .bar 
 .baz"#;
     let mut pos = Position::new();
@@ -454,10 +455,16 @@ fn test_parse_prop_chain() {
 fn parse_assign(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_assign");
     let eq = wrap(expect(
-        &|token| (token.source() == "=", "expect =".to_string()),
+        &|token| {
+            (
+                token.source() == "=" || token.source() == "let",
+                "expect = or let".to_string(),
+            )
+        },
         input,
         pos,
     ))?;
+    let is_define = eq.source() == "let";
 
     wrap(expect_whitespace(input, pos))?;
     wrap(skip_whitespace(input, pos))?;
@@ -481,7 +488,11 @@ fn parse_assign(input: &str, pos: &mut Position) -> ParseResult {
         ));
     };
 
-    let props = parse_prop_chain(input, pos)?;
+    let props = if is_define {
+        vec![]
+    } else {
+        parse_prop_chain(input, pos)?
+    };
 
     wrap(expect_whitespace(input, pos))?;
     wrap(skip_whitespace(input, pos))?;
@@ -492,7 +503,28 @@ fn parse_assign(input: &str, pos: &mut Position) -> ParseResult {
 }
 
 #[test]
-fn test_parse_assign_base() {
+fn test_parse_define() {
+    let input = "let a b";
+    let mut pos = Position::new();
+    let node = parse_assign(input, &mut pos).unwrap();
+
+    if let Node::Assign(_, lhs, _, rhs) = node.as_ref() {
+        if let Node::Token(a) = lhs.as_ref() {
+            assert_eq!(a.source(), "a");
+
+            if let Node::Token(b) = rhs.as_ref() {
+                assert_eq!(b.source(), "b");
+
+                return;
+            }
+        }
+    }
+
+    panic!();
+}
+
+#[test]
+fn test_parse_assign() {
     let input = "= a b";
     let mut pos = Position::new();
     let node = parse_assign(input, &mut pos).unwrap();
@@ -533,6 +565,41 @@ fn test_parse_assign_expand() {
     panic!();
 }
 
+#[test]
+fn test_parse_assign_prop() {
+    let input = "= x.y z";
+    let mut pos = Position::new();
+    let node = parse_assign(input, &mut pos).unwrap();
+
+    if let Node::Assign(_, lhs, _, rhs) = node.as_ref() {
+        if let Node::Token(x) = lhs.as_ref() {
+            assert_eq!(x.source(), "x");
+
+            if let Node::Token(z) = rhs.as_ref() {
+                assert_eq!(z.source(), "z");
+
+                return;
+            }
+        }
+    }
+    panic!();
+}
+
+#[test]
+fn test_parse_define_prop() {
+    let input = "let x.y z";
+    let mut pos = Position::new();
+    assert_eq!(
+        parse_assign(input, &mut pos),
+        Err(SquareError::SyntaxError(
+            input.to_string(),
+            "failed to parse_assign, expect WHITESPACE, got Op(.)".to_string(),
+            pos,
+            None
+        ))
+    );
+}
+
 fn is_binary_op(op: &str) -> bool {
     match op {
         "+" | "-" | "*" | "/" | "^" | "%" | "&" | "|" | "==" | "!=" | ">" | "<" | ">=" | "<="
@@ -571,7 +638,20 @@ fn parse_op(input: &str, pos: &mut Position) -> ParseResult {
             nodes.push(parse_expr(input, pos)?);
         }
         op if is_binary_assign_op(op) => {
-            nodes.push(parse_dot(input, pos)?);
+            let id = wrap(raise_token(input, pos))?;
+
+            if let Token::Id(..) = id {
+                nodes.push(Box::new(Node::Token(id)));
+            } else {
+                return Err(SquareError::SyntaxError(
+                    input.to_string(),
+                    format!("faield to parse_op, expect identifier, got {}", id),
+                    id.pos().clone(),
+                    None,
+                ));
+            }
+
+            nodes.extend(parse_prop_chain(input, pos)?);
 
             wrap(expect_whitespace(input, pos))?;
             wrap(skip_whitespace(input, pos))?;
@@ -619,7 +699,7 @@ fn test_parse_op_binary_assign() {
         parse_op(input, &mut pos),
         Err(SquareError::SyntaxError(
             input.to_string(),
-            "faield to parse_dot, expect identifier or call expression, got Num(42)".to_string(),
+            "faield to parse_op, expect identifier, got Num(42)".to_string(),
             Position {
                 line: 1,
                 column: 4,
@@ -643,7 +723,7 @@ fn parse_call(input: &str, pos: &mut Position) -> ParseResult {
     let mut leading = wrap(lookahead(input, pos))?;
     let mut nodes = vec![];
 
-    if leading.source() == "=" {
+    if leading.source() == "=" || leading.source() == "let" {
         nodes.push(parse_assign(input, pos)?);
     } else if is_op(leading.source()) {
         nodes.push(parse_op(input, pos)?);

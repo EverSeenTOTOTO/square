@@ -29,6 +29,7 @@ syn match squareComment /;.*$/ contains=@Spell
 syn region schemeForm matchgroup=schemeParentheses start="\[" end="\]" contains=ALL
 syn cluster schemeSyntaxCluster contains=schemeFunction,schemeKeyword,schemeSyntax
 
+syn keyword squareSyntax let
 syn keyword squareSyntax and
 syn keyword squareSyntax or
 syn keyword squareSyntax begin

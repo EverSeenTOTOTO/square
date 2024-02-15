@@ -68,7 +68,7 @@ type WasmExports = {
     const vmAddr = square.init_vm();
 
     const code = `
-[= fib /[n] [begin
+[let fib /[n] [begin
   [if [<= n 0] 
       0
       [if [== n 1]
