@@ -412,6 +412,10 @@ impl CallFrame {
         }
     }
 
+    pub fn resolve_local(&self, name: &str) -> Option<&Value> {
+        self.locals.get(name)
+    }
+
     pub fn define_local(&mut self, name: &str, value: Value) {
         self.locals.insert(name.to_string(), value);
     }
@@ -426,7 +430,7 @@ impl CallFrame {
 }
 
 #[test]
-fn test_resolve_local() {
+fn test_resolve() {
     let mut top = CallFrame::new();
 
     top.locals.insert("a".to_string(), Value::Num(42.0));
@@ -455,6 +459,22 @@ fn test_define_local() {
     assert_eq!(frame.resolve("a"), Some(&Value::Num(42.0)));
     assert_eq!(frame.resolve("b"), Some(&Value::Num(24.0)));
     assert_eq!(frame.resolve("c"), None);
+}
+
+#[test]
+fn test_define() {
+    let mut top = CallFrame::new();
+
+    top.define_local("a", Value::Num(42.0));
+
+    let mut frame = CallFrame::new();
+
+    frame.prev = Some(Box::new(top));
+    frame.define("a", &Value::Num(24.0));
+    frame.define_local("b", Value::Num(24.0));
+
+    assert_eq!(frame.resolve("a"), Some(&Value::Num(24.0)));
+    assert_eq!(frame.resolve("b"), Some(&Value::Num(24.0)));
 }
 
 pub struct VM {
@@ -519,7 +539,7 @@ fn test_grow_operand_stack() {
 #[test]
 fn test_exec_token() {
     let code = "42";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -533,7 +553,7 @@ fn test_exec_token() {
 #[test]
 fn test_exec_load() {
     let code = "x";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -548,7 +568,7 @@ fn test_exec_load() {
 #[test]
 fn test_exec_load_undefined() {
     let code = "x";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -565,7 +585,7 @@ fn test_exec_load_undefined() {
 #[test]
 fn test_exec_assign() {
     let code = "[= x 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -578,7 +598,7 @@ fn test_exec_assign() {
 #[test]
 fn test_exec_assign_expand() {
     let code = "[= [x] [vec 42]]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -591,7 +611,7 @@ fn test_exec_assign_expand() {
 #[test]
 fn test_exec_assign_expand_dot() {
     let code = "[= [. x] [vec 1 42 3]]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -604,7 +624,7 @@ fn test_exec_assign_expand_dot() {
 #[test]
 fn test_exec_assign_expand_dot_error() {
     let code = "[= [. x] [vec 42]]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -621,7 +641,7 @@ fn test_exec_assign_expand_dot_error() {
 #[test]
 fn test_exec_assign_expand_greed() {
     let code = "[= [... x] [vec 1 2 42]]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -634,7 +654,7 @@ fn test_exec_assign_expand_greed() {
 #[test]
 fn test_exec_assign_expand_greed_error() {
     let code = "[= [... x] [vec]]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -651,7 +671,7 @@ fn test_exec_assign_expand_greed_error() {
 #[test]
 fn test_exec_assign_expand_nested() {
     let code = "[= [. [x]] [vec 1 [vec 42] 3]]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -664,7 +684,7 @@ fn test_exec_assign_expand_nested() {
 #[test]
 fn test_exec_op() {
     let code = "[- 1 2]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -677,7 +697,7 @@ fn test_exec_op() {
 #[test]
 fn test_exec_op_assign() {
     let code = "[+= x 2]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -692,7 +712,7 @@ fn test_exec_op_assign() {
 #[test]
 fn test_exec_begin() {
     let code = "[begin 1 2 3]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -707,7 +727,7 @@ fn test_exec_scope() {
     let code = "
         [= x 1]
         [= y [begin [= x 2] x]]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -721,7 +741,7 @@ fn test_exec_scope() {
 #[test]
 fn test_exec_if_true() {
     let code = "[if true 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -734,7 +754,7 @@ fn test_exec_if_true() {
 #[test]
 fn test_exec_if_true_nil() {
     let code = "[if false 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -747,7 +767,7 @@ fn test_exec_if_true_nil() {
 #[test]
 fn test_exec_if_true_false() {
     let code = "[if false 42 24]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -760,14 +780,14 @@ fn test_exec_if_true_false() {
 // #[test]
 // fn test_exec_while() {
 //     let code = "[while [< x 4] [begin [+= x 1]]]";
-//     let ast = parse(code, &mut Position::default()).unwrap();
+//     let ast = parse(code, &mut Position::new()).unwrap();
 //     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 //     let mut vm = VM::new();
-// 
+//
 //     vm.current_frame().define_local("x", Value::Num(0.0));
 //     insts.iter().for_each(|inst| println!("{}", inst));
 //     vm.run(&insts, &mut 0).unwrap();
-// 
+//
 //     let callframe = vm.current_frame();
 //     assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(4.0))
 // }
@@ -775,7 +795,7 @@ fn test_exec_if_true_false() {
 #[test]
 fn test_exec_fn_def() {
     let code = "/[] 42";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -791,7 +811,7 @@ fn test_exec_fn_def() {
 #[test]
 fn test_exec_fn_def_capture() {
     let code = "/[] x";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -825,7 +845,7 @@ fn test_exec_fn_capture_lit() {
     [= g [fn]]
     [f]
     [g]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -847,7 +867,7 @@ fn test_exec_fn_capture_nested() {
                        /[] [+ x y]]]]
 [[[foo]]]
 ";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -861,7 +881,7 @@ fn test_exec_fn_capture_nested() {
 #[test]
 fn test_exec_fn_call() {
     let code = "[/[] 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -874,7 +894,7 @@ fn test_exec_fn_call() {
 #[test]
 fn test_exec_fn_call_with_params() {
     let code = "[/[x] x 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -888,10 +908,10 @@ fn test_exec_fn_call_with_params() {
 fn test_exec_fn_call_mixed() {
     let code = "[= fn /[x] [begin
         [= y 1]
-        [+ x y]]]
-        [fn 1]
-        [fn 1]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+        /[] [+ x y]]] ; should capture x and y
+        [[fn 1]]
+        [[fn 1]]";
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -909,7 +929,7 @@ fn test_exec_fn_scope_lift() {
 [= x 42]
 [fn]
 ";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -927,7 +947,7 @@ fn test_exec_fn_scope_lift_error() {
     [= x 42]
     [fn]]]
 ";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
@@ -947,7 +967,7 @@ fn test_exec_fn_recursive() {
 [= foo /[x] [if [> x 0] 42 [foo 1]]]
 [foo 0]
 ";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 

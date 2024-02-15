@@ -71,7 +71,7 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
     let code = memory::read(source_addr as usize, source_length);
 
     println!();
-    let ast = match parse::parse(code, &mut Position::default()) {
+    let ast = match parse::parse(code, &mut Position::new()) {
         Err(e) => {
             println!("{}", e);
             return;

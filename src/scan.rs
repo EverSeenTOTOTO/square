@@ -192,7 +192,7 @@ fn raise_string(input: &str, pos: &mut Position) -> RaiseResult {
 #[test]
 fn test_raise_string() {
     let input = "'hello'";
-    let token = raise_string(input, &mut Position::default()).unwrap();
+    let token = raise_string(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "'hello'");
 }
@@ -200,7 +200,7 @@ fn test_raise_string() {
 #[test]
 fn test_raise_string_escaped() {
     let input = "'he\\'llo'";
-    let token = raise_string(input, &mut Position::default()).unwrap();
+    let token = raise_string(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "'he\\'llo'");
 }
@@ -208,7 +208,7 @@ fn test_raise_string_escaped() {
 #[test]
 fn test_raise_string_escaped2() {
     let input = "'he\\\\'llo'";
-    let token = raise_string(input, &mut Position::default()).unwrap();
+    let token = raise_string(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "'he\\\\'");
 }
@@ -226,10 +226,7 @@ fn test_raise_string_escape_error() {
         },
     ));
 
-    assert_eq!(
-        raise_string(input, &mut Position::default()),
-        expected_output
-    );
+    assert_eq!(raise_string(input, &mut Position::new()), expected_output);
 }
 
 #[test]
@@ -245,16 +242,13 @@ fn test_raise_string_unterminated() {
         },
     ));
 
-    assert_eq!(
-        raise_string(input, &mut Position::default()),
-        expected_output
-    );
+    assert_eq!(raise_string(input, &mut Position::new()), expected_output);
 }
 
 #[test]
 fn test_raise_string_ascii() {
     let input = r#"'\x61\x62\x630'"#;
-    let token = raise_string(input, &mut Position::default()).unwrap();
+    let token = raise_string(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "'\\x61\\x62\\x630'");
 }
@@ -273,16 +267,13 @@ fn test_raise_string_ascii_error() {
         },
     ));
 
-    assert_eq!(
-        raise_string(input, &mut Position::default()),
-        expected_output
-    );
+    assert_eq!(raise_string(input, &mut Position::new()), expected_output);
 }
 
 #[test]
 fn test_raise_string_unicode() {
     let input = r#"'\u4f60\u597d\u3041\ud83e\udd7a'"#;
-    let token = raise_string(input, &mut Position::default()).unwrap();
+    let token = raise_string(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "'\\u4f60\\u597d\\u3041\\ud83e\\udd7a'");
 }
@@ -301,10 +292,7 @@ fn test_raise_string_unicode_error() {
         },
     ));
 
-    assert_eq!(
-        raise_string(input, &mut Position::default()),
-        expected_output
-    );
+    assert_eq!(raise_string(input, &mut Position::new()), expected_output);
 }
 
 fn raise_number(input: &str, pos: &mut Position) -> RaiseResult {
@@ -384,7 +372,7 @@ fn raise_number(input: &str, pos: &mut Position) -> RaiseResult {
 #[test]
 fn test_raise_number_integer() {
     let input = "012";
-    let token = raise_number(input, &mut Position::default()).unwrap();
+    let token = raise_number(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "012");
 }
@@ -392,7 +380,7 @@ fn test_raise_number_integer() {
 #[test]
 fn test_raise_number_float() {
     let input = "012.34.56";
-    let token = raise_number(input, &mut Position::default()).unwrap();
+    let token = raise_number(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "012.34");
 }
@@ -402,7 +390,7 @@ fn test_raise_number_float_error() {
     let input = "012.";
 
     assert_eq!(
-        raise_number(input, &mut Position::default()),
+        raise_number(input, &mut Position::new()),
         Err(SquareError::UnexpectedToken(
             input.to_string(),
             "expect at least one digit after dot".to_string(),
@@ -418,7 +406,7 @@ fn test_raise_number_float_error() {
 #[test]
 fn test_raise_number_exp() {
     let input = "01234e5.12";
-    let token = raise_number(input, &mut Position::default()).unwrap();
+    let token = raise_number(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "01234e5");
 }
@@ -426,7 +414,7 @@ fn test_raise_number_exp() {
 #[test]
 fn test_raise_number_exp2() {
     let input = "012.34e5.12";
-    let token = raise_number(input, &mut Position::default()).unwrap();
+    let token = raise_number(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "012.34e5");
 }
@@ -434,7 +422,7 @@ fn test_raise_number_exp2() {
 #[test]
 fn test_raise_number_exp3() {
     let input = "012E+5e6";
-    let token = raise_number(input, &mut Position::default()).unwrap();
+    let token = raise_number(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "012E+5");
 }
@@ -444,7 +432,7 @@ fn test_raise_number_exp_error() {
     let input = "012e.";
 
     assert_eq!(
-        raise_number(input, &mut Position::default()),
+        raise_number(input, &mut Position::new()),
         Err(SquareError::UnexpectedToken(
             input.to_string(),
             "expect at least one digit after exp".to_string(),
@@ -460,7 +448,7 @@ fn test_raise_number_exp_error() {
 #[test]
 fn test_raise_number_minus() {
     let input = "012.34E-56";
-    let token = raise_number(input, &mut Position::default()).unwrap();
+    let token = raise_number(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "012.34E-56");
 }
@@ -471,7 +459,7 @@ fn test_raise_number_min_max() {
     let min_positive = "2.2250738585072014e-308";
 
     assert_eq!(
-        raise_number(max, &mut Position::default())
+        raise_number(max, &mut Position::new())
             .unwrap()
             .source()
             .parse::<f64>()
@@ -480,7 +468,7 @@ fn test_raise_number_min_max() {
     );
 
     assert_eq!(
-        raise_number(min_positive, &mut Position::default())
+        raise_number(min_positive, &mut Position::new())
             .unwrap()
             .source()
             .parse::<f64>()
@@ -511,7 +499,7 @@ fn raise_ident(input: &str, pos: &mut Position) -> RaiseResult {
 #[test]
 fn test_raise_id() {
     let input = "_demo";
-    let token = raise_ident(input, &mut Position::default()).unwrap();
+    let token = raise_ident(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "_demo");
 }
@@ -622,7 +610,7 @@ fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
 #[test]
 fn test_raise_op() {
     let input = "/+";
-    let token = raise_operator(input, &mut Position::default()).unwrap();
+    let token = raise_operator(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "/");
 }
@@ -630,7 +618,7 @@ fn test_raise_op() {
 #[test]
 fn test_raise_fn() {
     let input = "/[";
-    let token = raise_operator(input, &mut Position::default()).unwrap();
+    let token = raise_operator(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "/[");
 }
@@ -638,7 +626,7 @@ fn test_raise_fn() {
 #[test]
 fn test_raise_eq() {
     let input = "<<=";
-    let token = raise_operator(input, &mut Position::default()).unwrap();
+    let token = raise_operator(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "<<=");
 }
@@ -646,11 +634,11 @@ fn test_raise_eq() {
 #[test]
 fn test_raise_ne() {
     let input = "!=";
-    let token = raise_operator(input, &mut Position::default()).unwrap();
+    let token = raise_operator(input, &mut Position::new()).unwrap();
     assert_eq!(token.source(), "!=");
 
     assert_eq!(
-        raise_operator("!", &mut Position::default()),
+        raise_operator("!", &mut Position::new()),
         Err(SquareError::UnexpectedToken(
             "!".to_string(),
             "expect !=, got '!None'".to_string(),
@@ -666,7 +654,7 @@ fn test_raise_ne() {
 #[test]
 fn test_raise_dot() {
     let input = ".+";
-    let token = raise_operator(input, &mut Position::default()).unwrap();
+    let token = raise_operator(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), ".");
 }
@@ -674,7 +662,7 @@ fn test_raise_dot() {
 #[test]
 fn test_raise_dot2() {
     let input = "..+";
-    let token = raise_operator(input, &mut Position::default()).unwrap();
+    let token = raise_operator(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "..");
 }
@@ -682,7 +670,7 @@ fn test_raise_dot2() {
 #[test]
 fn test_raise_dot3() {
     let input = "....";
-    let token = raise_operator(input, &mut Position::default()).unwrap();
+    let token = raise_operator(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), "...");
 }
@@ -736,7 +724,7 @@ fn raise_comment(input: &str, pos: &mut Position) -> RaiseResult {
 #[test]
 fn test_raise_comment() {
     let input = ";123;456";
-    let token = raise_comment(input, &mut Position::default()).unwrap();
+    let token = raise_comment(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), ";123;");
 }
@@ -744,7 +732,7 @@ fn test_raise_comment() {
 #[test]
 fn test_raise_comment_escape() {
     let input = ";123\\;456;";
-    let token = raise_comment(input, &mut Position::default()).unwrap();
+    let token = raise_comment(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), ";123\\;456;");
 }
@@ -752,7 +740,7 @@ fn test_raise_comment_escape() {
 #[test]
 fn test_raise_comment_newline() {
     let input = ";123\n456";
-    let token = raise_comment(input, &mut Position::default()).unwrap();
+    let token = raise_comment(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), ";123\n");
 }
@@ -796,7 +784,7 @@ pub fn skip_whitespace(input: &str, pos: &mut Position) -> RaiseResult {
 #[test]
 fn test_skip_whitespace() {
     let input = " \t\r\n ;inline \\; comment; \n\r\t ";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
 
     let _ = skip_whitespace(input, &mut pos);
 
@@ -813,11 +801,11 @@ fn test_skip_whitespace() {
 #[test]
 fn test_skip_whitespace_empty() {
     let input = "[ ;abaaba; ]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
 
     let _ = skip_whitespace(input, &mut pos);
 
-    assert_eq!(pos, Position::default());
+    assert_eq!(pos, Position::new());
 }
 
 pub fn lookahead(input: &str, pos: &mut Position) -> RaiseResult {
@@ -831,7 +819,7 @@ pub fn lookahead(input: &str, pos: &mut Position) -> RaiseResult {
 #[test]
 fn test_lookahead() {
     let input = "[= fib /[n] [+ n [- n 1]]]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let mut token = lookahead(input, &mut pos).unwrap();
 
     assert_eq!(token.source(), "[");
@@ -868,7 +856,7 @@ fn test_expect() {
           [[<= n 1] 1] ; comment
           [true [+ n [- n 1]]]]]"#;
 
-    let mut pos = Position::default();
+    let mut pos = Position::new();
 
     assert_eq!(
         expect(

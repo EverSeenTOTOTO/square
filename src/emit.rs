@@ -90,7 +90,7 @@ fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitRes
 #[test]
 fn test_emit_token_num() {
     let code = "42";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(insts, vec![Inst::PUSH(Value::Num(42.0))]);
@@ -99,7 +99,7 @@ fn test_emit_token_num() {
 #[test]
 fn test_emit_token_str() {
     let code = "'42'";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(insts, vec![Inst::PUSH(Value::Str("'42'".to_string()))]);
@@ -108,7 +108,7 @@ fn test_emit_token_str() {
 #[test]
 fn test_emit_token_lit() {
     let code = "nil";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(insts, vec![Inst::PUSH(Value::Nil)]);
@@ -117,7 +117,7 @@ fn test_emit_token_lit() {
 #[test]
 fn test_emit_token_id() {
     let code = "a";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(insts, vec![Inst::LOAD("a".to_string())]);
@@ -163,7 +163,7 @@ fn emit_assign(
 #[test]
 fn test_emit_assign_id() {
     let code = "[= a 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -274,7 +274,7 @@ fn emit_op(
 #[test]
 fn test_emit_op() {
     let code = "[+ a b]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -290,7 +290,7 @@ fn test_emit_op() {
 #[test]
 fn test_emit_op_assign() {
     let code = "[+= a b]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -378,7 +378,7 @@ fn emit_if(
 #[test]
 fn test_emit_if_true() {
     let code = "[if true 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -403,7 +403,7 @@ fn test_emit_if_true() {
 #[test]
 fn test_emit_if_true_false() {
     let code = "[if true 42 24]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -477,7 +477,7 @@ fn emit_while(
 #[test]
 fn test_emit_while() {
     let code = "[while true 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -531,7 +531,7 @@ fn emit_begin(
 #[test]
 fn test_emit_begin() {
     let code = "[begin 42]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -650,7 +650,7 @@ fn emit_call(
 #[test]
 fn test_emit_call_no_params() {
     let code = "[foo]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -662,7 +662,7 @@ fn test_emit_call_no_params() {
 #[test]
 fn test_emit_call_with_params() {
     let code = "[foo bar]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -722,7 +722,7 @@ fn emit_fn(
 #[test]
 fn test_emit_fn() {
     let code = "/[] 42";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -742,7 +742,7 @@ fn test_emit_fn() {
 #[test]
 fn test_emit_fn_params() {
     let code = "/[x] 42";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -764,7 +764,7 @@ fn test_emit_fn_params() {
 #[test]
 fn test_emit_fn_capture() {
     let code = "/[] y";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     let mut captures = HashSet::new();
@@ -793,7 +793,7 @@ fn test_emit_fn_capture_nested() {
     let code = "/[] [begin 
         [= x 1]
         /[] [+ x y]]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     let mut unresolved_y = HashSet::new();
@@ -910,7 +910,7 @@ fn emit_expand(
 #[test]
 fn test_emit_expand_base() {
     let code = "[= [a b] c]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -929,7 +929,7 @@ fn test_emit_expand_base() {
 #[test]
 fn test_emit_expand_dot() {
     let code = "[= [. b] c]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -948,7 +948,7 @@ fn test_emit_expand_dot() {
 #[test]
 fn test_emit_expand_greed() {
     let code = "[= [... b] c]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -965,7 +965,7 @@ fn test_emit_expand_greed() {
 #[test]
 fn test_emit_expand_greed_offset() {
     let code = "[= [. ... . b] c]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
@@ -986,7 +986,7 @@ fn test_emit_expand_greed_offset() {
 #[test]
 fn test_emit_expand_nested() {
     let code = "[= [[[b]]] c]";
-    let ast = parse(code, &mut Position::default()).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(

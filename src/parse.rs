@@ -161,7 +161,7 @@ fn parse_expand(input: &str, pos: &mut Position) -> ParseResult {
 #[test]
 fn test_parse_expand_empty() {
     let input = "[]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_expand(input, &mut pos).unwrap();
 
     if let Node::Expand(.., phs) = node.as_ref() {
@@ -176,7 +176,7 @@ fn test_parse_expand_empty() {
 #[test]
 fn test_parse_expand_base() {
     let input = "[ x ;comment; y z   \t ]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_expand(input, &mut pos).unwrap();
 
     if let Node::Expand(.., phs) = node.as_ref() {
@@ -191,7 +191,7 @@ fn test_parse_expand_base() {
 #[test]
 fn test_parse_expand_placehoders() {
     let input = "[. ... . ... .]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_expand(input, &mut pos).unwrap();
 
     if let Node::Expand(.., phs) = node.as_ref() {
@@ -205,7 +205,7 @@ fn test_parse_expand_placehoders() {
 #[test]
 fn test_parse_expand_nested() {
     let input = "[. [ x [ ;comment; y] [z ... ]] ... s  ]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_expand(input, &mut pos).unwrap();
 
     if let Node::Expand(.., phs) = node.as_ref() {
@@ -230,7 +230,7 @@ fn test_parse_expand_nested() {
 #[test]
 fn test_parse_expand_error() {
     let mut input = "[.x]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let mut err = parse_expand(input, &mut pos);
 
     assert_eq!(
@@ -244,7 +244,7 @@ fn test_parse_expand_error() {
     );
 
     input = "[....]";
-    pos = Position::default();
+    pos = Position::new();
     err = parse_expand(input, &mut pos);
 
     assert_eq!(
@@ -258,7 +258,7 @@ fn test_parse_expand_error() {
     );
 
     input = "[x....]";
-    pos = Position::default();
+    pos = Position::new();
     err = parse_expand(input, &mut pos);
 
     assert_eq!(
@@ -294,7 +294,7 @@ fn parse_fn(input: &str, pos: &mut Position) -> ParseResult {
 #[test]
 fn test_parse_fn_base() {
     let input = "/[] 42";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_fn(input, &mut pos).unwrap();
 
     if let Node::Fn(_, params, body) = node.as_ref() {
@@ -315,7 +315,7 @@ fn test_parse_fn_base() {
 #[test]
 fn test_parse_fn_params() {
     let input = "/[. [ x [ ;comment; y] [z ... ]] ... s  ] 42";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_fn(input, &mut pos).unwrap();
 
     if let Node::Fn(_, params, _) = node.as_ref() {
@@ -342,7 +342,7 @@ fn test_parse_fn_params() {
 #[test]
 fn test_parse_fn_high_order() {
     let input = "/[x] /[y] /[z] [+ [- x y] [* y z]]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_fn(input, &mut pos).unwrap();
 
     if let Node::Fn(_, x_param, x_body) = node.as_ref() {
@@ -400,7 +400,7 @@ fn parse_prop(input: &str, pos: &mut Position) -> ParseResult {
 #[test]
 fn test_parse_prop() {
     let input = ".foo";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_prop(input, &mut pos).unwrap();
 
     if let Node::Prop(_, id) = node.as_ref() {
@@ -439,7 +439,7 @@ fn test_parse_prop_chain() {
     let input = r#".foo
 .bar 
 .baz"#;
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let chain = parse_prop_chain(input, &mut pos).unwrap();
 
     if let Node::Prop(_, baz) = chain[2].as_ref() {
@@ -494,7 +494,7 @@ fn parse_assign(input: &str, pos: &mut Position) -> ParseResult {
 #[test]
 fn test_parse_assign_base() {
     let input = "= a b";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_assign(input, &mut pos).unwrap();
 
     if let Node::Assign(_, lhs, _, rhs) = node.as_ref() {
@@ -515,7 +515,7 @@ fn test_parse_assign_base() {
 #[test]
 fn test_parse_assign_expand() {
     let input = "= [. [a] [b . []]] b";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_assign(input, &mut pos).unwrap();
 
     if let Node::Assign(_, lhs, _, rhs) = node.as_ref() {
@@ -597,7 +597,7 @@ fn parse_op(input: &str, pos: &mut Position) -> ParseResult {
 #[test]
 fn test_parse_op_binary() {
     let input = ".. a 4";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_op(input, &mut pos).unwrap();
 
     if let Node::Op(op, exprs) = node.as_ref() {
@@ -613,7 +613,7 @@ fn test_parse_op_binary() {
 #[test]
 fn test_parse_op_binary_assign() {
     let input = "+= 42 a";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
 
     assert_eq!(
         parse_op(input, &mut pos),
@@ -674,7 +674,7 @@ fn parse_call(input: &str, pos: &mut Position) -> ParseResult {
 #[test]
 fn test_parse_call_assign() {
     let input = "[= [a b] [42 24]]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_call(input, &mut pos).unwrap();
 
     if let Node::Call(.., exprs) = node.as_ref() {
@@ -732,7 +732,7 @@ fn parse_dot(input: &str, pos: &mut Position) -> ParseResult {
 #[test]
 fn test_parse_dot_empty() {
     let input = "[= [a b] [42 24]]";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_dot(input, &mut pos).unwrap();
 
     if let Node::Call(.., exprs) = node.as_ref() {
@@ -753,7 +753,7 @@ fn test_parse_dot_empty() {
 #[test]
 fn test_parse_dot() {
     let input = "[= [a b] [42 24]].foo.bar";
-    let mut pos = Position::default();
+    let mut pos = Position::new();
     let node = parse_dot(input, &mut pos).unwrap();
 
     if let Node::Dot(_, props) = node.as_ref() {
