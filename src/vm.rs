@@ -19,7 +19,6 @@ type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         match self {
-            Inst::COMMENT(_) => Ok(()),
             Inst::PUSH(value) => self.push(vm, value.clone(), pc),
             Inst::POP => self.pop(vm, pc),
 
@@ -148,12 +147,13 @@ impl Inst {
                     self.clone(),
                     *pc,
                 ));
+                let is_tail_call = *pc < insts.len() - 1 && insts[*pc + 1] == Inst::RET;
 
                 match func {
-                    Value::Closure(closure) => self.call(vm, closure, params, pc),
+                    Value::Closure(closure) => self.call(vm, closure, params, is_tail_call, pc),
                     Value::UpValue(val) => {
                         if let Value::Closure(ref closure) = *val.borrow() {
-                            self.call(vm, closure.clone(), params, pc)
+                            self.call(vm, closure.clone(), params, is_tail_call, pc)
                         } else {
                             err
                         }
@@ -333,11 +333,13 @@ impl Inst {
         vm: &mut VM,
         closure: Rc<RefCell<Closure>>,
         params: Value,
+        _is_tail_call: bool,
         pc: &mut usize,
     ) -> ExecResult {
         let new_pc = closure.borrow().ip;
-
         let mut new_frame = CallFrame::new();
+        new_frame.prev = vm.call_frame.take();
+        new_frame.ra = *pc;
 
         // fill up captures
         if let Some(unresolved) = closure.borrow().first_unresolved() {
@@ -353,12 +355,8 @@ impl Inst {
             .iter()
             .for_each(|(key, value)| new_frame.insert(key, value.clone()));
 
-        new_frame.prev = vm.call_frame.take();
-        new_frame.ra = *pc;
-
         // jump to function
         *pc = new_pc as usize;
-
         vm.call_frame = Some(Box::new(new_frame));
 
         // always push param pack
@@ -429,10 +427,18 @@ impl CallFrame {
     }
 
     pub fn insert(&mut self, name: &str, value: Value) {
+        self.locals.insert(name.to_string(), value);
+    }
+
+    pub fn define(&mut self, name: &str, value: Value) {
         if let Some(Value::UpValue(old)) = self.locals.get(name) {
-            *old.borrow_mut() = value;
+            *old.borrow_mut() = if let Value::UpValue(inner) = value {
+                inner.borrow().clone()
+            } else {
+                value
+            };
         } else {
-            self.locals.insert(name.to_string(), value);
+            self.insert(name, value);
         }
     }
 
@@ -446,9 +452,9 @@ impl CallFrame {
         });
 
         if captured {
-            self.insert(name, upvalue);
+            self.define(name, upvalue);
         } else {
-            self.insert(name, value);
+            self.define(name, value);
         }
     }
 
@@ -465,7 +471,7 @@ impl CallFrame {
 fn test_define_resolve() {
     let mut top = CallFrame::new();
 
-    top.insert("a", Value::Num(42.0));
+    top.define("a", Value::Num(42.0));
 
     let mut frame = CallFrame::new();
 
@@ -494,18 +500,8 @@ impl VM {
 
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
-        let old_pc = *pc;
         inst.exec(self, insts, pc)?;
         *pc += 1;
-
-        #[cfg(not(test))]
-        use crate::println;
-
-        match inst {
-            Inst::COMMENT(_) => {}
-            _ => println!("{}: {}\n{}\n", old_pc, inst, self.current_frame()),
-        }
-
         Ok(())
     }
 
@@ -557,7 +553,7 @@ fn test_exec_load() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().insert("x", Value::Num(42.0));
+    vm.current_frame().define("x", Value::Num(42.0));
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
@@ -727,7 +723,7 @@ fn test_exec_op_assign() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().insert("x", Value::Num(1.0));
+    vm.current_frame().define("x", Value::Num(1.0));
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
@@ -810,7 +806,7 @@ fn test_exec_while() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().insert("x", Value::Num(0.0));
+    vm.current_frame().define("x", Value::Num(0.0));
     insts.iter().for_each(|inst| println!("{}", inst));
     vm.run(&insts, &mut 0).unwrap();
 
@@ -958,7 +954,7 @@ fn test_exec_fn_scope_lift_error() {
         Err(SquareError::InstructionError(
             "unresolved upvalue: x".to_string(),
             Inst::CALL,
-            17,
+            13,
         ))
     )
 }

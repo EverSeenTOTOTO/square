@@ -43,8 +43,6 @@ pub enum Inst {
     // (offset, index), peek an element within the top pack of the operand stack.
     // 'offset' is either 0 or the number of elements consumed once greedy placehoder appeared.
     PEEK(usize, i32),
-
-    COMMENT(String),
 }
 
 impl fmt::Display for Inst {
@@ -83,7 +81,6 @@ impl fmt::Display for Inst {
             ),
             Inst::PACK(len) => write!(f, "PACK {}", len),
             Inst::PEEK(offset, index) => write!(f, "PEEK {} {}", offset, index),
-            Inst::COMMENT(comment) => write!(f, "\n# {}\n", comment),
         }
     }
 }

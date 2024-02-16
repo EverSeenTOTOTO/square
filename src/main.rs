@@ -65,40 +65,13 @@ pub extern "C" fn exec(vm_addr: *const u8, source_addr: *mut u8, source_length: 
 
     use code_frame::Position;
     use emit::EmitContext;
-    use vm_insts::Inst;
 
     let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
     let code = memory::read(source_addr as usize, source_length);
+    let ast = parse::parse(code, &mut Position::new()).unwrap();
+    let insts = emit::emit(code, &ast, &mut RefCell::new(EmitContext::new())).unwrap();
 
-    println!();
-    let ast = match parse::parse(code, &mut Position::new()) {
-        Err(e) => {
-            println!("{}", e);
-            return;
-        }
-        Ok(node) => node,
-    };
+    vm.run(&insts, &mut 0).unwrap();
 
-    ast.iter().for_each(|node| println!("{}", node));
-
-    println!();
-    let insts = match emit::emit(code, &ast, &mut RefCell::new(EmitContext::new())) {
-        Err(e) => {
-            println!("\n{}", e);
-            return;
-        }
-        Ok(inst) => inst,
-    };
-
-    for (index, inst) in insts.iter().enumerate() {
-        match inst {
-            Inst::COMMENT(_) => println!("{}", inst),
-            _ => println!("{}: {}", index, inst),
-        }
-    }
-
-    println!();
-    if let Err(e) = vm.run(&insts, &mut 0) {
-        println!("{}", e);
-    }
+    println!("{}", vm.current_frame());
 }

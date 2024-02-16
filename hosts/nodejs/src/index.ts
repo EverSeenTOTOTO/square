@@ -74,7 +74,7 @@ type WasmExports = {
       [if [== n 1]
         1
         [+ [fib [- n 1]] [fib [- n 2]]]]]]]
-[fib 14]
+[fib 16]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);

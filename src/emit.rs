@@ -371,20 +371,6 @@ fn emit_if(
         )));
     }
 
-    result.insert(
-        0,
-        Inst::COMMENT(format!(
-            "if at line {}, col {} start",
-            if_token.pos().line,
-            if_token.pos().column
-        )),
-    );
-    result.push(Inst::COMMENT(format!(
-        "if at line {}, col {} end",
-        if_token.pos().line,
-        if_token.pos().column
-    )));
-
     return Ok(result);
 }
 
@@ -397,7 +383,6 @@ fn test_emit_if_true() {
     assert_eq!(
         insts,
         vec![
-            Inst::COMMENT("if at line 1, col 2 start".to_string()),
             Inst::JMP(6),
             Inst::PUSH(Value::Bool(true)),
             Inst::JNE(2),
@@ -406,7 +391,6 @@ fn test_emit_if_true() {
             Inst::PUSH(Value::Nil),
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure::new(-7)),
-            Inst::COMMENT("if at line 1, col 2 end".to_string()),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -422,7 +406,6 @@ fn test_emit_if_true_false() {
     assert_eq!(
         insts,
         vec![
-            Inst::COMMENT("if at line 1, col 2 start".to_string()),
             Inst::JMP(6),
             Inst::PUSH(Value::Bool(true)),
             Inst::JNE(2),
@@ -431,7 +414,6 @@ fn test_emit_if_true_false() {
             Inst::PUSH(Value::Num(24.0)),
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure::new(-7)),
-            Inst::COMMENT("if at line 1, col 2 end".to_string()),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -469,21 +451,6 @@ fn emit_while(
     result.push(Inst::JMP(-((condition_len + body_len + 2) as i32)));
     result.push(Inst::RET);
     result.push(Inst::PUSH_CLOSURE(Closure::new(-4 - offset)));
-
-    result.insert(
-        0,
-        Inst::COMMENT(format!(
-            "while at line {}, col {} start",
-            while_token.pos().line,
-            while_token.pos().column
-        )),
-    );
-    result.push(Inst::COMMENT(format!(
-        "while at line {}, col {} end",
-        while_token.pos().line,
-        while_token.pos().column
-    )));
-
     return Ok(result);
 }
 
@@ -496,7 +463,6 @@ fn test_emit_while() {
     assert_eq!(
         insts,
         vec![
-            Inst::COMMENT("while at line 1, col 2 start".to_string()),
             Inst::JMP(5),
             Inst::PUSH(Value::Bool(true)),
             Inst::JNE(2),
@@ -504,7 +470,6 @@ fn test_emit_while() {
             Inst::JMP(-4),
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure::new(-6)),
-            Inst::COMMENT("while at line 1, col 2 end".to_string()),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -524,20 +489,6 @@ fn emit_begin(
     result.push(Inst::RET);
     result.push(Inst::PUSH_CLOSURE(Closure::new(-2 - offset)));
 
-    result.insert(
-        0,
-        Inst::COMMENT(format!(
-            "begin at line {}, col {} start",
-            begin_token.pos().line,
-            begin_token.pos().column
-        )),
-    );
-    result.push(Inst::COMMENT(format!(
-        "begin at line {}, col {} end",
-        begin_token.pos().line,
-        begin_token.pos().column
-    )));
-
     return Ok(result);
 }
 
@@ -550,12 +501,10 @@ fn test_emit_begin() {
     assert_eq!(
         insts,
         vec![
-            Inst::COMMENT("begin at line 1, col 2 start".to_string()),
             Inst::JMP(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure::new(-3)),
-            Inst::COMMENT("begin at line 1, col 2 end".to_string()),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -712,20 +661,6 @@ fn emit_fn(
 
         result.push(Inst::PUSH_CLOSURE(meta));
 
-        result.insert(
-            0,
-            Inst::COMMENT(format!(
-                "fn at line {}, col {} start",
-                left_bracket.pos().line,
-                left_bracket.pos().column
-            )),
-        );
-        result.push(Inst::COMMENT(format!(
-            "fn at line {}, col {} end",
-            left_bracket.pos().line,
-            left_bracket.pos().column
-        )));
-
         return Ok(result);
     }
 
@@ -741,13 +676,11 @@ fn test_emit_fn() {
     assert_eq!(
         insts,
         vec![
-            Inst::COMMENT("fn at line 1, col 2 start".to_string()),
             Inst::JMP(3),
             Inst::POP, // pop param pack
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure::new(-4)),
-            Inst::COMMENT("fn at line 1, col 2 end".to_string())
         ]
     );
 }
@@ -761,7 +694,6 @@ fn test_emit_fn_params() {
     assert_eq!(
         insts,
         vec![
-            Inst::COMMENT("fn at line 1, col 2 start".to_string()),
             Inst::JMP(5),
             Inst::PEEK(0, 0), // peek param
             Inst::STORE(0, "x".to_string()),
@@ -769,7 +701,6 @@ fn test_emit_fn_params() {
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure::new(-6)),
-            Inst::COMMENT("fn at line 1, col 2 end".to_string())
         ]
     );
 }
@@ -786,7 +717,6 @@ fn test_emit_fn_capture() {
     assert_eq!(
         insts,
         vec![
-            Inst::COMMENT("fn at line 1, col 2 start".to_string()),
             Inst::JMP(3),
             Inst::POP,
             Inst::LOAD("y".to_string()),
@@ -796,7 +726,6 @@ fn test_emit_fn_capture() {
                 upvalues: HashMap::new(),
                 captures
             }),
-            Inst::COMMENT("fn at line 1, col 2 end".to_string())
         ]
     );
 }
@@ -818,14 +747,11 @@ fn test_emit_fn_capture_nested() {
     assert_eq!(
         insts,
         vec![
-            Inst::COMMENT("fn at line 1, col 2 start".to_string()),
-            Inst::JMP(20),
+            Inst::JMP(16),
             Inst::POP,
-            Inst::COMMENT("begin at line 1, col 6 start".to_string()),
-            Inst::JMP(12),
+            Inst::JMP(10),
             Inst::PUSH(Value::Num(1.0)),
             Inst::STORE(0, "x".to_string()),
-            Inst::COMMENT("fn at line 3, col 10 start".to_string()),
             Inst::JMP(5),
             Inst::POP,
             Inst::LOAD("x".to_string()),
@@ -837,19 +763,16 @@ fn test_emit_fn_capture_nested() {
                 upvalues: HashMap::new(),
                 captures: unresolved_xy
             }),
-            Inst::COMMENT("fn at line 3, col 10 end".to_string()),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure::new(-13)),
-            Inst::COMMENT("begin at line 1, col 6 end".to_string()),
+            Inst::PUSH_CLOSURE(Closure::new(-11)),
             Inst::PACK(0),
             Inst::CALL,
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure {
-                ip: -21,
+                ip: -17,
                 upvalues: HashMap::new(),
                 captures: unresolved_y
             }),
-            Inst::COMMENT("fn at line 1, col 2 end".to_string())
         ]
     );
 }
