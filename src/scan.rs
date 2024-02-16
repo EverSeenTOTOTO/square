@@ -482,8 +482,10 @@ fn raise_ident(input: &str, pos: &mut Position) -> RaiseResult {
     let mut chars = input_chars[pos.cursor..].iter().peekable();
     let start_pos = pos.clone();
 
+    chars.next(); // leading alpha or _ cannot be digit
+    pos.advance();
     while let Some(ch) = chars.peek() {
-        if !(ch.is_alphabetic() || **ch == '_') {
+        if !(ch.is_alphabetic() || ch.is_ascii_digit() || **ch == '_') {
             break;
         }
 
@@ -498,10 +500,10 @@ fn raise_ident(input: &str, pos: &mut Position) -> RaiseResult {
 
 #[test]
 fn test_raise_id() {
-    let input = "_demo";
+    let input = "_0";
     let token = raise_ident(input, &mut Position::new()).unwrap();
 
-    assert_eq!(token.source(), "_demo");
+    assert_eq!(token.source(), "_0");
 }
 
 fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
