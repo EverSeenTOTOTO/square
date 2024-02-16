@@ -138,26 +138,28 @@ impl Inst {
                     ));
                 }
 
-                // operand stack top should be [..., closure, params]<-
-                match &frame.stack[frame.sp - 2] {
-                    Value::Closure(closure) => {
-                        let cloned = closure.clone();
-                        return self.call(vm, &cloned, pc);
-                    }
-                    Value::UpValue(val) => {
-                        let cloned = val.borrow().clone(); // FIXME: remove clone
-                        if let Value::Closure(closure) = cloned {
-                            return self.call(vm, &closure, pc);
-                        }
-                    }
-                    _ => {}
-                }
+                let params = frame.stack[frame.sp - 1].clone();
+                let func = frame.stack[frame.sp - 2].clone();
 
-                Err(SquareError::InstructionError(
-                    format!("bad call, cannot call with {}", frame.stack[frame.sp - 2]),
+                frame.sp -= 2;
+
+                let err = Err(SquareError::InstructionError(
+                    format!("bad call, cannot call with {}", func),
                     self.clone(),
                     *pc,
-                ))
+                ));
+
+                match func {
+                    Value::Closure(closure) => self.call(vm, closure, params, pc),
+                    Value::UpValue(val) => {
+                        if let Value::Closure(ref closure) = *val.borrow() {
+                            self.call(vm, closure.clone(), params, pc)
+                        } else {
+                            err
+                        }
+                    }
+                    _ => err,
+                }
             }
             Inst::RET => {
                 let frame = vm.current_frame();
@@ -326,11 +328,14 @@ impl Inst {
         Ok(())
     }
 
-    fn call(&self, vm: &mut VM, closure: &RefCell<Closure>, pc: &mut usize) -> ExecResult {
-        let frame = vm.current_frame();
+    fn call(
+        &self,
+        vm: &mut VM,
+        closure: Rc<RefCell<Closure>>,
+        params: Value,
+        pc: &mut usize,
+    ) -> ExecResult {
         let new_pc = closure.borrow().ip;
-        let params = frame.stack[frame.sp - 1].clone();
-        frame.sp -= 2; // pop params and closure
 
         let mut new_frame = CallFrame::new();
 
@@ -879,26 +884,26 @@ fn test_exec_fn_capture_lit() {
     assert_eq!(callframe.stack[callframe.sp - 2], Value::Num(2.0));
 }
 
-// #[test]
-// fn test_exec_fn_capture_nested() {
-//     let code = "
-// [let foo /[] [begin
-//                [let x 1]
-//                /[] [begin
-//                        [let y 1]
-//                        /[] [+ x y]]]]
-// [[[foo]]]
-// ";
-//     let ast = parse(code, &mut Position::new()).unwrap();
-//     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
-//     let mut vm = VM::new();
-//
-//     vm.run(&insts, &mut 0).unwrap();
-//
-//     let callframe = vm.current_frame();
-//
-//     assert_eq!(callframe.top().unwrap(), &Value::Num(2.0));
-// }
+#[test]
+fn test_exec_fn_capture_nested() {
+    let code = "
+[let foo /[] [begin
+               [let x 1]
+               /[] [begin
+                       [let y 1]
+                       /[] [+ x y]]]]
+[[[foo]]]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+
+    assert_eq!(callframe.top().unwrap(), &Value::Num(2.0));
+}
 
 #[test]
 fn test_exec_fn_capture_assign() {

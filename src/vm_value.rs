@@ -101,17 +101,54 @@ impl fmt::Display for Value {
                 write!(f, "Str({})", val)
             }
             Value::Vec(val) => {
-                write!(f, "Vec({:?})", val.borrow())
+                write!(
+                    f,
+                    "Vec([{}])",
+                    val.borrow()
+                        .iter()
+                        .map(|v| {
+                            match v {
+                                Value::Vec(another) => format!("Vec({})", another.borrow().len()),
+                                _ => format!("{}", v),
+                            }
+                        })
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
             }
             Value::Closure(closure) => closure.borrow().fmt(f),
-            Value::UpValue(val) => {
-                write!(f, "UpValue({})", val.borrow())
-            }
+            Value::UpValue(val) => match *val.borrow() {
+                Value::UpValue(_) => unreachable!(),
+                Value::Vec(ref v) => write!(f, "UpValue(Vec({}))", v.borrow().len()),
+                _ => write!(f, "UpValue({})", val.borrow()),
+            },
             Value::Nil => {
                 write!(f, "Nil")
             }
         }
     }
+}
+
+#[test]
+fn test_print_circular() {
+    let vec = Rc::new(RefCell::new(Vec::new()));
+    let val = Value::Vec(vec.clone());
+    vec.borrow_mut().push(val.clone());
+    assert_eq!(format!("{}", val.clone()), "Vec([Vec(1)])");
+
+    let upval = val.upgrade();
+    vec.borrow_mut().push(upval);
+    assert_eq!(format!("{}", val.clone()), "Vec([Vec(2), UpValue(Vec(2))])");
+
+    let closure = Rc::new(RefCell::new(Closure::new(0)));
+    closure.borrow_mut().captures.insert("vec".to_string());
+    closure.borrow_mut().capture("vec", &val);
+    vec.borrow_mut().push(Value::Closure(closure));
+
+    assert_eq!(
+        format!("{}", val.clone()),
+        "Vec([Vec(3), UpValue(Vec(3)), Closure(0, vec✓)])"
+    );
 }
 
 impl PartialOrd for Value {
@@ -149,7 +186,8 @@ impl PartialEq for Value {
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
             (Value::Vec(lhs), Value::Vec(rhs)) => Rc::ptr_eq(lhs, rhs),
             (Value::Closure(lhs), Value::Closure(rhs)) => Rc::ptr_eq(lhs, rhs),
-            (Value::UpValue(lhs), Value::UpValue(rhs)) => Rc::ptr_eq(lhs, rhs),
+
+            (Value::UpValue(lhs), Value::UpValue(rhs)) => lhs.borrow().eq(&rhs.borrow()),
             (Value::UpValue(lhs), rhs) => lhs.borrow().eq(rhs),
             (lhs, Value::UpValue(rhs)) => lhs.eq(&rhs.borrow()),
 
@@ -170,6 +208,11 @@ fn test_partial_eq() {
     closure.borrow_mut().capture("lhs", &lhs);
 
     assert_eq!(lhs, rhs);
+
+    let lhs_up = lhs.upgrade();
+    let rhs_up = rhs.upgrade();
+
+    assert_eq!(lhs_up, rhs_up);
 }
 
 pub type CalcResult = Result<Value, SquareError>;
@@ -324,9 +367,12 @@ fn test_upvalue() {
 
 #[test]
 fn test_upgrade() {
-    let num = Value::Num(1.0);
-    let upgraded = Value::UpValue(Rc::new(RefCell::new(num.clone())));
-    assert_eq!(upgraded, upgraded.upgrade(),)
+    let closure = Value::Closure(Rc::new(RefCell::new(Closure::new(0))));
+    let upval = Value::UpValue(Rc::new(RefCell::new(closure)));
+
+    assert_eq!(upval, upval.upgrade());
+    assert_eq!(upval.upgrade().upgrade(), upval.upgrade());
+    assert_eq!(upval.clone(), upval.upgrade());
 }
 
 #[test]

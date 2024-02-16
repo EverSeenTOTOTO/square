@@ -40,8 +40,10 @@ pub enum Inst {
 
     PACK(usize), // pack n elements on top of the operand stack
 
-    PEEK(usize, i32), // (offset, index), peek an element within the top pack of the operand stack.
-    // 'offset' is either 0 or the number of elements consumed once greedy placehoder already appeared.
+    // (offset, index), peek an element within the top pack of the operand stack.
+    // 'offset' is either 0 or the number of elements consumed once greedy placehoder appeared.
+    PEEK(usize, i32),
+
     COMMENT(String),
 }
 
