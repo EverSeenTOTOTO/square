@@ -102,7 +102,7 @@ fn test_emit_token_str() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    assert_eq!(insts, vec![Inst::PUSH(Value::Str("'42'".to_string()))]);
+    assert_eq!(insts, vec![Inst::PUSH(Value::Str("42".to_string()))]);
 }
 
 #[test]
@@ -558,6 +558,7 @@ fn emit_call(
                 }
                 "print" | "println" => {
                     result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
+                    result.push(Inst::PACK(expressions.len() - 1));
                     result.push(Inst::SYSCALL(name.clone()));
                 }
                 _ => {

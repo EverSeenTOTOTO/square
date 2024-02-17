@@ -13,8 +13,8 @@
 [let _9 [next _8]]
 
 [let toInt /[n] [begin
-                [let f /[x] [+ x 1]]
-                [[n f] 0]]]
+                  [let f /[x] [+ x 1]]
+                  [[n f] 0]]]
 
 [print [toInt _1]]
 [print [toInt _8]]

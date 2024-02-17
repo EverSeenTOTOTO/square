@@ -184,7 +184,9 @@ fn raise_string(input: &str, pos: &mut Position) -> RaiseResult {
         }
     }
 
-    let source = input_chars[start_pos.cursor..pos.cursor].iter().collect();
+    let source = input_chars[(start_pos.cursor + 1)..(pos.cursor - 1)]
+        .iter()
+        .collect();
 
     Ok(Token::Str(start_pos, source))
 }
@@ -194,7 +196,7 @@ fn test_raise_string() {
     let input = "'hello'";
     let token = raise_string(input, &mut Position::new()).unwrap();
 
-    assert_eq!(token.source(), "'hello'");
+    assert_eq!(token.source(), "hello");
 }
 
 #[test]
@@ -202,7 +204,7 @@ fn test_raise_string_escaped() {
     let input = "'he\\'llo'";
     let token = raise_string(input, &mut Position::new()).unwrap();
 
-    assert_eq!(token.source(), "'he\\'llo'");
+    assert_eq!(token.source(), "he\\'llo");
 }
 
 #[test]
@@ -210,7 +212,7 @@ fn test_raise_string_escaped2() {
     let input = "'he\\\\'llo'";
     let token = raise_string(input, &mut Position::new()).unwrap();
 
-    assert_eq!(token.source(), "'he\\\\'");
+    assert_eq!(token.source(), "he\\\\");
 }
 
 #[test]
@@ -250,7 +252,7 @@ fn test_raise_string_ascii() {
     let input = r#"'\x61\x62\x630'"#;
     let token = raise_string(input, &mut Position::new()).unwrap();
 
-    assert_eq!(token.source(), "'\\x61\\x62\\x630'");
+    assert_eq!(token.source(), "\\x61\\x62\\x630");
 }
 
 #[test]
@@ -275,7 +277,7 @@ fn test_raise_string_unicode() {
     let input = r#"'\u4f60\u597d\u3041\ud83e\udd7a'"#;
     let token = raise_string(input, &mut Position::new()).unwrap();
 
-    assert_eq!(token.source(), "'\\u4f60\\u597d\\u3041\\ud83e\\udd7a'");
+    assert_eq!(token.source(), "\\u4f60\\u597d\\u3041\\ud83e\\udd7a");
 }
 
 #[test]

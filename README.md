@@ -105,21 +105,16 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 [next gen]
 ```
 
-## Structure
+## Structure(WIP)
 
 ```lisp
-[let stack [obj
-    ['new' /[initial] [= this.vec initial]]
-    ['clear' /[] [= this.vec [vec]]]
-    ['push' /[x] [= this.vec [.. this.vec [x]]]]
-    ['pop' /[] [begin
-        [= [... last] this.vec]
-        [= this.vec [this.vec.slice 0 -1]]
-        last]]]]
+[let o [obj 
+        ['x' 42]
+        ['inc' /[this] [+= this.x 1]]
 
-[let s [stack.new [vec 1 2 3]]]
-[let x [s.pop]] ; x = 3
-[s.push 42] ; s = [1 2 42]
+[println o]
+[o.inc]
+[println o]
 ```
 
 ## Comment

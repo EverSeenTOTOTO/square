@@ -54,7 +54,6 @@ impl fmt::Display for Closure {
                 self.captures
                     .iter()
                     .map(|k| {
-                        // NOTE: do not print value, as it may contain circular
                         if self.upvalues.contains_key(k) {
                             format!("{}✓", k)
                         } else {
@@ -324,14 +323,6 @@ impl Value {
             _ => Value::UpValue(Rc::new(RefCell::new(self.clone()))),
         }
     }
-
-    pub fn capture(&self, name: &str, upvalue: &Value) -> bool {
-        match self {
-            Value::Closure(c) => c.borrow_mut().capture(name, upvalue),
-            Value::UpValue(val) => val.borrow().capture(name, upvalue),
-            _ => false,
-        }
-    }
 }
 
 #[test]
@@ -342,21 +333,4 @@ fn test_upgrade() {
     assert_eq!(upval, upval.upgrade());
     assert_eq!(upval.upgrade().upgrade(), upval.upgrade());
     assert_eq!(upval.clone(), upval.upgrade());
-}
-
-#[test]
-fn test_capture() {
-    let closure = Rc::new(RefCell::new(Closure::new(0)));
-    let value = Value::Closure(closure.clone());
-
-    closure.borrow_mut().captures.insert("self".to_string());
-    closure.borrow_mut().captures.insert("a".to_string());
-    value.capture("self", &value);
-    value.capture("a", &Value::Num(42.0));
-
-    assert_eq!(closure.borrow().upvalues.get("self").unwrap(), &value);
-    assert_eq!(
-        closure.borrow().upvalues.get("a").unwrap(),
-        &Value::Num(42.0)
-    );
 }
