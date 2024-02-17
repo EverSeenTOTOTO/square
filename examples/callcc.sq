@@ -1,19 +1,20 @@
-[= gen /[yield]
+[let gen /[yield]
     [begin
-        [= i 0]
+        [let i 0]
         [while [< i 10]
             [callcc /[cc]
                 [yield [vec i cc]]]]]]
 
-[= innerCc nil]
+[let innerCc nil]
 
-[= next /[g]
+[let next /[g]
     [if [== [typeof innerCc] 'fn']
         [innerCc]
         [begin
-            [= p [callcc /[cc] [g cc]]]
+            [let p [callcc /[cc] [g cc]]]
             [if [== [typeof p] 'vec']
                 [begin
+                    [let i nil]
                     [= [i innerCc] p]
                     [print i]]]]]]
                     

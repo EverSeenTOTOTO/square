@@ -16,10 +16,10 @@ use hashbrown::{HashMap, HashSet};
 use crate::errors::SquareError;
 
 // use at both runtime and compile time
-// at compile time, captures is empty, unresolved contains variable names
+// at compile time, ip is the offset from instruction to fn definition, upvalues is empty and captures contains variable names
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
-    pub ip: i32, // offset at compile time, function address at runtime
+    pub ip: i32,
     pub upvalues: HashMap<String, Value>,
     pub captures: HashSet<String>,
 }
@@ -39,15 +39,6 @@ impl Closure {
             return true;
         }
         false
-    }
-
-    pub fn first_unresolved(&self) -> Option<String> {
-        for name in self.captures.iter() {
-            if !self.upvalues.contains_key(name) {
-                return Some(name.clone());
-            }
-        }
-        None
     }
 }
 
@@ -92,23 +83,23 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Bool(val) => {
-                write!(f, "Bool({})", val)
+                write!(f, "{}", val)
             }
             Value::Num(val) => {
-                write!(f, "Num({})", val)
+                write!(f, "{}", val)
             }
             Value::Str(val) => {
-                write!(f, "Str({})", val)
+                write!(f, "{}", val)
             }
             Value::Vec(val) => {
                 write!(
                     f,
-                    "Vec([{}])",
+                    "[{}]",
                     val.borrow()
                         .iter()
                         .map(|v| {
                             match v {
-                                Value::Vec(another) => format!("Vec({})", another.borrow().len()),
+                                Value::Vec(_) => "[...]".to_string(),
                                 _ => format!("{}", v),
                             }
                         })
@@ -118,37 +109,15 @@ impl fmt::Display for Value {
             }
             Value::Closure(closure) => closure.borrow().fmt(f),
             Value::UpValue(val) => match *val.borrow() {
+                // FIXME: print vec may still cause circular
                 Value::UpValue(_) => unreachable!(),
-                Value::Vec(ref v) => write!(f, "UpValue(Vec({}))", v.borrow().len()),
-                _ => write!(f, "UpValue({})", val.borrow()),
+                _ => write!(f, "{}", val.borrow()),
             },
             Value::Nil => {
-                write!(f, "Nil")
+                write!(f, "nil")
             }
         }
     }
-}
-
-#[test]
-fn test_print_circular() {
-    let vec = Rc::new(RefCell::new(Vec::new()));
-    let val = Value::Vec(vec.clone());
-    vec.borrow_mut().push(val.clone());
-    assert_eq!(format!("{}", val.clone()), "Vec([Vec(1)])");
-
-    let upval = val.upgrade();
-    vec.borrow_mut().push(upval);
-    assert_eq!(format!("{}", val.clone()), "Vec([Vec(2), UpValue(Vec(2))])");
-
-    let closure = Rc::new(RefCell::new(Closure::new(0)));
-    closure.borrow_mut().captures.insert("vec".to_string());
-    closure.borrow_mut().capture("vec", &val);
-    vec.borrow_mut().push(Value::Closure(closure));
-
-    assert_eq!(
-        format!("{}", val.clone()),
-        "Vec([Vec(3), UpValue(Vec(3)), Closure(0, vec✓)])"
-    );
 }
 
 impl PartialOrd for Value {
@@ -329,6 +298,15 @@ fn test_bitop_not() {
     assert_eq!(!&Value::Bool(false), Ok(Value::Bool(true)));
 }
 
+#[test]
+fn test_reference() {
+    let val = Rc::new(RefCell::new(Value::Num(1.0)));
+    let upval = Value::UpValue(val.clone());
+    assert_eq!(upval == Value::Num(1.0), true);
+    assert_eq!(&Value::Num(1.0) + &upval, Ok(Value::Num(2.0)));
+    assert_eq!(&upval + &upval, Ok(Value::Num(2.0)));
+}
+
 impl Value {
     pub fn to_bool(&self) -> bool {
         match self {
@@ -357,15 +335,6 @@ impl Value {
 }
 
 #[test]
-fn test_upvalue() {
-    let val = Rc::new(RefCell::new(Value::Num(1.0)));
-    let upval = Value::UpValue(val.clone());
-    assert_eq!(upval == Value::Num(1.0), true);
-    assert_eq!(&Value::Num(1.0) + &upval, Ok(Value::Num(2.0)));
-    assert_eq!(&upval + &upval, Ok(Value::Num(2.0)));
-}
-
-#[test]
 fn test_upgrade() {
     let closure = Value::Closure(Rc::new(RefCell::new(Closure::new(0))));
     let upval = Value::UpValue(Rc::new(RefCell::new(closure)));
@@ -376,7 +345,7 @@ fn test_upgrade() {
 }
 
 #[test]
-fn test_scope_lift() {
+fn test_capture() {
     let closure = Rc::new(RefCell::new(Closure::new(0)));
     let value = Value::Closure(closure.clone());
 

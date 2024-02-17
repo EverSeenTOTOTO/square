@@ -1,0 +1,24 @@
+[let _0 /[f] /[x] x]
+
+[let next /[n] /[f] /[x] [f [[n f] x]]]
+
+[let _1 [next _0]]
+[let _2 [next _1]]
+[let _3 [next _2]]
+[let _4 [next _3]]
+[let _5 [next _4]]
+[let _6 [next _5]]
+[let _7 [next _6]]
+[let _8 [next _7]]
+[let _9 [next _8]]
+
+[let toInt /[n] [begin
+                [let f /[x] [+ x 1]]
+                [[n f] 0]]]
+
+[print [toInt _1]]
+[print [toInt _8]]
+
+[let add /[x] /[y] [[x next] y]]
+
+[print [toInt [[add _2] _3]]]

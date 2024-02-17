@@ -478,7 +478,7 @@ fn test_emit_while() {
 
 fn emit_begin(
     input: &str,
-    begin_token: &Token,
+    _begin_token: &Token,
     expressions: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
@@ -549,13 +549,16 @@ fn emit_call(
                     result.push(Inst::CALL);
                 }
                 "match" => todo!(),
-                "print" => todo!(),
                 "typeof" => todo!(),
                 "callcc" => todo!(),
                 "obj" => todo!(),
                 "vec" => {
                     result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
                     result.push(Inst::PACK(expressions.len() - 1));
+                }
+                "print" | "println" => {
+                    result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
+                    result.push(Inst::SYSCALL(name.clone()));
                 }
                 _ => {
                     ctx.borrow_mut().mark_if_capture(name);
@@ -840,7 +843,7 @@ fn emit_expand(
         }
     }
 
-    result.push(Inst::POP); // drop the vec on top of operand stack
+    result.push(Inst::POP); // drop the pack on top of operand stack
 
     return Ok(result);
 }

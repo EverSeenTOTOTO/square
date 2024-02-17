@@ -1,24 +1,18 @@
-[= _0 /[f] /[x] x]
+[let cons /[x g] /[f] [f x g]]
+[let car /[p] [p /[x .] x]]
+[let cdr /[p] [p /[x g] [g]]]
 
-[= next /[n] /[f] /[x] [f [[n f] x]]]
+[let ones [cons 1 /[] ones]]
 
-[= _1 [next _0]]
-[= _2 [next _1]]
-[= _3 [next _2]]
-[= _4 [next _3]]
-[= _5 [next _4]]
-[= _6 [next _5]]
-[= _7 [next _6]]
-[= _8 [next _7]]
-[= _9 [next _8]]
+[println [car ones]]
+[println [car [cdr [cdr ones]]]]
 
-[= toInt /[n] [begin
-                [= f /[x] [+ x 1]]
-                [[n f] 0]]]
+[let list_add /[a b] [cons 
+  [+ [car a] [car b]]
+  /[] [list_add [cdr a] [cdr b]]]]
 
-[print [toInt _1]]
-[print [toInt _8]]
+[let ints [cons 1 /[] [list_add ones ints]]]
 
-[= add /[x] /[y] [[x next] y]]
+[println [car ints]]
+[println [car [cdr [cdr ints]]]]
 
-[print [toInt [[add _2] _3]]]

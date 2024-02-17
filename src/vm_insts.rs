@@ -38,6 +38,8 @@ pub enum Inst {
     RET,
     PUSH_CLOSURE(Closure), // closure meta at compile time, which contains function address and capture names
 
+    SYSCALL(String), // call external functions
+
     PACK(usize), // pack n elements on top of the operand stack
 
     // (offset, index), peek an element within the top pack of the operand stack.
@@ -50,6 +52,7 @@ impl fmt::Display for Inst {
         match self {
             Inst::PUSH(value) => write!(f, "PUSH {}", value),
             Inst::POP => write!(f, "POP"),
+
             Inst::ADD => write!(f, "ADD"),
             Inst::SUB => write!(f, "SUB"),
             Inst::MUL => write!(f, "MUL"),
@@ -67,10 +70,13 @@ impl fmt::Display for Inst {
             Inst::GE => write!(f, "GE"),
             Inst::SHL => write!(f, "SHL"),
             Inst::SHR => write!(f, "SHR"),
+
             Inst::JMP(value) => write!(f, "JMP {}", value),
             Inst::JNE(value) => write!(f, "JNE {}", value),
+
             Inst::STORE(frame_offset, name) => write!(f, "STORE {} {}", frame_offset, name),
             Inst::LOAD(name) => write!(f, "LOAD {}", name),
+
             Inst::CALL => write!(f, "CALL"),
             Inst::RET => write!(f, "RET"),
             Inst::PUSH_CLOSURE(closure) => write!(
@@ -79,6 +85,9 @@ impl fmt::Display for Inst {
                 "PUSH_CLOSURE {}",
                 closure,
             ),
+
+            Inst::SYSCALL(name) => write!(f, "SYSCALL {}", name),
+
             Inst::PACK(len) => write!(f, "PACK {}", len),
             Inst::PEEK(offset, index) => write!(f, "PEEK {} {}", offset, index),
         }
