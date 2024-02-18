@@ -110,7 +110,7 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 ```lisp
 [let o [obj 
         ['x' 42]
-        ['inc' /[this] [+= this.x 1]]
+        ['inc' /[this] [+= this.x 1]]]]
 
 [println o]
 [o.inc]

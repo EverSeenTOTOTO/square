@@ -23,6 +23,7 @@ mod scan;
 mod vm;
 mod vm_insts;
 mod vm_value;
+mod builtin;
 
 #[cfg(not(test))]
 #[panic_handler]

@@ -60,18 +60,8 @@ fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitRes
             return Ok(vec![Inst::PUSH(val)]);
         }
         Token::Id(_, id) => {
-            let inst = match id.as_str() {
-                // build-in literals
-                "true" => Inst::PUSH(Value::Bool(true)),
-                "false" => Inst::PUSH(Value::Bool(false)),
-                "nil" => Inst::PUSH(Value::Nil),
-                _ => {
-                    ctx.borrow_mut().mark_if_capture(id);
-                    Inst::LOAD(id.clone())
-                }
-            };
-
-            return Ok(vec![inst]);
+            ctx.borrow_mut().mark_if_capture(id);
+            return Ok(vec![Inst::LOAD(id.clone())]);
         }
         _ => {
             return Err(SquareError::SyntaxError(
@@ -111,7 +101,7 @@ fn test_emit_token_lit() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    assert_eq!(insts, vec![Inst::PUSH(Value::Nil)]);
+    assert_eq!(insts, vec![Inst::LOAD("nil".to_string())]);
 }
 
 #[test]
@@ -384,7 +374,7 @@ fn test_emit_if_true() {
         insts,
         vec![
             Inst::JMP(6),
-            Inst::PUSH(Value::Bool(true)),
+            Inst::LOAD("true".to_string()),
             Inst::JNE(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(1),
@@ -407,7 +397,7 @@ fn test_emit_if_true_false() {
         insts,
         vec![
             Inst::JMP(6),
-            Inst::PUSH(Value::Bool(true)),
+            Inst::LOAD("true".to_string()),
             Inst::JNE(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(1),
@@ -464,7 +454,7 @@ fn test_emit_while() {
         insts,
         vec![
             Inst::JMP(5),
-            Inst::PUSH(Value::Bool(true)),
+            Inst::LOAD("true".to_string()),
             Inst::JNE(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(-4),
@@ -532,7 +522,7 @@ fn emit_call(
     match first.as_ref() {
         Node::Token(id) => match id {
             Token::Id(_, name) => match name.as_str() {
-                // build-in functions
+                // build-in function with speciall syntax
                 "if" => {
                     result.extend(emit_if(input, id, expressions, ctx)?);
                     result.push(Inst::PACK(0));
@@ -549,19 +539,8 @@ fn emit_call(
                     result.push(Inst::CALL);
                 }
                 "match" => todo!(),
-                "typeof" => todo!(),
-                "callcc" => todo!(),
-                "obj" => todo!(),
-                "vec" => {
-                    result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
-                    result.push(Inst::PACK(expressions.len() - 1));
-                }
-                "print" | "println" => {
-                    result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
-                    result.push(Inst::PACK(expressions.len() - 1));
-                    result.push(Inst::SYSCALL(name.clone()));
-                }
                 _ => {
+                    // normal function call
                     ctx.borrow_mut().mark_if_capture(name);
                     result.push(Inst::LOAD(name.clone()));
                     result.extend(emit(input, &expressions[1..].to_vec(), ctx)?); // provided params

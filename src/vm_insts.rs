@@ -36,9 +36,7 @@ pub enum Inst {
 
     CALL,
     RET,
-    PUSH_CLOSURE(Closure), // closure meta at compile time, which contains function address and capture names
-
-    SYSCALL(String), // call external functions
+    PUSH_CLOSURE(Closure), // create a closure and push on top of the operand stack
 
     PACK(usize), // pack n elements on top of the operand stack
 
@@ -85,8 +83,6 @@ impl fmt::Display for Inst {
                 "PUSH_CLOSURE {}",
                 closure,
             ),
-
-            Inst::SYSCALL(name) => write!(f, "SYSCALL {}", name),
 
             Inst::PACK(len) => write!(f, "PACK {}", len),
             Inst::PEEK(offset, index) => write!(f, "PEEK {} {}", offset, index),

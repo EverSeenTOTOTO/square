@@ -17,6 +17,7 @@ use crate::errors::SquareError;
 
 // use at both runtime and compile time
 // at compile time, ip is the offset from instruction to fn definition, upvalues is empty and captures contains variable names
+// at runtime, ip is the function address or syscall index(when < 0), upvalues contains captured variables
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
     pub ip: i32,

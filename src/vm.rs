@@ -4,6 +4,7 @@ use core::{cell::RefCell, fmt};
 use hashbrown::{HashMap, HashSet};
 
 use crate::{
+    builtin::Builtin,
     code_frame::Position,
     emit::{emit, EmitContext},
     errors::SquareError,
@@ -19,8 +20,8 @@ type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         match self {
-            Inst::PUSH(value) => self.push(vm, value.clone(), pc),
-            Inst::POP => self.pop(vm, pc),
+            Inst::PUSH(value) => vm.current_frame().push(value.clone()),
+            Inst::POP => vm.current_frame().pop(),
 
             Inst::ADD => self.binop(vm, &|a, b| a + b, pc),
             Inst::SUB => self.binop(vm, &|a, b| a - b, pc),
@@ -102,7 +103,7 @@ impl Inst {
                         frame.define(name, cloned);
                     }
 
-                    return self.pop(vm, pc);
+                    return frame.pop();
                 }
 
                 Err(SquareError::InstructionError(
@@ -122,7 +123,7 @@ impl Inst {
                         *pc,
                     ))
                 };
-                self.push(vm, result?, pc)
+                frame.push(result?)
             }
 
             Inst::CALL => {
@@ -142,7 +143,7 @@ impl Inst {
 
                 frame.sp -= 2;
 
-                let err = Err(SquareError::InstructionError(
+                let error = Err(SquareError::InstructionError(
                     format!("bad call, cannot call with {}", func),
                     self.clone(),
                     *pc,
@@ -154,10 +155,10 @@ impl Inst {
                         if let Value::Closure(ref closure) = *val.borrow() {
                             self.call(vm, closure.clone(), params, pc)
                         } else {
-                            err
+                            error
                         }
                     }
-                    _ => err,
+                    _ => error,
                 }
             }
             Inst::RET => {
@@ -171,7 +172,7 @@ impl Inst {
                 vm.call_frame = frame.prev.take();
 
                 // always return the top value
-                return self.push(vm, top, pc);
+                return vm.current_frame().push(top);
             }
             Inst::PUSH_CLOSURE(meta) => {
                 // create closure
@@ -198,40 +199,15 @@ impl Inst {
                         target_frame.insert_local(&name, upvalue.clone());
                     } else {
                         // else undefined yet, if later be defined in same scope,
-                        // the value will be updated (see scope lifting in implementation of Inst::STORE)
+                        // the value will be updated
                         let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
+
                         closure.capture(&name, &upvalue);
                         frame.insert_local(&name, upvalue.clone());
                     }
                 }
 
-                self.push(vm, Value::Closure(Rc::new(RefCell::new(closure))), pc)
-            }
-
-            Inst::SYSCALL(name) => {
-                #[cfg(not(test))]
-                use crate::print;
-
-                match name.as_str() {
-                    "print" => {
-                        if let Some(Value::Vec(top)) = vm.current_frame().top() {
-                            top.borrow().iter().for_each(|val| print!("{}", val));
-                        }
-                        Ok(())
-                    }
-                    "println" => {
-                        if let Some(Value::Vec(top)) = vm.current_frame().top() {
-                            top.borrow().iter().for_each(|val| print!("{}", val));
-                        }
-                        print!("\n");
-                        Ok(())
-                    }
-                    _ => Err(SquareError::InstructionError(
-                        format!("unknown syscall {}", name),
-                        self.clone(),
-                        *pc,
-                    )),
-                }
+                frame.push(Value::Closure(Rc::new(RefCell::new(closure))))
             }
 
             Inst::PACK(len) => {
@@ -250,11 +226,11 @@ impl Inst {
                     result.push(frame.stack[index].clone());
                 }
                 frame.sp -= *len;
-                self.push(vm, Value::Vec(Rc::new(RefCell::new(result))), pc)
+                frame.push(Value::Vec(Rc::new(RefCell::new(result))))
             }
             Inst::PEEK(offset, i) => {
-                let top = vm.current_frame().top();
-                let result = if let Some(Value::Vec(val)) = top {
+                let frame = vm.current_frame();
+                let result = if let Some(Value::Vec(val)) = frame.top() {
                     let pack = val.borrow();
 
                     if *offset >= pack.len() {
@@ -293,35 +269,9 @@ impl Inst {
                     ))
                 };
 
-                self.push(vm, result?, pc)
+                frame.push(result?)
             }
         }
-    }
-
-    fn push(&self, vm: &mut VM, value: Value, _pc: &mut usize) -> ExecResult {
-        let frame = vm.current_frame();
-
-        if frame.sp >= frame.stack.len() {
-            frame.stack.resize(frame.stack.len() * 2, Value::Nil);
-        }
-
-        frame.stack[frame.sp] = value;
-        frame.sp += 1;
-        Ok(())
-    }
-
-    fn pop(&self, vm: &mut VM, pc: &mut usize) -> ExecResult {
-        let frame = vm.current_frame();
-
-        if frame.sp < 1 {
-            return Err(SquareError::InstructionError(
-                "bad pop, operand stack empty".to_string(),
-                self.clone(),
-                *pc,
-            ));
-        }
-        frame.sp -= 1;
-        Ok(())
     }
 
     fn binop(&self, vm: &mut VM, op_fn: &OpFn, pc: &mut usize) -> ExecResult {
@@ -367,6 +317,10 @@ impl Inst {
         params: Value,
         pc: &mut usize,
     ) -> ExecResult {
+        if closure.borrow().ip < 0 {
+            return self.syscall(vm, closure.borrow().ip, params, pc);
+        }
+
         let mut frame = CallFrame::new();
         frame.prev = vm.call_frame.take();
         frame.ra = *pc;
@@ -374,13 +328,25 @@ impl Inst {
         frame.stack[0] = params;
         frame.sp = 1;
         // fill up captures
-        frame.extend_local(&closure);
+        frame.extend_local(closure.borrow().upvalues.clone());
 
         vm.call_frame = Some(Box::new(frame));
         // jump to function
         *pc = closure.borrow().ip as usize;
 
         Ok(())
+    }
+
+    fn syscall(&self, vm: &mut VM, ip: i32, params: Value, pc: &mut usize) -> ExecResult {
+        if let Some(syscall) = vm.buildin.syscalls.get(&ip) {
+            syscall.clone()(vm, params, pc)
+        } else {
+            Err(SquareError::InstructionError(
+                format!("undefined syscall {}", ip),
+                self.clone(),
+                *pc,
+            ))
+        }
     }
 }
 
@@ -425,6 +391,21 @@ impl CallFrame {
         }
     }
 
+    pub fn push(&mut self, value: Value) -> ExecResult {
+        if self.sp >= self.stack.len() {
+            self.stack.resize(self.stack.len() * 2, Value::Nil);
+        }
+
+        self.stack[self.sp] = value;
+        self.sp += 1;
+        Ok(())
+    }
+
+    pub fn pop(&mut self) -> ExecResult {
+        self.sp -= 1;
+        Ok(())
+    }
+
     pub fn top(&self) -> Option<&Value> {
         if self.sp <= 0 {
             return None;
@@ -452,8 +433,8 @@ impl CallFrame {
         self.locals.insert(name.to_string(), value);
     }
 
-    pub fn extend_local(&mut self, closure: &Rc<RefCell<Closure>>) {
-        self.locals.extend(closure.borrow().upvalues.clone());
+    pub fn extend_local(&mut self, upvalues: HashMap<String, Value>) {
+        self.locals.extend(upvalues);
     }
 
     pub fn resolve(&mut self, name: &str) -> Option<&Value> {
@@ -490,12 +471,14 @@ fn test_define_resolve() {
 
 pub struct VM {
     pub call_frame: Option<Box<CallFrame>>, // TODO: Vec<CallFrame>
+    buildin: Builtin,
 }
 
 impl VM {
     pub fn new() -> Self {
         Self {
             call_frame: Some(Box::new(CallFrame::new())),
+            buildin: Builtin::new(),
         }
     }
 
@@ -519,7 +502,12 @@ impl VM {
     }
 
     pub fn run(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
-        self.current_frame().ra = insts.len();
+        let buildin_values = self.buildin.values.clone();
+
+        let frame = self.current_frame();
+
+        frame.extend_local(buildin_values);
+        frame.ra = insts.len();
 
         while *pc < insts.len() {
             self.step(insts, pc)?;
@@ -670,7 +658,7 @@ fn test_exec_define_expand_dot_error() {
         Err(SquareError::InstructionError(
             "bad peek, index 1 out of range, pack length is 1".to_string(),
             Inst::PEEK(0, 1),
-            4,
+            6,
         ))
     );
 }
@@ -700,7 +688,7 @@ fn test_exec_define_expand_greed_error() {
         Err(SquareError::InstructionError(
             "bad peek, offset 0 out of range, pack length is 0".to_string(),
             Inst::PEEK(0, -1),
-            1,
+            3,
         ))
     );
 }
