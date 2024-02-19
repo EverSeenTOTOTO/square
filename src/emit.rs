@@ -131,7 +131,7 @@ fn emit_assign(
                     ctx.borrow_mut().add_local(source.clone());
                 }
 
-                insts.push(Inst::STORE(if is_define { 0 } else { -1 }, source.clone()));
+                insts.push(Inst::STORE(source.clone()));
             } else {
                 return Err(SquareError::SyntaxError(
                     input.to_string(),
@@ -161,10 +161,7 @@ fn test_emit_assign() {
 
     assert_eq!(
         insts,
-        vec![
-            Inst::PUSH(Value::Num(42.0)),
-            Inst::STORE(-1, "a".to_string())
-        ]
+        vec![Inst::PUSH(Value::Num(42.0)), Inst::STORE("a".to_string())]
     );
 }
 
@@ -176,10 +173,7 @@ fn test_emit_define() {
 
     assert_eq!(
         insts,
-        vec![
-            Inst::PUSH(Value::Num(42.0)),
-            Inst::STORE(0, "a".to_string())
-        ]
+        vec![Inst::PUSH(Value::Num(42.0)), Inst::STORE("a".to_string())]
     );
 }
 
@@ -221,7 +215,7 @@ fn emit_op(
                 if let Token::Id(_, source) = token {
                     result.extend(emit(input, expressions, ctx)?);
                     result.push(action);
-                    result.push(Inst::STORE(-1, source.clone()));
+                    result.push(Inst::STORE(source.clone()));
                     // always push latest value to operand stack
                     result.push(Inst::LOAD(source.clone()));
                     return Ok(result);
@@ -302,7 +296,7 @@ fn test_emit_op_assign() {
             Inst::LOAD("a".to_string()),
             Inst::LOAD("b".to_string()),
             Inst::ADD,
-            Inst::STORE(-1, "a".to_string()),
+            Inst::STORE("a".to_string()),
             Inst::LOAD("a".to_string()),
         ]
     );
@@ -325,20 +319,26 @@ fn emit_if(
 
     let mut result = vec![];
     let condition = expressions.get(1).unwrap();
+    ctx.borrow_mut().push_scope();
     let condition_result = emit_node(input, condition, ctx)?;
     let condition_len = condition_result.len() as i32;
     result.extend(condition_result);
 
     let true_branch = expressions.get(2).unwrap();
 
+    ctx.borrow_mut().push_scope();
     let true_branch_result = emit_node(input, true_branch, ctx)?;
+    let mut captures = ctx.borrow_mut().pop_scope();
     let true_branch_len = true_branch_result.len() as i32;
     // skip true branch, +1 for one extra JMP instcurtion
     result.push(Inst::JNE(true_branch_len + 1));
     result.extend(true_branch_result);
 
     if let Some(false_branch) = expressions.get(3) {
+        ctx.borrow_mut().push_scope();
         let false_branch_result = emit_node(input, false_branch, ctx)?;
+        captures.extend(ctx.borrow_mut().pop_scope());
+        captures.extend(ctx.borrow_mut().pop_scope());
         let false_branch_len = false_branch_result.len() as i32;
         // skip false branch
         result.push(Inst::JMP(false_branch_len));
@@ -348,17 +348,20 @@ fn emit_if(
             0,
             Inst::JMP(condition_len + true_branch_len + false_branch_len + 3),
         );
-        result.push(Inst::PUSH_CLOSURE(Closure::new(
-            -4 - (condition_len + true_branch_len + false_branch_len),
-        )));
+
+        let mut meta = Closure::new(-4 - (condition_len + true_branch_len + false_branch_len));
+        meta.captures = captures;
+        result.push(Inst::PUSH_CLOSURE(meta));
     } else {
         result.push(Inst::JMP(1));
         result.push(Inst::PUSH(Value::Nil)); // FIXME: else { nil }
         result.push(Inst::RET);
         result.insert(0, Inst::JMP(condition_len + true_branch_len + 4));
-        result.push(Inst::PUSH_CLOSURE(Closure::new(
-            -5 - (condition_len + true_branch_len),
-        )));
+
+        captures.extend(ctx.borrow_mut().pop_scope());
+        let mut meta = Closure::new(-5 - (condition_len + true_branch_len));
+        meta.captures = captures;
+        result.push(Inst::PUSH_CLOSURE(meta));
     }
 
     return Ok(result);
@@ -380,7 +383,15 @@ fn test_emit_if_true() {
             Inst::JMP(1),
             Inst::PUSH(Value::Nil),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure::new(-7)),
+            Inst::PUSH_CLOSURE(Closure {
+                ip: -7,
+                upvalues: HashMap::new(),
+                captures: {
+                    let mut unresolved_true = HashSet::new();
+                    unresolved_true.insert("true".to_string());
+                    unresolved_true
+                }
+            }),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -403,7 +414,15 @@ fn test_emit_if_true_false() {
             Inst::JMP(1),
             Inst::PUSH(Value::Num(24.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure::new(-7)),
+            Inst::PUSH_CLOSURE(Closure {
+                ip: -7,
+                upvalues: HashMap::new(),
+                captures: {
+                    let mut unresolved_true = HashSet::new();
+                    unresolved_true.insert("true".to_string());
+                    unresolved_true
+                }
+            }),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -426,11 +445,15 @@ fn emit_while(
     }
 
     let condition = expressions.get(1).unwrap();
+    ctx.borrow_mut().push_scope();
     let condition_result = emit_node(input, condition, ctx)?;
     let condition_len = condition_result.len() as i32;
     let body = expressions.get(2).unwrap();
 
+    ctx.borrow_mut().push_scope();
     let body_result = emit_node(input, body, ctx)?;
+    let mut captures = ctx.borrow_mut().pop_scope();
+    captures.extend(ctx.borrow_mut().pop_scope());
     let body_len = body_result.len() as i32;
     let offset = condition_len + body_len;
 
@@ -440,7 +463,10 @@ fn emit_while(
     result.extend(body_result);
     result.push(Inst::JMP(-((condition_len + body_len + 2) as i32)));
     result.push(Inst::RET);
-    result.push(Inst::PUSH_CLOSURE(Closure::new(-4 - offset)));
+
+    let mut meta = Closure::new(-4 - offset);
+    meta.captures = captures;
+    result.push(Inst::PUSH_CLOSURE(meta));
     return Ok(result);
 }
 
@@ -459,7 +485,15 @@ fn test_emit_while() {
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(-4),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure::new(-6)),
+            Inst::PUSH_CLOSURE(Closure {
+                ip: -6,
+                upvalues: HashMap::new(),
+                captures: {
+                    let mut unresolved_true = HashSet::new();
+                    unresolved_true.insert("true".to_string());
+                    unresolved_true
+                }
+            }),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -472,12 +506,17 @@ fn emit_begin(
     expressions: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
+    ctx.borrow_mut().push_scope();
     let body = emit(input, &expressions[1..].to_vec(), ctx)?;
+    let captures = ctx.borrow_mut().pop_scope();
     let offset = body.len() as i32;
     let mut result = vec![Inst::JMP(1 + offset)];
     result.extend(body);
     result.push(Inst::RET);
-    result.push(Inst::PUSH_CLOSURE(Closure::new(-2 - offset)));
+
+    let mut meta = Closure::new(-2 - offset);
+    meta.captures = captures;
+    result.push(Inst::PUSH_CLOSURE(meta));
 
     return Ok(result);
 }
@@ -627,11 +666,11 @@ fn emit_fn(
     body: &Box<Node>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    if let Node::Expand(left_bracket, _, placehoders) = params.as_ref() {
+    if let Node::Expand(.., placehoders) = params.as_ref() {
         ctx.borrow_mut().push_scope();
         let params_result = emit_expand(input, true, placehoders, ctx)?;
         let body_result = emit_node(input, body, ctx)?;
-        let unresolved = ctx.borrow_mut().pop_scope();
+        let captures = ctx.borrow_mut().pop_scope();
         let offset = (params_result.len() + body_result.len()) as i32;
 
         let mut result = vec![Inst::JMP(offset + 1)];
@@ -640,7 +679,7 @@ fn emit_fn(
         result.push(Inst::RET);
 
         let mut meta = Closure::new(-(offset + 2));
-        meta.captures = unresolved;
+        meta.captures = captures;
 
         result.push(Inst::PUSH_CLOSURE(meta));
 
@@ -679,7 +718,7 @@ fn test_emit_fn_params() {
         vec![
             Inst::JMP(5),
             Inst::PEEK(0, 0), // peek param
-            Inst::STORE(0, "x".to_string()),
+            Inst::STORE("x".to_string()),
             Inst::POP, // pop param pack
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
@@ -721,12 +760,6 @@ fn test_emit_fn_capture_nested() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    let mut unresolved_y = HashSet::new();
-    unresolved_y.insert("y".to_string());
-    let mut unresolved_xy = HashSet::new();
-    unresolved_xy.insert("x".to_string());
-    unresolved_xy.insert("y".to_string());
-
     assert_eq!(
         insts,
         vec![
@@ -734,7 +767,7 @@ fn test_emit_fn_capture_nested() {
             Inst::POP,
             Inst::JMP(10),
             Inst::PUSH(Value::Num(1.0)),
-            Inst::STORE(0, "x".to_string()),
+            Inst::STORE("x".to_string()),
             Inst::JMP(5),
             Inst::POP,
             Inst::LOAD("x".to_string()),
@@ -744,17 +777,34 @@ fn test_emit_fn_capture_nested() {
             Inst::PUSH_CLOSURE(Closure {
                 ip: -6,
                 upvalues: HashMap::new(),
-                captures: unresolved_xy
+                captures: {
+                    let mut unresolved_xy = HashSet::new();
+                    unresolved_xy.insert("x".to_string());
+                    unresolved_xy.insert("y".to_string());
+                    unresolved_xy
+                }
             }),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure::new(-11)),
+            Inst::PUSH_CLOSURE(Closure {
+                ip: -11,
+                upvalues: HashMap::new(),
+                captures: {
+                    let mut unresolved_y = HashSet::new();
+                    unresolved_y.insert("y".to_string());
+                    unresolved_y
+                }
+            }),
             Inst::PACK(0),
             Inst::CALL,
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure {
                 ip: -17,
                 upvalues: HashMap::new(),
-                captures: unresolved_y
+                captures: {
+                    let mut unresolved_y = HashSet::new();
+                    unresolved_y.insert("y".to_string());
+                    unresolved_y
+                }
             }),
         ]
     );
@@ -788,7 +838,7 @@ fn emit_expand(
                     }
 
                     result.push(Inst::PEEK(offset, index));
-                    result.push(Inst::STORE(if is_define { 0 } else { -1 }, source.clone()));
+                    result.push(Inst::STORE(source.clone()));
                 }
                 Token::Op(pos, op) => {
                     if op == "." {
@@ -839,9 +889,9 @@ fn test_emit_expand() {
         vec![
             Inst::LOAD("c".to_string()),
             Inst::PEEK(0, 0),
-            Inst::STORE(-1, "a".to_string()),
+            Inst::STORE("a".to_string()),
             Inst::PEEK(0, 1),
-            Inst::STORE(-1, "b".to_string()),
+            Inst::STORE("b".to_string()),
             Inst::POP
         ]
     );
@@ -860,7 +910,7 @@ fn test_emit_expand_dot() {
             Inst::PEEK(0, 0),
             Inst::POP,
             Inst::PEEK(0, 1),
-            Inst::STORE(-1, "b".to_string()),
+            Inst::STORE("b".to_string()),
             Inst::POP
         ]
     );
@@ -877,7 +927,7 @@ fn test_emit_expand_greed() {
         vec![
             Inst::LOAD("c".to_string()),
             Inst::PEEK(0, -1),
-            Inst::STORE(-1, "b".to_string()),
+            Inst::STORE("b".to_string()),
             Inst::POP
         ]
     );
@@ -898,7 +948,7 @@ fn test_emit_expand_greed_offset() {
             Inst::PEEK(1, -2),
             Inst::POP,
             Inst::PEEK(2, -1),
-            Inst::STORE(-1, "b".to_string()),
+            Inst::STORE("b".to_string()),
             Inst::POP
         ]
     );
@@ -917,7 +967,7 @@ fn test_emit_expand_nested() {
             Inst::PEEK(0, 0),
             Inst::PEEK(0, 0),
             Inst::PEEK(0, 0),
-            Inst::STORE(-1, "b".to_string()),
+            Inst::STORE("b".to_string()),
             Inst::POP,
             Inst::POP,
             Inst::POP,

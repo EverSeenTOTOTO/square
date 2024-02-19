@@ -30,8 +30,7 @@ pub enum Inst {
     JMP(i32),
     JNE(i32), // jump if false
 
-    // TODO: (frame_offset, varname), currently frame_offset is either 0(define) or -1(assign)
-    STORE(i32, String),
+    STORE(String),
     LOAD(String),
 
     CALL,
@@ -72,7 +71,7 @@ impl fmt::Display for Inst {
             Inst::JMP(value) => write!(f, "JMP {}", value),
             Inst::JNE(value) => write!(f, "JNE {}", value),
 
-            Inst::STORE(frame_offset, name) => write!(f, "STORE {} {}", frame_offset, name),
+            Inst::STORE(name) => write!(f, "STORE {}", name),
             Inst::LOAD(name) => write!(f, "LOAD {}", name),
 
             Inst::CALL => write!(f, "CALL"),

@@ -81,49 +81,33 @@ impl Inst {
                 }
             }
 
-            Inst::STORE(frame_offset, name) => {
+            Inst::STORE(name) => {
                 let frame = vm.current_frame();
 
                 if let Some(val) = frame.top() {
                     let cloned = val.clone();
                     frame.pop();
-
-                    if *frame_offset == 0 {
-                        // define
-                        frame.assign(name, cloned);
-                    } else {
-                        // assign
-                        if let Some(target_frame) = vm.resolve_frame(name) {
-                            target_frame.assign(name, cloned);
-                        } else {
-                            return Err(SquareError::InstructionError(
-                                format!("undefined variable: {}", name),
-                                self.clone(),
-                                *pc,
-                            ));
-                        }
-                    }
-
-                    return Ok(());
+                    Ok(frame.assign_local(name, cloned))
+                } else {
+                    Err(SquareError::InstructionError(
+                        "bad store, operand stack empty".to_string(),
+                        self.clone(),
+                        *pc,
+                    ))
                 }
-
-                Err(SquareError::InstructionError(
-                    "bad store, operand stack empty".to_string(),
-                    self.clone(),
-                    *pc,
-                ))
             }
             Inst::LOAD(name) => {
-                let result = if let Some(target_frame) = vm.resolve_frame(name) {
-                    Ok(target_frame.resolve(name).unwrap().clone())
+                let frame = vm.current_frame();
+                if let Some(value) = frame.resolve_local(name) {
+                    let cloned = value.clone();
+                    Ok(frame.push(cloned))
                 } else {
                     Err(SquareError::InstructionError(
                         format!("undefined variable: {}", name),
                         self.clone(),
                         *pc,
                     ))
-                };
-                Ok(vm.current_frame().push(result?))
+                }
             }
 
             Inst::CALL => {
@@ -187,29 +171,25 @@ impl Inst {
                     ));
                 }
 
-                let mut lazy: HashMap<String, Value> = HashMap::new();
+                let frame = vm.current_frame();
 
                 // upgrade value to captured
                 let varnames: Vec<_> = closure.captures.iter().cloned().collect();
                 for name in varnames {
-                    if let Some(target_frame) = vm.resolve_frame(&name) {
-                        let upvalue = target_frame.resolve(&name).unwrap().upgrade();
+                    if let Some(value) = frame.resolve_local(&name) {
+                        let upvalue = value.upgrade();
 
                         closure.capture(&name, &upvalue);
-                        target_frame.insert(&name, upvalue.clone());
+                        frame.insert_local(&name, upvalue.clone());
                     } else {
                         // else undefined yet, if later be defined in same scope,
                         // the value will be updated
                         let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
 
                         closure.capture(&name, &upvalue);
-                        lazy.insert(name.clone(), upvalue.clone());
+                        frame.insert_local(&name, upvalue.clone());
                     }
                 }
-
-                let frame = vm.current_frame();
-
-                frame.extend(lazy);
 
                 Ok(frame.push(Value::Closure(Rc::new(RefCell::new(closure)))))
             }
@@ -331,7 +311,7 @@ impl Inst {
         frame.stack[0] = params;
         frame.sp = 1;
         // fill up captures
-        frame.extend(closure.borrow().upvalues.clone());
+        frame.extend_locals(closure.borrow().upvalues.clone());
 
         vm.push_frame(frame);
         // jump to function
@@ -413,27 +393,27 @@ impl CallFrame {
         Some(&self.stack[self.sp - 1])
     }
 
-    pub fn insert(&mut self, name: &str, value: Value) {
+    pub fn insert_local(&mut self, name: &str, value: Value) {
         self.locals.insert(name.to_string(), value);
     }
 
-    pub fn extend(&mut self, upvalues: HashMap<String, Value>) {
+    pub fn extend_locals(&mut self, upvalues: HashMap<String, Value>) {
         self.locals.extend(upvalues);
     }
 
-    pub fn resolve(&mut self, name: &str) -> Option<&Value> {
+    pub fn resolve_local(&mut self, name: &str) -> Option<&Value> {
         self.locals.get(name)
     }
 
-    pub fn assign(&mut self, name: &str, value: Value) {
+    pub fn assign_local(&mut self, name: &str, value: Value) {
         if let Some(Value::UpValue(old)) = self.locals.get(name) {
-            *old.borrow_mut() = if let Value::UpValue(inner) = value {
-                inner.borrow().clone()
+            *old.borrow_mut() = if let Value::UpValue(new) = value {
+                new.borrow().clone()
             } else {
                 value
             };
         } else {
-            self.insert(name, value);
+            self.insert_local(name, value);
         }
     }
 }
@@ -463,16 +443,6 @@ impl VM {
         self.call_frames.pop()
     }
 
-    pub fn resolve_frame(&mut self, name: &str) -> Option<&mut CallFrame> {
-        for frame in self.call_frames.iter_mut().rev() {
-            if frame.locals.contains_key(name) {
-                return Some(frame);
-            }
-        }
-
-        None
-    }
-
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
@@ -493,7 +463,7 @@ impl VM {
 
         let frame = self.current_frame();
 
-        frame.extend(buildin_values);
+        frame.extend_locals(buildin_values);
         frame.ra = insts.len();
 
         while *pc < insts.len() {
@@ -543,7 +513,7 @@ fn test_exec_load() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().assign("x", Value::Num(42.0));
+    vm.current_frame().assign_local("x", Value::Num(42.0));
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
@@ -578,7 +548,7 @@ fn test_exec_define() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
 #[test]
@@ -591,7 +561,7 @@ fn test_exec_assign() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
 #[test]
@@ -604,7 +574,7 @@ fn test_exec_define_expand() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
 #[test]
@@ -617,7 +587,7 @@ fn test_exec_assign_expand() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
 #[test]
@@ -630,7 +600,7 @@ fn test_exec_define_expand_dot() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
 #[test]
@@ -660,7 +630,7 @@ fn test_exec_define_expand_greed() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
 #[test]
@@ -690,7 +660,7 @@ fn test_exec_define_expand_nested() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
 #[test]
@@ -713,12 +683,12 @@ fn test_exec_op_assign() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().assign("x", Value::Num(1.0));
+    vm.current_frame().assign_local("x", Value::Num(1.0));
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
     assert_eq!(callframe.top().unwrap(), &Value::Num(3.0));
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(3.0))
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(3.0))
 }
 
 #[test]
@@ -746,8 +716,8 @@ fn test_exec_scope() {
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(1.0));
-    assert_eq!(callframe.resolve("y").unwrap(), &Value::Num(2.0));
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(1.0));
+    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(2.0));
 }
 
 #[test]
@@ -809,11 +779,11 @@ fn test_exec_while() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().assign("x", Value::Num(0.0));
+    vm.current_frame().assign_local("x", Value::Num(0.0));
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(4.0))
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(4.0))
 }
 
 #[test]
@@ -857,7 +827,7 @@ fn test_exec_fn_overwrite_params() {
 
     let callframe = vm.current_frame();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
-    assert_eq!(callframe.resolve("x").unwrap(), &Value::Num(24.0))
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(24.0))
 }
 
 #[test]
@@ -968,4 +938,17 @@ fn test_exec_fn_capture_self() {
 
     let callframe = vm.current_frame();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
+}
+
+#[test]
+fn test_exec_builtin() {
+    let code = "
+[let p println]
+[p nil]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
 }
