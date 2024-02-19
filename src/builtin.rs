@@ -69,7 +69,7 @@ impl Builtin {
             Rc::new(
                 |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
                     // params have already be packed
-                    vm.current_frame().push(params)
+                    Ok(vm.current_frame().push(params))
                 },
             ) as Syscall,
         );

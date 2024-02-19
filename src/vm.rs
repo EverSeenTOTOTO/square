@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
+use alloc::{format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
 use core::{cell::RefCell, fmt};
 
 use hashbrown::{HashMap, HashSet};
@@ -20,8 +20,8 @@ type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         match self {
-            Inst::PUSH(value) => vm.current_frame().push(value.clone()),
-            Inst::POP => vm.current_frame().pop(),
+            Inst::PUSH(value) => Ok(vm.current_frame().push(value.clone())),
+            Inst::POP => Ok(vm.current_frame().pop()),
 
             Inst::ADD => self.binop(vm, &|a, b| a + b, pc),
             Inst::SUB => self.binop(vm, &|a, b| a - b, pc),
@@ -86,10 +86,11 @@ impl Inst {
 
                 if let Some(val) = frame.top() {
                     let cloned = val.clone();
+                    frame.pop();
 
                     if *frame_offset == -1 {
                         // assign
-                        if let Some(target_frame) = frame.resolve_frame(name) {
+                        if let Some(target_frame) = vm.resolve_frame(name) {
                             target_frame.define(name, cloned);
                         } else {
                             return Err(SquareError::InstructionError(
@@ -103,7 +104,7 @@ impl Inst {
                         frame.define(name, cloned);
                     }
 
-                    return frame.pop();
+                    return Ok(());
                 }
 
                 Err(SquareError::InstructionError(
@@ -113,9 +114,8 @@ impl Inst {
                 ))
             }
             Inst::LOAD(name) => {
-                let frame = vm.current_frame();
-                let result = if let Some(val) = frame.resolve(name) {
-                    Ok(val.clone())
+                let result = if let Some(target_frame) = vm.resolve_frame(name) {
+                    Ok(target_frame.resolve(name).unwrap().clone())
                 } else {
                     Err(SquareError::InstructionError(
                         format!("undefined variable: {}", name),
@@ -123,7 +123,7 @@ impl Inst {
                         *pc,
                     ))
                 };
-                frame.push(result?)
+                Ok(vm.current_frame().push(result?))
             }
 
             Inst::CALL => {
@@ -169,10 +169,10 @@ impl Inst {
 
                 let top = frame.top().unwrap_or(&Value::Nil).clone();
 
-                vm.call_frame = frame.prev.take();
+                vm.pop_frame();
 
                 // always return the top value
-                return vm.current_frame().push(top);
+                Ok(vm.current_frame().push(top))
             }
             Inst::PUSH_CLOSURE(meta) => {
                 // create closure
@@ -187,27 +187,31 @@ impl Inst {
                     ));
                 }
 
-                let frame = vm.current_frame();
+                let mut lazy: HashMap<String, Value> = HashMap::new();
 
                 // upgrade value to captured
                 let varnames: Vec<_> = closure.captures.iter().cloned().collect();
                 for name in varnames {
-                    if let Some(target_frame) = frame.resolve_frame(&name) {
+                    if let Some(target_frame) = vm.resolve_frame(&name) {
                         let upvalue = target_frame.resolve(&name).unwrap().upgrade();
 
                         closure.capture(&name, &upvalue);
-                        target_frame.insert_local(&name, upvalue.clone());
+                        target_frame.insert(&name, upvalue.clone());
                     } else {
                         // else undefined yet, if later be defined in same scope,
                         // the value will be updated
                         let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
 
                         closure.capture(&name, &upvalue);
-                        frame.insert_local(&name, upvalue.clone());
+                        lazy.insert(name.clone(), upvalue.clone());
                     }
                 }
 
-                frame.push(Value::Closure(Rc::new(RefCell::new(closure))))
+                let frame = vm.current_frame();
+
+                frame.extend(lazy);
+
+                Ok(frame.push(Value::Closure(Rc::new(RefCell::new(closure)))))
             }
 
             Inst::PACK(len) => {
@@ -226,7 +230,7 @@ impl Inst {
                     result.push(frame.stack[index].clone());
                 }
                 frame.sp -= *len;
-                frame.push(Value::Vec(Rc::new(RefCell::new(result))))
+                Ok(frame.push(Value::Vec(Rc::new(RefCell::new(result)))))
             }
             Inst::PEEK(offset, i) => {
                 let frame = vm.current_frame();
@@ -269,7 +273,7 @@ impl Inst {
                     ))
                 };
 
-                frame.push(result?)
+                Ok(frame.push(result?))
             }
         }
     }
@@ -322,15 +326,14 @@ impl Inst {
         }
 
         let mut frame = CallFrame::new();
-        frame.prev = vm.call_frame.take();
         frame.ra = *pc;
         // always push params as first operand
         frame.stack[0] = params;
         frame.sp = 1;
         // fill up captures
-        frame.extend_local(closure.borrow().upvalues.clone());
+        frame.extend(closure.borrow().upvalues.clone());
 
-        vm.call_frame = Some(Box::new(frame));
+        vm.push_frame(frame);
         // jump to function
         *pc = closure.borrow().ip as usize;
 
@@ -359,7 +362,6 @@ pub struct CallFrame {
     sp: usize,
 
     ra: usize, // return address
-    prev: Option<Box<CallFrame>>,
 }
 
 impl fmt::Display for CallFrame {
@@ -387,23 +389,20 @@ impl CallFrame {
             stack: vec![Value::Nil; 8],
             sp: 0,
             ra: 0,
-            prev: None,
         }
     }
 
-    pub fn push(&mut self, value: Value) -> ExecResult {
+    pub fn push(&mut self, value: Value) {
         if self.sp >= self.stack.len() {
             self.stack.resize(self.stack.len() * 2, Value::Nil);
         }
 
         self.stack[self.sp] = value;
         self.sp += 1;
-        Ok(())
     }
 
-    pub fn pop(&mut self) -> ExecResult {
+    pub fn pop(&mut self) {
         self.sp -= 1;
-        Ok(())
     }
 
     pub fn top(&self) -> Option<&Value> {
@@ -414,33 +413,16 @@ impl CallFrame {
         Some(&self.stack[self.sp - 1])
     }
 
-    pub fn resolve_frame(&mut self, name: &str) -> Option<&mut CallFrame> {
-        if self.locals.contains_key(name) {
-            return Some(self);
-        }
-
-        let mut frame = &mut self.prev;
-        while let Some(f) = frame {
-            if f.locals.contains_key(name) {
-                return Some(f.as_mut());
-            }
-            frame = &mut f.prev;
-        }
-        return None;
-    }
-
-    pub fn insert_local(&mut self, name: &str, value: Value) {
+    pub fn insert(&mut self, name: &str, value: Value) {
         self.locals.insert(name.to_string(), value);
     }
 
-    pub fn extend_local(&mut self, upvalues: HashMap<String, Value>) {
+    pub fn extend(&mut self, upvalues: HashMap<String, Value>) {
         self.locals.extend(upvalues);
     }
 
     pub fn resolve(&mut self, name: &str) -> Option<&Value> {
-        let frame = self.resolve_frame(name)?;
-
-        return frame.locals.get(name);
+        self.locals.get(name)
     }
 
     pub fn define(&mut self, name: &str, value: Value) {
@@ -451,39 +433,44 @@ impl CallFrame {
                 value
             };
         } else {
-            self.insert_local(name, value);
+            self.insert(name, value);
         }
     }
 }
 
-#[test]
-fn test_define_resolve() {
-    let mut top = CallFrame::new();
-
-    top.define("a", Value::Num(42.0));
-
-    let mut frame = CallFrame::new();
-
-    frame.prev = Some(Box::new(top));
-
-    assert_eq!(frame.resolve("a"), Some(&Value::Num(42.0)));
-}
-
 pub struct VM {
-    pub call_frame: Option<Box<CallFrame>>, // TODO: Vec<CallFrame>
+    pub call_frames: Vec<CallFrame>,
     buildin: Builtin,
 }
 
 impl VM {
     pub fn new() -> Self {
         Self {
-            call_frame: Some(Box::new(CallFrame::new())),
+            call_frames: vec![CallFrame::new()],
             buildin: Builtin::new(),
         }
     }
 
     pub fn current_frame(&mut self) -> &mut CallFrame {
-        self.call_frame.as_mut().unwrap()
+        self.call_frames.last_mut().unwrap()
+    }
+
+    pub fn push_frame(&mut self, frame: CallFrame) {
+        self.call_frames.push(frame)
+    }
+
+    pub fn pop_frame(&mut self) -> Option<CallFrame> {
+        self.call_frames.pop()
+    }
+
+    pub fn resolve_frame(&mut self, name: &str) -> Option<&mut CallFrame> {
+        for frame in self.call_frames.iter_mut().rev() {
+            if frame.locals.contains_key(name) {
+                return Some(frame);
+            }
+        }
+
+        None
     }
 
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
@@ -506,7 +493,7 @@ impl VM {
 
         let frame = self.current_frame();
 
-        frame.extend_local(buildin_values);
+        frame.extend(buildin_values);
         frame.ra = insts.len();
 
         while *pc < insts.len() {
