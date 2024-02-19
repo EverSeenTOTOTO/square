@@ -859,23 +859,26 @@ fn parse_expr(input: &str, pos: &mut Position) -> ParseResult {
         _ if leading.source() == "/[" => parse_fn(input, pos),
         _ if leading.source() == "-" => {
             let minus = wrap(raise_token(input, pos))?;
-            let target = if let Token::Num(..) = wrap(lookahead(input, pos))? {
-                Box::new(Node::Token(wrap(raise_token(input, pos))?))
+            if let Token::Num(..) = wrap(lookahead(input, pos))? {
+                let num = wrap(raise_token(input, pos))?;
+                Ok(Box::new(Node::Token(Token::Num(
+                    leading.pos().clone(),
+                    format!("-{}", num.source()),
+                ))))
             } else {
-                parse_dot(input, pos)?
-            };
-
-            Ok(Box::new(Node::Op(
-                minus,
-                vec![
-                    // convert -42 into 0 - 42, TODO: optimize
-                    Box::new(Node::Token(Token::Num(
-                        leading.pos().clone(),
-                        "0".to_string(),
-                    ))),
-                    target,
-                ],
-            )))
+                let target = parse_dot(input, pos)?;
+                Ok(Box::new(Node::Op(
+                    minus,
+                    vec![
+                        // convert -x into 0 - 42
+                        Box::new(Node::Token(Token::Num(
+                            leading.pos().clone(),
+                            "0".to_string(),
+                        ))),
+                        target,
+                    ],
+                )))
+            }
         }
         Token::Num(..) | Token::Str(..) => Ok(Box::new(Node::Token(raise_token(input, pos)?))),
         _ => parse_dot(input, pos),

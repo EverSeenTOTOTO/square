@@ -88,10 +88,13 @@ impl Inst {
                     let cloned = val.clone();
                     frame.pop();
 
-                    if *frame_offset == -1 {
+                    if *frame_offset == 0 {
+                        // define
+                        frame.assign(name, cloned);
+                    } else {
                         // assign
                         if let Some(target_frame) = vm.resolve_frame(name) {
-                            target_frame.define(name, cloned);
+                            target_frame.assign(name, cloned);
                         } else {
                             return Err(SquareError::InstructionError(
                                 format!("undefined variable: {}", name),
@@ -99,9 +102,6 @@ impl Inst {
                                 *pc,
                             ));
                         }
-                    } else {
-                        // define
-                        frame.define(name, cloned);
                     }
 
                     return Ok(());
@@ -425,7 +425,7 @@ impl CallFrame {
         self.locals.get(name)
     }
 
-    pub fn define(&mut self, name: &str, value: Value) {
+    pub fn assign(&mut self, name: &str, value: Value) {
         if let Some(Value::UpValue(old)) = self.locals.get(name) {
             *old.borrow_mut() = if let Value::UpValue(inner) = value {
                 inner.borrow().clone()
@@ -543,7 +543,7 @@ fn test_exec_load() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().define("x", Value::Num(42.0));
+    vm.current_frame().assign("x", Value::Num(42.0));
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
@@ -713,7 +713,7 @@ fn test_exec_op_assign() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().define("x", Value::Num(1.0));
+    vm.current_frame().assign("x", Value::Num(1.0));
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
@@ -809,7 +809,7 @@ fn test_exec_while() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().define("x", Value::Num(0.0));
+    vm.current_frame().assign("x", Value::Num(0.0));
     vm.run(&insts, &mut 0).unwrap();
 
     let callframe = vm.current_frame();
