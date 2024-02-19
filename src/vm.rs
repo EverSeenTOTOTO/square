@@ -132,12 +132,13 @@ impl Inst {
                     self.clone(),
                     *pc,
                 ));
+                let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
 
                 match func {
-                    Value::Closure(closure) => self.call(vm, closure, params, pc),
+                    Value::Closure(closure) => self.call(vm, closure, params, is_tail_call, pc),
                     Value::UpValue(val) => {
                         if let Value::Closure(ref closure) = *val.borrow() {
-                            self.call(vm, closure.clone(), params, pc)
+                            self.call(vm, closure.clone(), params, is_tail_call, pc)
                         } else {
                             error
                         }
@@ -299,21 +300,33 @@ impl Inst {
         vm: &mut VM,
         closure: Rc<RefCell<Closure>>,
         params: Value,
+        is_tail_call: bool,
         pc: &mut usize,
     ) -> ExecResult {
         if closure.borrow().ip < 0 {
             return self.syscall(vm, closure.borrow().ip, params, pc);
         }
 
-        let mut frame = CallFrame::new();
-        frame.ra = *pc;
-        // always push params as first operand
-        frame.stack[0] = params;
-        frame.sp = 1;
-        // fill up captures
-        frame.extend_locals(closure.borrow().upvalues.clone());
+        if is_tail_call {
+            let frame = vm.current_frame();
+            // always push params as first operand
+            frame.stack[0] = params;
+            frame.sp = 1;
+            frame.clear_local();
+            // fill up captures
+            frame.extend_locals(closure.borrow().upvalues.clone());
+        } else {
+            let mut frame = CallFrame::new();
+            frame.ra = *pc;
+            // always push params as first operand
+            frame.stack[0] = params;
+            frame.sp = 1;
+            // fill up captures
+            frame.extend_locals(closure.borrow().upvalues.clone());
 
-        vm.push_frame(frame);
+            vm.push_frame(frame);
+        }
+
         // jump to function
         *pc = closure.borrow().ip as usize;
 
@@ -346,7 +359,7 @@ pub struct CallFrame {
 
 impl fmt::Display for CallFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "------- RA: {} -------", self.ra)?;
+        writeln!(f, "Return Addr: {}", self.ra)?;
         writeln!(f, "Locals:")?;
         for (key, value) in &self.locals {
             writeln!(f, "{:>8}: {}", key, value)?;
@@ -405,6 +418,10 @@ impl CallFrame {
         self.locals.get(name)
     }
 
+    pub fn clear_local(&mut self) {
+        self.locals.clear();
+    }
+
     pub fn assign_local(&mut self, name: &str, value: Value) {
         if let Some(Value::UpValue(old)) = self.locals.get(name) {
             *old.borrow_mut() = if let Value::UpValue(new) = value {
@@ -452,7 +469,11 @@ impl VM {
         inst.exec(self, insts, pc)?;
 
         // #[cfg(test)]
-        // println!("{}", self.current_frame());
+        // println!(
+        //     "-------- CallFrame {} --------\n{}",
+        //     self.call_frames.len() - 1,
+        //     self.current_frame()
+        // );
 
         *pc += 1;
         Ok(())

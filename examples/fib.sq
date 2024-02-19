@@ -1,8 +1,6 @@
-[= fib /[n] [begin
-  [match n
-    [[< n 2] 1]
-    [+
-      [fib [- n 1]] 
-      [fib [- n 2]]]]]]
+[let fib /[n] 
+  [if [<= n 2] 
+    1
+    [+ [fib [- n 1]] [fib [- n 2]]]]]
 
-[print [fib 20]]
+[println [fib 30]]
