@@ -94,8 +94,8 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
             [let p [callcc /[cc] [g cc]]]
             [if [== [typeof p] 'vec']
                 [begin
-                    [= [. innerCc] p]
-                    [let [i] p]
+                    [let i nil]
+                    [= [i innerCc] p]
                     [print i]]]]]]
                     
 [next gen]
@@ -103,6 +103,7 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 [next gen]
 [next gen]
 [next gen]
+
 ```
 
 ## Structure(WIP)

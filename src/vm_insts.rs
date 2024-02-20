@@ -1,9 +1,9 @@
 use crate::vm_value::{Closure, Value};
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::fmt;
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inst {
     PUSH(Value),

@@ -1,17 +1,21 @@
 use alloc::{format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
 use core::{cell::RefCell, fmt};
 
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 
 use crate::{
     builtin::Builtin,
-    code_frame::Position,
-    emit::{emit, EmitContext},
     errors::SquareError,
-    parse::parse,
     vm_insts::Inst,
     vm_value::{CalcResult, Closure, Value},
 };
+
+#[cfg(test)]
+use crate::code_frame::Position;
+#[cfg(test)]
+use crate::emit::{emit, EmitContext};
+#[cfg(test)]
+use crate::parse::parse;
 
 pub type ExecResult = Result<(), SquareError>;
 
@@ -73,11 +77,10 @@ impl Inst {
                 }
 
                 if !frame.top().unwrap().to_bool() {
-                    frame.sp -= 1;
+                    frame.pop();
                     self.jump(insts, pc, *value)
                 } else {
-                    frame.sp -= 1;
-                    Ok(())
+                    Ok(frame.pop())
                 }
             }
 
@@ -175,8 +178,7 @@ impl Inst {
                 let frame = vm.current_frame();
 
                 // upgrade value to captured
-                let varnames: Vec<_> = closure.captures.iter().cloned().collect();
-                for name in varnames {
+                for name in closure.captures.iter().cloned().collect::<Vec<_>>() {
                     if let Some(value) = frame.resolve_local(&name) {
                         let upvalue = value.upgrade();
 
@@ -394,30 +396,32 @@ impl CallFrame {
         self.sp += 1;
     }
 
+    #[inline]
     pub fn pop(&mut self) {
         self.sp -= 1;
     }
 
+    #[inline]
     pub fn top(&self) -> Option<&Value> {
-        if self.sp <= 0 {
-            return None;
-        }
-
-        Some(&self.stack[self.sp - 1])
+        self.stack.get(self.sp - 1)
     }
 
+    #[inline]
     pub fn insert_local(&mut self, name: &str, value: Value) {
         self.locals.insert(name.to_string(), value);
     }
 
+    #[inline]
     pub fn extend_locals(&mut self, upvalues: HashMap<String, Value>) {
         self.locals.extend(upvalues);
     }
 
+    #[inline]
     pub fn resolve_local(&mut self, name: &str) -> Option<&Value> {
         self.locals.get(name)
     }
 
+    #[inline]
     pub fn clear_local(&mut self) {
         self.locals.clear();
     }
@@ -448,14 +452,17 @@ impl VM {
         }
     }
 
+    #[inline]
     pub fn current_frame(&mut self) -> &mut CallFrame {
         self.call_frames.last_mut().unwrap()
     }
 
+    #[inline]
     pub fn push_frame(&mut self, frame: CallFrame) {
         self.call_frames.push(frame)
     }
 
+    #[inline]
     pub fn pop_frame(&mut self) -> Option<CallFrame> {
         self.call_frames.pop()
     }
@@ -747,11 +754,21 @@ fn test_exec_tail_call() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut pc = 0;
+    let mut max_depth = vm.call_frames.len();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.current_frame().ra = insts.len();
+
+    while pc < insts.len() {
+        vm.step(&insts, &mut pc).unwrap();
+        if vm.call_frames.len() > max_depth {
+            max_depth = vm.call_frames.len();
+        }
+    }
 
     let callframe = vm.current_frame();
-    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0))
+    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
+    assert_eq!(max_depth, 2);
 }
 
 #[test]

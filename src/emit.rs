@@ -1,16 +1,22 @@
 use core::cell::RefCell;
 
 use crate::{
-    code_frame::Position,
     errors::SquareError,
-    parse::{parse, Node},
+    parse::Node,
     scan::Token,
     vm_insts::Inst,
     vm_value::{Closure, Value},
 };
 
+#[cfg(test)]
+use crate::code_frame::Position;
+#[cfg(test)]
+use crate::parse::parse;
+#[cfg(test)]
+use hashbrown::HashMap;
+
 use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashSet;
 
 pub type EmitResult = Result<Vec<Inst>, SquareError>;
 
@@ -353,12 +359,13 @@ fn emit_if(
         meta.captures = captures;
         result.push(Inst::PUSH_CLOSURE(meta));
     } else {
+        captures.extend(ctx.borrow_mut().pop_scope());
+
         result.push(Inst::JMP(1));
         result.push(Inst::PUSH(Value::Nil)); // FIXME: else { nil }
         result.push(Inst::RET);
         result.insert(0, Inst::JMP(condition_len + true_branch_len + 4));
 
-        captures.extend(ctx.borrow_mut().pop_scope());
         let mut meta = Closure::new(-5 - (condition_len + true_branch_len));
         meta.captures = captures;
         result.push(Inst::PUSH_CLOSURE(meta));
