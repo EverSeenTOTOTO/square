@@ -353,7 +353,7 @@ pub struct CallFrame {
 
     // operand stack
     stack: Vec<Value>,
-    // fake stack pointer, avoid frequent operand stak push/pop
+    // fake stack pointer, avoid frequent operand stack push/pop
     sp: usize,
 
     ra: usize, // return address
@@ -942,6 +942,27 @@ fn test_exec_fn_capture_error() {
 
     vm.run(&insts, &mut 0).unwrap(); // FIXME: should report undefined variable: x
     assert_eq!(vm.current_frame().top(), Some(&Value::Nil))
+}
+
+#[test]
+fn test_exec_fn_capture_shadow() {
+    let code = "
+[let fn /[] [begin x [let x 24] x]]
+[let x 42]
+[fn]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    assert_eq!(
+        vm.run(&insts, &mut 0),
+        Err(SquareError::InstructionError(
+            "undefined variable: x".to_string(),
+            Inst::LOAD("x".to_string()),
+            3,
+        )),
+    );
 }
 
 #[test]

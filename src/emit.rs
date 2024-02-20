@@ -33,7 +33,9 @@ impl EmitContext {
     }
 
     pub fn add_local(&mut self, name: String) {
-        self.scopes.last_mut().unwrap().0.insert(name);
+        let (ref mut locals, ref mut captures) = self.scopes.last_mut().unwrap();
+        captures.remove(&name); // scope shadow
+        locals.insert(name);
     }
 
     pub fn mark_if_capture(&mut self, name: &String) {
