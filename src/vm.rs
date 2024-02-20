@@ -470,17 +470,17 @@ impl VM {
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
-        // #[cfg(test)]
-        // println!("{}: {}", *pc, inst);
+        #[cfg(test)]
+        println!("{}: {}", *pc, inst);
 
         inst.exec(self, insts, pc)?;
 
-        // #[cfg(test)]
-        // println!(
-        //     "-------- CallFrame {} --------\n{}",
-        //     self.call_frames.len() - 1,
-        //     self.current_frame()
-        // );
+        #[cfg(test)]
+        println!(
+            "-------- CallFrame {} --------\n{}",
+            self.call_frames.len() - 1,
+            self.current_frame()
+        );
 
         *pc += 1;
         Ok(())
@@ -825,6 +825,21 @@ fn test_exec_while() {
 }
 
 #[test]
+fn test_exec_match() {
+    let code = "[cond
+        [false 24]
+        [true 42]]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0))
+}
+
+#[test]
 fn test_exec_fn_call() {
     let code = "[/[] 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
@@ -1003,7 +1018,7 @@ fn test_exec_fn_capture_self() {
 fn test_exec_builtin() {
     let code = "
 [let p println]
-[p nil]
+[p [.. [.. 1 4] [vec 4 5 6]]]
 [let t [typeof p]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();

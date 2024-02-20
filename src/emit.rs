@@ -191,30 +191,20 @@ fn emit_op(
     expressions: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
+    if expressions.len() != 2 {
+        return Err(SquareError::SyntaxError(
+            input.to_string(),
+            "failed to emit_op, operands size not match".to_string(),
+            op.pos().clone(),
+            None,
+        ));
+    }
     let op_action = |action: Inst| {
-        if expressions.len() != 2 {
-            return Err(SquareError::SyntaxError(
-                input.to_string(),
-                "failed to emit_op, operands size not match".to_string(),
-                op.pos().clone(),
-                None,
-            ));
-        }
-
         let mut result = emit(input, expressions, ctx)?;
         result.push(action);
         return Ok(result);
     };
     let op_assign_action = |action: Inst| {
-        if expressions.len() != 2 {
-            return Err(SquareError::SyntaxError(
-                input.to_string(),
-                "failed to emit_op, operands size not match".to_string(),
-                op.pos().clone(),
-                None,
-            ));
-        }
-
         let mut result = vec![];
         let first = expressions.first().unwrap();
 
@@ -264,6 +254,16 @@ fn emit_op(
             "&=" => op_assign_action(Inst::BITAND),
             "|=" => op_assign_action(Inst::BITOR),
             "^=" => op_assign_action(Inst::BITXOR),
+            ".." => {
+                let name = "concat".to_string();
+                ctx.borrow_mut().mark_if_capture(&name);
+                let mut result = vec![];
+                result.push(Inst::LOAD(name));
+                result.extend(emit(input, expressions, ctx)?);
+                result.push(Inst::PACK(2));
+                result.push(Inst::CALL);
+                return Ok(result);
+            }
             _ => todo!(),
         };
     }
@@ -549,6 +549,106 @@ fn test_emit_begin() {
     );
 }
 
+fn emit_cond(
+    input: &str,
+    match_token: &Token,
+    expressions: &Vec<Box<Node>>,
+    ctx: &RefCell<EmitContext>,
+) -> EmitResult {
+    if expressions.len() < 1 {
+        return Err(SquareError::SyntaxError(
+            input.to_string(),
+            "failed to emit_cond, expect patterns".to_string(),
+            match_token.pos().clone(),
+            None,
+        ));
+    }
+
+    ctx.borrow_mut().push_scope();
+    let mut result = vec![];
+    let mut skip = 0;
+
+    for node in expressions[1..].to_vec().iter().rev() {
+        if let Node::Call(left_bracket, _, ref exprs) = node.as_ref() {
+            if exprs.len() != 2 {
+                return Err(SquareError::SyntaxError(
+                    input.to_string(),
+                    "failed to emit_cond, expect pattern and action".to_string(),
+                    left_bracket.pos().clone(),
+                    None,
+                ));
+            }
+
+            let pattern_result = emit_node(input, &exprs[0], ctx)?;
+            let pattern_len = pattern_result.len() as i32;
+            let action_result = emit_node(input, &exprs[1], ctx)?;
+            let action_len = action_result.len() as i32;
+
+            result.insert(0, Inst::JMP(skip));
+            result.splice(0..0, action_result);
+            result.insert(0, Inst::JNE(action_len + 1));
+            result.splice(0..0, pattern_result);
+            skip += pattern_len + action_len + 2;
+        } else {
+            return Err(SquareError::SyntaxError(
+                input.to_string(),
+                "failed to emit_cond, expect call expression".to_string(),
+                match_token.pos().clone(),
+                None,
+            ));
+        }
+    }
+    let result_len = result.len() as i32;
+    result.push(Inst::RET);
+    result.insert(0, Inst::PUSH(Value::Nil));
+    result.insert(0, Inst::JMP(result_len + 2));
+
+    let captures = ctx.borrow_mut().pop_scope();
+    let mut meta = Closure::new(-result_len - 3);
+    meta.captures = captures;
+    result.push(Inst::PUSH_CLOSURE(meta));
+
+    return Ok(result);
+}
+
+#[test]
+fn test_cond() {
+    let code = "[cond
+        [false 24]
+        [true 42]]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::JMP(10),
+            Inst::PUSH(Value::Nil),
+            Inst::LOAD("false".to_string()),
+            Inst::JNE(2),
+            Inst::PUSH(Value::Num(24.0)),
+            Inst::JMP(4),
+            Inst::LOAD("true".to_string()),
+            Inst::JNE(2),
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::JMP(0),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Closure {
+                ip: -11,
+                upvalues: HashMap::new(),
+                captures: {
+                    let mut unresolved = HashSet::new();
+                    unresolved.insert("true".to_string());
+                    unresolved.insert("false".to_string());
+                    unresolved
+                }
+            }),
+            Inst::PACK(0),
+            Inst::CALL
+        ]
+    );
+}
+
 fn emit_call(
     input: &str,
     left_bracket: &Token,
@@ -586,7 +686,11 @@ fn emit_call(
                     result.push(Inst::PACK(0));
                     result.push(Inst::CALL);
                 }
-                "match" => todo!(),
+                "cond" => {
+                    result.extend(emit_cond(input, id, expressions, ctx)?);
+                    result.push(Inst::PACK(0));
+                    result.push(Inst::CALL);
+                }
                 _ => {
                     // normal function call
                     ctx.borrow_mut().mark_if_capture(name);

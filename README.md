@@ -35,7 +35,7 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 
 ```lisp
 ; match
-[match x
+[cond
   [[> -2.3e-2 x] foo]
   [[[regex '[a-z]+' 'gi'].test x] bar]]
 
@@ -64,13 +64,12 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 
 [foo 'ignored' 0]
 
-[let fib /[n] [begin
-  [print n]
-  [match n
-    [[< n 2] 1]
-    [+
-      [fib [- n 1]] 
-      [fib [- n 2]]]]]]
+[let fib /[n] 
+  [if [<= n 2] 
+    1
+    [+ [fib [- n 1]] [fib [- n 2]]]]]
+
+[println [fib 30]]
 
 [print [[.. 1 10].map /[x] [fib x]]]
 ```

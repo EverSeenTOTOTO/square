@@ -2,6 +2,7 @@ use core::cell::RefCell;
 
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
+use alloc::vec;
 use hashbrown::HashMap;
 
 use crate::errors::SquareError;
@@ -39,6 +40,10 @@ impl Builtin {
         values.insert(
             "typeof".to_string(),
             Value::Closure(Rc::new(RefCell::new(Closure::new(-4)))),
+        );
+        values.insert(
+            "concat".to_string(),
+            Value::Closure(Rc::new(RefCell::new(Closure::new(-5)))),
         );
 
         #[cfg(not(test))]
@@ -87,6 +92,54 @@ impl Builtin {
                             return Ok(vm
                                 .current_frame()
                                 .push(Value::Str(val.typename().to_string())));
+                        }
+                    }
+
+                    Err(SquareError::RuntimeError(
+                        "typeof only accept one parameter".to_string(),
+                    ))
+                },
+            ) as Syscall,
+        );
+        syscalls.insert(
+            -5,
+            Rc::new(
+                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                    if let Value::Vec(top) = params {
+                        if top.borrow().len() == 2 {
+                            match (top.borrow().get(0).unwrap(), top.borrow().get(1).unwrap()) {
+                                (Value::Str(s1), Value::Str(s2)) => {
+                                    return Ok(vm
+                                        .current_frame()
+                                        .push(Value::Str(s1.to_string() + s2)))
+                                }
+                                (Value::Vec(v1), Value::Vec(v2)) => {
+                                    let mut v = vec![];
+                                    v.extend(v1.borrow().clone());
+                                    v.extend(v2.borrow().clone());
+                                    return Ok(vm
+                                        .current_frame()
+                                        .push(Value::Vec(Rc::new(RefCell::new(v)))));
+                                }
+                                (Value::Num(f1), Value::Num(f2)) => {
+                                    let n1 = *f1 as i64;
+                                    let n2 = *f2 as i64;
+                                    return Ok(vm.current_frame().push(Value::Vec(Rc::new(
+                                        RefCell::new(
+                                            (n1..n2).map(|x| Value::Num(x as f64)).collect(),
+                                        ),
+                                    ))));
+                                }
+                                _ => {
+                                    return Err(SquareError::RuntimeError(
+                                        "concat type mismatch".to_string(),
+                                    ));
+                                }
+                            }
+                        } else {
+                            return Err(SquareError::RuntimeError(
+                                "concat only accept two parameters".to_string(),
+                            ));
                         }
                     }
 
