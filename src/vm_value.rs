@@ -308,13 +308,25 @@ fn test_reference() {
 }
 
 impl Value {
-    pub fn to_bool(&self) -> bool {
+    pub fn as_bool(&self) -> bool {
         match self {
             Value::Bool(val) => *val,
             Value::Num(val) => *val != 0.0,
             Value::Str(val) => !val.is_empty(),
-            Value::UpValue(val) => val.borrow().to_bool(),
+            Value::UpValue(val) => val.borrow().as_bool(),
             _ => true,
+        }
+    }
+
+    pub fn typename(&self) -> &'static str {
+        match self {
+            Value::Bool(_) => "bool",
+            Value::Num(_) => "num",
+            Value::Str(_) => "str",
+            Value::Vec(_) => "vec",
+            Value::Closure(_) => "fn",
+            Value::Nil => "nil",
+            Value::UpValue(val) => val.borrow().typename(),
         }
     }
 

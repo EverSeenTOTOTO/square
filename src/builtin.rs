@@ -4,6 +4,7 @@ use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use hashbrown::HashMap;
 
+use crate::errors::SquareError;
 use crate::{
     vm::{ExecResult, VM},
     vm_value::{Closure, Value},
@@ -34,6 +35,10 @@ impl Builtin {
         values.insert(
             "vec".to_string(),
             Value::Closure(Rc::new(RefCell::new(Closure::new(-3)))),
+        );
+        values.insert(
+            "typeof".to_string(),
+            Value::Closure(Rc::new(RefCell::new(Closure::new(-4)))),
         );
 
         #[cfg(not(test))]
@@ -70,6 +75,24 @@ impl Builtin {
                 |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
                     // params have already be packed
                     Ok(vm.current_frame().push(params))
+                },
+            ) as Syscall,
+        );
+        syscalls.insert(
+            -4,
+            Rc::new(
+                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                    if let Value::Vec(top) = params {
+                        if let Some(val) = top.borrow().get(0) {
+                            return Ok(vm
+                                .current_frame()
+                                .push(Value::Str(val.typename().to_string())));
+                        }
+                    }
+
+                    Err(SquareError::RuntimeError(
+                        "typeof only accept one parameter".to_string(),
+                    ))
                 },
             ) as Syscall,
         );

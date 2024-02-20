@@ -76,7 +76,7 @@ impl Inst {
                     ));
                 }
 
-                if !frame.top().unwrap().to_bool() {
+                if !frame.top().unwrap().as_bool() {
                     frame.pop();
                     self.jump(insts, pc, *value)
                 } else {
@@ -1004,10 +1004,17 @@ fn test_exec_builtin() {
     let code = "
 [let p println]
 [p nil]
+[let t [typeof p]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
     vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(
+        callframe.resolve_local("t").unwrap(),
+        &Value::Str("fn".to_string())
+    )
 }
