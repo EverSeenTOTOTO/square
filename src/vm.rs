@@ -427,14 +427,16 @@ impl CallFrame {
     }
 
     pub fn assign_local(&mut self, name: &str, value: Value) {
-        if let Some(Value::UpValue(old)) = self.locals.get(name) {
-            *old.borrow_mut() = if let Value::UpValue(new) = value {
-                new.borrow().clone()
-            } else {
-                value
-            };
+        let new = if let Value::UpValue(new) = value {
+            new.borrow().clone()
         } else {
-            self.insert_local(name, value);
+            value
+        };
+
+        if let Some(Value::UpValue(old)) = self.locals.get(name) {
+            *old.borrow_mut() = new;
+        } else {
+            self.insert_local(name, new);
         }
     }
 }
@@ -978,6 +980,25 @@ fn test_exec_fn_capture_shadow() {
             3,
         )),
     );
+}
+
+#[test]
+fn test_exec_fn_capture_shadow2() {
+    let code = "
+    [let f [begin [let x 42] /[] x]]
+
+    [let x [f]]
+    [+= x 2]
+    [let y [f]]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(42.0))
 }
 
 #[test]
