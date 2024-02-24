@@ -105,15 +105,17 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 
 ```
 
-## Structure(WIP)
+## Structure
 
 ```lisp
 [let o [obj 
-        ['x' 42]
-        ['inc' /[this] [+= this.x 1]]]]
+        'x' 42
+        'inc' /[] [+= o.x 1]]]
 
 [println o]
 [o.inc]
+[= o.o o]
+[o.o.o.o.o.o.inc]
 [println o]
 ```
 

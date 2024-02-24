@@ -377,7 +377,7 @@ fn test_parse_fn_high_order() {
 fn parse_prop(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_prop");
     let dot = wrap(expect(
-        &|token| (token.source() == ".", "expect .".to_string()),
+        &|token| (token.source() == ".", "expect DOT".to_string()),
         input,
         pos,
     ))?;

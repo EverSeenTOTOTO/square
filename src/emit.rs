@@ -125,21 +125,41 @@ fn emit_assign(
     input: &str,
     eq: &Token,
     target: &Box<Node>,
-    _properties: &Vec<Box<Node>>,
+    properties: &Vec<Box<Node>>,
     expression: &Box<Node>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    let mut insts = emit_node(input, expression, ctx)?;
+    let mut result = vec![];
+    let value = emit_node(input, expression, ctx)?;
     let is_define = eq.source() == "let";
 
     match target.as_ref() {
         Node::Token(id) => {
             if let Token::Id(_, source) = id {
-                if is_define {
-                    ctx.borrow_mut().add_local(source.clone());
-                }
+                if properties.len() > 0 {
+                    ctx.borrow_mut().mark_if_capture(source);
+                    result.push(Inst::LOAD(source.clone()));
+                    for (i, prop) in properties.iter().enumerate() {
+                        if let Node::Prop(_, Token::Id(_, id)) = prop.as_ref() {
+                            if i == properties.len() - 1 {
+                                result.extend(value);
+                                result.push(Inst::PATCH(Value::Str(id.clone())));
+                                break;
+                            } else {
+                                result.push(Inst::PEEK((Value::Str(id.clone()), Value::Nil)));
+                            }
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                } else {
+                    if is_define {
+                        ctx.borrow_mut().add_local(source.clone());
+                    }
 
-                insts.push(Inst::STORE(source.clone()));
+                    result.extend(value);
+                    result.push(Inst::STORE(source.clone()));
+                }
             } else {
                 return Err(SquareError::SyntaxError(
                     input.to_string(),
@@ -153,12 +173,13 @@ fn emit_assign(
             }
         }
         Node::Expand(.., placehoders) => {
-            insts.extend(emit_expand(input, is_define, placehoders, ctx)?);
+            result.extend(value);
+            result.extend(emit_expand(input, is_define, placehoders, ctx)?);
         }
         _ => unreachable!(),
     }
 
-    return Ok(insts);
+    return Ok(result);
 }
 
 #[test]
@@ -170,6 +191,23 @@ fn test_emit_assign() {
     assert_eq!(
         insts,
         vec![Inst::PUSH(Value::Num(42.0)), Inst::STORE("a".to_string())]
+    );
+}
+
+#[test]
+fn test_emit_assign_dot() {
+    let code = "[= o.x.y 42]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("o".to_string()),
+            Inst::PEEK((Value::Str("x".to_string()), Value::Nil)),
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::PATCH(Value::Str("y".to_string()))
+        ]
     );
 }
 
@@ -191,7 +229,7 @@ fn emit_op(
     expressions: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    if expressions.len() != 2 {
+    if expressions.len() < 2 {
         return Err(SquareError::SyntaxError(
             input.to_string(),
             "failed to emit_op, operands size not match".to_string(),
@@ -200,28 +238,67 @@ fn emit_op(
         ));
     }
     let op_action = |action: Inst| {
-        let mut result = emit(input, expressions, ctx)?;
+        let mut result = emit(input, &expressions[0..2].to_vec(), ctx)?;
         result.push(action);
         return Ok(result);
     };
     let op_assign_action = |action: Inst| {
         let mut result = vec![];
-        let first = expressions.first().unwrap();
+        let mut properties = vec![];
+        let mut rhs = vec![];
 
-        match first.as_ref() {
-            Node::Token(token) => {
-                if let Token::Id(_, source) = token {
-                    result.extend(emit(input, expressions, ctx)?);
-                    result.push(action);
-                    result.push(Inst::STORE(source.clone()));
-                    // always push latest value to operand stack
-                    result.push(Inst::LOAD(source.clone()));
-                    return Ok(result);
-                } else {
-                    unreachable!()
-                }
+        for node in expressions[1..].to_vec().into_iter() {
+            if let Node::Prop(_, Token::Id(_, id)) = node.as_ref() {
+                properties.push(id.clone());
+            } else {
+                let insts = emit_node(input, &node, ctx)?;
+                rhs.extend(insts);
+                break;
             }
-            _ => unreachable!(),
+        }
+
+        if rhs.len() == 0 {
+            return Err(SquareError::SyntaxError(
+                input.to_string(),
+                "failed to emit_op, expect value after property".to_string(),
+                op.pos().clone(),
+                None,
+            ));
+        }
+
+        if let Node::Token(Token::Id(_, source)) = expressions[0].as_ref() {
+            ctx.borrow_mut().mark_if_capture(source);
+            result.push(Inst::LOAD(source.clone()));
+
+            if properties.len() > 0 {
+                let mut patch: Option<Inst> = None;
+
+                for (i, prop) in properties.iter().enumerate() {
+                    if i == properties.len() - 1 {
+                        patch = Some(Inst::PATCH(Value::Str(prop.to_string())));
+                    } else {
+                        result.push(Inst::PEEK((Value::Str(prop.to_string()), Value::Nil)));
+                    }
+                }
+
+                result.push(Inst::LOAD(source.clone()));
+                for prop in properties.iter() {
+                    result.push(Inst::PEEK((Value::Str(prop.to_string()), Value::Nil)));
+                }
+
+                result.extend(rhs);
+                result.push(action);
+                result.push(patch.unwrap());
+            } else {
+                result.extend(rhs);
+                result.push(action);
+                result.push(Inst::STORE(source.clone()));
+                result.push(Inst::LOAD(source.clone()));
+            }
+
+            return Ok(result);
+        } else {
+            unreachable!()
         }
     };
 
@@ -306,6 +383,27 @@ fn test_emit_op_assign() {
             Inst::ADD,
             Inst::STORE("a".to_string()),
             Inst::LOAD("a".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn test_emit_op_assign_dot() {
+    let code = "[+= a.b.c d]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("a".to_string()),
+            Inst::PEEK((Value::Str("b".to_string()), Value::Nil)),
+            Inst::LOAD("a".to_string()),
+            Inst::PEEK((Value::Str("b".to_string()), Value::Nil)),
+            Inst::PEEK((Value::Str("c".to_string()), Value::Nil)),
+            Inst::LOAD("d".to_string()),
+            Inst::ADD,
+            Inst::PATCH(Value::Str("c".to_string())),
         ]
     );
 }
@@ -728,6 +826,12 @@ fn emit_call(
             result.push(Inst::PACK(expressions.len() - 1));
             result.push(Inst::CALL);
         }
+        Node::Dot(obj, props) => {
+            result.extend(emit_dot(input, obj, props, ctx)?);
+            result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
+            result.push(Inst::PACK(expressions.len() - 1));
+            result.push(Inst::CALL);
+        }
         _ => {
             return Err(SquareError::SyntaxError(
                 input.to_string(),
@@ -830,7 +934,7 @@ fn test_emit_fn_params() {
         insts,
         vec![
             Inst::JMP(5),
-            Inst::PEEK(0, 0), // peek param
+            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))), // peek param
             Inst::STORE("x".to_string()),
             Inst::POP, // pop param pack
             Inst::PUSH(Value::Num(42.0)),
@@ -941,7 +1045,10 @@ fn emit_expand(
 
         match placeholder.as_ref() {
             Node::Expand(.., nested) => {
-                result.push(Inst::PEEK(offset, index));
+                result.push(Inst::PEEK((
+                    Value::Num(offset as f64),
+                    Value::Num(index as f64),
+                )));
                 result.extend(emit_expand(input, is_define, nested, ctx)?);
             }
             Node::Token(token) => match token {
@@ -950,12 +1057,18 @@ fn emit_expand(
                         ctx.borrow_mut().add_local(source.clone());
                     }
 
-                    result.push(Inst::PEEK(offset, index));
+                    result.push(Inst::PEEK((
+                        Value::Num(offset as f64),
+                        Value::Num(index as f64),
+                    )));
                     result.push(Inst::STORE(source.clone()));
                 }
                 Token::Op(pos, op) => {
                     if op == "." {
-                        result.push(Inst::PEEK(offset, index));
+                        result.push(Inst::PEEK((
+                            Value::Num(offset as f64),
+                            Value::Num(index as f64),
+                        )));
                         result.push(Inst::POP);
                     } else if op == "..." {
                         if greedy_pos.is_some() {
@@ -1001,9 +1114,9 @@ fn test_emit_expand() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK(0, 0),
+            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
             Inst::STORE("a".to_string()),
-            Inst::PEEK(0, 1),
+            Inst::PEEK((Value::Num(0.0), Value::Num(1.0))),
             Inst::STORE("b".to_string()),
             Inst::POP
         ]
@@ -1020,9 +1133,9 @@ fn test_emit_expand_dot() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK(0, 0),
+            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
             Inst::POP,
-            Inst::PEEK(0, 1),
+            Inst::PEEK((Value::Num(0.0), Value::Num(1.0))),
             Inst::STORE("b".to_string()),
             Inst::POP
         ]
@@ -1039,7 +1152,7 @@ fn test_emit_expand_greed() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK(0, -1),
+            Inst::PEEK((Value::Num(0.0), Value::Num(-1.0))),
             Inst::STORE("b".to_string()),
             Inst::POP
         ]
@@ -1056,11 +1169,11 @@ fn test_emit_expand_greed_offset() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK(0, 0),
+            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
             Inst::POP,
-            Inst::PEEK(1, -2),
+            Inst::PEEK((Value::Num(1.0), Value::Num(-2.0))),
             Inst::POP,
-            Inst::PEEK(2, -1),
+            Inst::PEEK((Value::Num(2.0), Value::Num(-1.0))),
             Inst::STORE("b".to_string()),
             Inst::POP
         ]
@@ -1077,13 +1190,48 @@ fn test_emit_expand_nested() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK(0, 0),
-            Inst::PEEK(0, 0),
-            Inst::PEEK(0, 0),
+            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
+            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
+            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
             Inst::STORE("b".to_string()),
             Inst::POP,
             Inst::POP,
             Inst::POP,
+        ]
+    );
+}
+
+fn emit_dot(
+    input: &str,
+    obj: &Box<Node>,
+    properties: &Vec<Box<Node>>,
+    ctx: &RefCell<EmitContext>,
+) -> EmitResult {
+    let mut result = emit_node(input, obj, ctx)?;
+
+    for prop in properties.iter() {
+        if let Node::Prop(_, Token::Id(_, id)) = prop.as_ref() {
+            result.push(Inst::PEEK((Value::Str(id.clone()), Value::Nil)));
+        } else {
+            unreachable!()
+        }
+    }
+
+    return Ok(result);
+}
+
+#[test]
+fn test_emit_dot() {
+    let code = "o.x.y";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::LOAD("o".to_string()),
+            Inst::PEEK((Value::Str("x".to_string()), Value::Nil)),
+            Inst::PEEK((Value::Str("y".to_string()), Value::Nil)),
         ]
     );
 }
@@ -1099,7 +1247,8 @@ fn emit_node(input: &str, node: &Box<Node>, ctx: &RefCell<EmitContext>) -> EmitR
         Node::Call(left_bracket, _, expressions) => {
             emit_call(input, left_bracket, expressions, ctx)
         }
-        _ => todo!(),
+        Node::Dot(obj, properties) => emit_dot(input, obj, properties, ctx),
+        _ => unreachable!(),
     }
 }
 

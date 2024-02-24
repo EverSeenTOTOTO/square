@@ -74,9 +74,18 @@ pub enum Value {
     Num(f64),
     Str(String),
     Vec(Rc<RefCell<Vec<Value>>>),
+    Obj(Rc<RefCell<HashMap<String, Value>>>),
     Closure(Rc<RefCell<Closure>>),
     UpValue(Rc<RefCell<Value>>),
     Nil,
+}
+
+fn stringify_nested(val: &Value) -> String {
+    match val {
+        Value::Vec(_) => "[...]".to_string(),
+        Value::Obj(_) => "{...}".to_string(),
+        _ => format!("{}", val),
+    }
 }
 
 impl fmt::Display for Value {
@@ -89,7 +98,7 @@ impl fmt::Display for Value {
                 write!(f, "{}", val)
             }
             Value::Str(val) => {
-                write!(f, "{}", val)
+                write!(f, "'{}'", val)
             }
             Value::Vec(val) => {
                 write!(
@@ -97,27 +106,46 @@ impl fmt::Display for Value {
                     "[{}]",
                     val.borrow()
                         .iter()
-                        .map(|v| {
-                            match v {
-                                Value::Vec(_) => "[...]".to_string(),
-                                _ => format!("{}", v),
-                            }
-                        })
+                        .map(|v| stringify_nested(v))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
+            Value::Obj(obj) => {
+                write!(
+                    f,
+                    "{{{}}}",
+                    obj.borrow()
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, stringify_nested(v)))
                         .collect::<Vec<String>>()
                         .join(", ")
                 )
             }
             Value::Closure(closure) => closure.borrow().fmt(f),
             Value::UpValue(val) => match *val.borrow() {
-                // FIXME: print vec may still cause circular
-                Value::UpValue(_) => unreachable!(),
-                _ => write!(f, "{}", val.borrow()),
+                Value::UpValue(_) => panic!("nested upvalue"), // this should be unreachable, see Value::upgrade && CallFrame::assign_local
+                _ => write!(f, "{}", stringify_nested(&val.borrow())),
             },
             Value::Nil => {
                 write!(f, "nil")
             }
         }
     }
+}
+
+#[test]
+fn test_print_circular() {
+    let obj = Rc::new(RefCell::new(HashMap::new()));
+    let vec = Rc::new(RefCell::new(vec![Value::Obj(obj.clone())]));
+
+    obj.borrow_mut()
+        .insert("vec".to_string(), Value::Vec(vec.clone()));
+    obj.borrow_mut()
+        .insert("obj".to_string(), Value::Obj(obj.clone()).upgrade());
+
+    assert_eq!(format!("{}", Value::Obj(obj)), "{obj: {...}, vec: [...]}");
+    assert_eq!(format!("{}", Value::Vec(vec)), "[{...}]");
 }
 
 impl PartialOrd for Value {
@@ -154,6 +182,7 @@ impl PartialEq for Value {
             (Value::Num(lhs), Value::Num(rhs)) => lhs == rhs,
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
             (Value::Vec(lhs), Value::Vec(rhs)) => Rc::ptr_eq(lhs, rhs),
+            (Value::Obj(lhs), Value::Obj(rhs)) => Rc::ptr_eq(lhs, rhs),
             (Value::Closure(lhs), Value::Closure(rhs)) => Rc::ptr_eq(lhs, rhs),
 
             (Value::UpValue(lhs), Value::UpValue(rhs)) => lhs.borrow().eq(&rhs.borrow()),
@@ -318,12 +347,37 @@ impl Value {
         }
     }
 
+    pub fn as_vec(&self) -> Option<Rc<RefCell<Vec<Value>>>> {
+        match self {
+            Value::Vec(val) => Some(val.clone()),
+            Value::UpValue(val) => val.borrow().as_vec(),
+            _ => None,
+        }
+    }
+
+    pub fn as_obj(&self) -> Option<Rc<RefCell<HashMap<String, Value>>>> {
+        match self {
+            Value::Obj(val) => Some(val.clone()),
+            Value::UpValue(val) => val.borrow().as_obj(),
+            _ => None,
+        }
+    }
+
+    pub fn as_closure(&self) -> Option<Rc<RefCell<Closure>>> {
+        match self {
+            Value::Closure(val) => Some(val.clone()),
+            Value::UpValue(val) => val.borrow().as_closure(),
+            _ => None,
+        }
+    }
+
     pub fn typename(&self) -> &'static str {
         match self {
             Value::Bool(_) => "bool",
             Value::Num(_) => "num",
             Value::Str(_) => "str",
             Value::Vec(_) => "vec",
+            Value::Obj(_) => "obj",
             Value::Closure(_) => "fn",
             Value::Nil => "nil",
             Value::UpValue(val) => val.borrow().typename(),

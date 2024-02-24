@@ -1,0 +1,12 @@
+[let o [obj 
+        'x' 42
+        'inc' /[] [+= o.x 1]]]
+
+[println o]
+
+[o.inc]
+[= o.o o]
+[o.o.o.o.o.o.inc]
+
+[println o]
+

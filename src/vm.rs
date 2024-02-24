@@ -126,27 +126,22 @@ impl Inst {
                 }
 
                 let params = frame.stack[frame.sp - 1].clone();
-                let func = frame.stack[frame.sp - 2].clone();
+                let func = frame.stack[frame.sp - 2].as_closure();
 
                 frame.sp -= 2;
 
-                let error = Err(SquareError::InstructionError(
-                    format!("bad call, cannot call with {}", func),
-                    self.clone(),
-                    *pc,
-                ));
-                let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
-
-                match func {
-                    Value::Closure(closure) => self.call(vm, closure, params, is_tail_call, pc),
-                    Value::UpValue(val) => {
-                        if let Value::Closure(ref closure) = *val.borrow() {
-                            self.call(vm, closure.clone(), params, is_tail_call, pc)
-                        } else {
-                            error
-                        }
-                    }
-                    _ => error,
+                if let Some(closure) = func {
+                    let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
+                    self.call(vm, closure, params, is_tail_call, pc)
+                } else {
+                    Err(SquareError::InstructionError(
+                        format!(
+                            "bad call, cannot call with {}",
+                            frame.top().unwrap_or(&Value::Nil).clone()
+                        ),
+                        self.clone(),
+                        *pc,
+                    ))
                 }
             }
             Inst::RET => {
@@ -215,49 +210,26 @@ impl Inst {
                 frame.sp -= *len;
                 Ok(frame.push(Value::Vec(Rc::new(RefCell::new(result)))))
             }
-            Inst::PEEK(offset, i) => {
-                let frame = vm.current_frame();
-                let result = if let Some(Value::Vec(val)) = frame.top() {
-                    let pack = val.borrow();
-
-                    if *offset >= pack.len() {
-                        return Err(SquareError::InstructionError(
-                            format!(
-                                "bad peek, offset {} out of range, pack length is {}",
-                                offset,
-                                pack.len()
-                            ),
-                            self.clone(),
-                            *pc,
-                        ));
-                    }
-
-                    let len = (pack.len() - offset) as i32;
-                    let index = if *i > 0 { *i } else { (i + len) % len } as usize + offset;
-
-                    if index < pack.len() {
-                        Ok(pack.get(index).unwrap().clone())
-                    } else {
-                        Err(SquareError::InstructionError(
-                            format!(
-                                "bad peek, index {} out of range, pack length is {}",
-                                index,
-                                pack.len()
-                            ),
-                            self.clone(),
-                            *pc,
-                        ))
-                    }
-                } else {
-                    Err(SquareError::InstructionError(
-                        "bad peek, top value is not a pack".to_string(),
-                        self.clone(),
-                        *pc,
-                    ))
-                };
-
-                Ok(frame.push(result?))
-            }
+            Inst::PEEK(pair) => match pair {
+                (Value::Num(offset), Value::Num(index)) => {
+                    self.peek_vec(vm, *offset as usize, *index as i32, pc)
+                }
+                (Value::Str(key), _) => self.peek_obj(vm, key, pc),
+                _ => Err(SquareError::InstructionError(
+                    "bad peek, offset and index must be number, key must be string".to_string(),
+                    self.clone(),
+                    *pc,
+                )),
+            },
+            Inst::PATCH(key) => match key {
+                Value::Num(index) => self.patch_vec(vm, *index as usize, pc),
+                Value::Str(key) => self.patch_obj(vm, key, pc),
+                _ => Err(SquareError::InstructionError(
+                    format!("bad patch, key {} must be string or number", key),
+                    self.clone(),
+                    *pc,
+                )),
+            },
         }
     }
 
@@ -345,6 +317,126 @@ impl Inst {
                 *pc,
             ))
         }
+    }
+
+    fn peek_vec(&self, vm: &mut VM, offset: usize, i: i32, pc: &mut usize) -> ExecResult {
+        let frame = vm.current_frame();
+        let top = frame.stack[frame.sp - 1].as_vec();
+
+        if let Some(val) = top {
+            let pack = val.borrow().clone();
+
+            if offset >= pack.len() {
+                return Err(SquareError::InstructionError(
+                    format!(
+                        "bad peek, offset {} out of range, pack length is {}",
+                        offset,
+                        pack.len()
+                    ),
+                    self.clone(),
+                    *pc,
+                ));
+            }
+
+            let len = (pack.len() - offset) as i32;
+            let index = if i > 0 { i } else { (i + len) % len } as usize + offset;
+
+            if index < pack.len() {
+                // frame.pop();
+                Ok(frame.push(pack[index].clone()))
+            } else {
+                Err(SquareError::InstructionError(
+                    format!(
+                        "bad peek, index {} out of range, pack length is {}",
+                        index,
+                        pack.len()
+                    ),
+                    self.clone(),
+                    *pc,
+                ))
+            }
+        } else {
+            Err(SquareError::InstructionError(
+                format!(
+                    "bad peek, top value is not an vector, got {}",
+                    frame.top().unwrap_or(&Value::Nil).clone()
+                ),
+                self.clone(),
+                *pc,
+            ))
+        }
+    }
+
+    fn peek_obj(&self, vm: &mut VM, key: &str, pc: &mut usize) -> ExecResult {
+        let frame = vm.current_frame();
+        let top = frame.stack[frame.sp - 1].as_obj();
+
+        if let Some(obj) = top {
+            let cloned = obj.borrow().get(key).cloned().unwrap_or(Value::Nil);
+            frame.pop();
+            return Ok(frame.push(cloned));
+        }
+
+        Err(SquareError::InstructionError(
+            format!(
+                "bad peek, top value is not an object, got {}",
+                frame.top().unwrap_or(&Value::Nil).clone()
+            ),
+            self.clone(),
+            *pc,
+        ))
+    }
+
+    fn patch_vec(&self, vm: &mut VM, index: usize, pc: &mut usize) -> ExecResult {
+        let frame = vm.current_frame();
+        let value = frame.stack[frame.sp - 1].clone();
+        let target = frame.stack[frame.sp - 2].as_vec();
+
+        if let Some(val) = target {
+            let mut pack = val.borrow_mut();
+            if index < pack.len() {
+                pack[index] = value;
+                frame.pop();
+                return Ok(());
+            } else {
+                return Err(SquareError::InstructionError(
+                    format!(
+                        "bad patch, index {} out of range, pack length is {}",
+                        index,
+                        pack.len()
+                    ),
+                    self.clone(),
+                    *pc,
+                ));
+            }
+        }
+
+        Err(SquareError::InstructionError(
+            format!("bad patch, top value is not a vector, got {}", value),
+            self.clone(),
+            *pc,
+        ))
+    }
+
+    fn patch_obj(&self, vm: &mut VM, key: &String, pc: &mut usize) -> ExecResult {
+        let frame = vm.current_frame();
+        let value = frame.stack[frame.sp - 1].clone();
+        let target = frame.stack[frame.sp - 2].as_obj();
+
+        if let Some(obj) = target {
+            obj.borrow_mut().insert(key.clone(), value);
+            frame.pop();
+            return Ok(());
+        }
+
+        Err(SquareError::InstructionError(
+            format!(
+                "bad patch, top value is not an object, got {}",
+                frame.stack[frame.sp - 2].clone()
+            ),
+            self.clone(),
+            *pc,
+        ))
     }
 }
 
@@ -644,7 +736,7 @@ fn test_exec_define_expand_dot_error() {
         vm.run(&insts, &mut 0),
         Err(SquareError::InstructionError(
             "bad peek, index 1 out of range, pack length is 1".to_string(),
-            Inst::PEEK(0, 1),
+            Inst::PEEK((Value::Num(0.0), Value::Num(1.0))),
             6,
         ))
     );
@@ -674,7 +766,7 @@ fn test_exec_define_expand_greed_error() {
         vm.run(&insts, &mut 0),
         Err(SquareError::InstructionError(
             "bad peek, offset 0 out of range, pack length is 0".to_string(),
-            Inst::PEEK(0, -1),
+            Inst::PEEK((Value::Num(0.0), Value::Num(-1.0))),
             3,
         ))
     );
@@ -719,6 +811,87 @@ fn test_exec_op_assign() {
     let callframe = vm.current_frame();
     assert_eq!(callframe.top().unwrap(), &Value::Num(3.0));
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(3.0))
+}
+
+#[test]
+fn test_exec_op_assign_dot() {
+    let code = "[let x [obj 'y' [obj 'z' 0]]]
+        [+= x.y.z 42]
+        x.y.z";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
+}
+
+#[test]
+fn test_exec_dot() {
+    let code = "o.x.y";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    let mut o = HashMap::new();
+    let mut x = HashMap::new();
+    let y = Value::Num(42.0);
+    x.insert("y".to_string(), y);
+    o.insert("x".to_string(), Value::Obj(Rc::new(RefCell::new(x))));
+    vm.current_frame()
+        .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
+}
+
+#[test]
+fn test_exec_assign_dot() {
+    let code = "[= o.x.y 42] o.x.y";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    let mut o = HashMap::new();
+    let mut x = HashMap::new();
+    let y = Value::Num(24.0);
+    x.insert("y".to_string(), y);
+    o.insert("x".to_string(), Value::Obj(Rc::new(RefCell::new(x))));
+    vm.current_frame()
+        .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
+}
+
+#[test]
+fn test_exec_obj() {
+    let code = "
+[let o [obj 
+        'x' 42
+        'inc' /[] [+= o.x 1]]]
+
+[println o]
+
+[o.inc]
+[= o.o o]
+[o.o.o.o.o.o.inc]
+
+o.x
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    insts.iter().for_each(|inst| println!("{}", inst));
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.top().unwrap(), &Value::Num(44.0))
 }
 
 #[test]
