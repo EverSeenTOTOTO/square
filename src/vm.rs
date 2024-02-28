@@ -16,6 +16,8 @@ use crate::code_frame::Position;
 use crate::emit::{emit, EmitContext};
 #[cfg(test)]
 use crate::parse::parse;
+#[cfg(test)]
+use std::time::Instant;
 
 pub type ExecResult = Result<(), SquareError>;
 
@@ -172,8 +174,9 @@ impl Inst {
 
                 let frame = vm.current_frame();
 
+                let varnames = closure.captures.iter().cloned().collect::<Vec<_>>();
                 // upgrade value to captured
-                for name in closure.captures.iter().cloned().collect::<Vec<_>>() {
+                for name in varnames {
                     if let Some(value) = frame.resolve_local(&name) {
                         let upvalue = value.upgrade();
 
@@ -181,7 +184,7 @@ impl Inst {
                         frame.insert_local(&name, upvalue.clone());
                     } else {
                         // else undefined yet, if later be defined in same scope,
-                        // the value will be updated
+                        // the value will be assigned
                         let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
 
                         closure.capture(&name, &upvalue);
@@ -235,20 +238,13 @@ impl Inst {
 
     fn binop(&self, vm: &mut VM, op_fn: &OpFn, pc: &mut usize) -> ExecResult {
         let frame = vm.current_frame();
-
-        if frame.sp < 2 {
-            return Err(SquareError::InstructionError(
-                format!("bad binary operation, operand stack length is {}", frame.sp),
-                self.clone(),
-                *pc,
-            ));
-        }
-
-        let result = op_fn(&frame.stack[frame.sp - 2], &frame.stack[frame.sp - 1]);
-
-        if let Err(SquareError::RuntimeError(msg)) = result {
-            return Err(SquareError::InstructionError(msg, self.clone(), *pc));
-        }
+        let result =
+            op_fn(&frame.stack[frame.sp - 2], &frame.stack[frame.sp - 1]).map_err(|e| match e {
+                SquareError::RuntimeError(msg) => {
+                    SquareError::InstructionError(msg, self.clone(), *pc)
+                }
+                _ => e,
+            });
 
         frame.stack[frame.sp - 2] = result?;
         frame.sp -= 1;
@@ -536,6 +532,7 @@ impl CallFrame {
 pub struct VM {
     pub call_frames: Vec<CallFrame>,
     buildin: Builtin,
+    inst_times: HashMap<&'static str, (u128, usize)>,
 }
 
 impl VM {
@@ -543,6 +540,7 @@ impl VM {
         Self {
             call_frames: vec![CallFrame::new()],
             buildin: Builtin::new(),
+            inst_times: HashMap::new(),
         }
     }
 
@@ -564,17 +562,27 @@ impl VM {
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
+        // #[cfg(test)]
+        // println!("{}: {}", *pc, inst);
+
         #[cfg(test)]
-        println!("{}: {}", *pc, inst);
+        let start = Instant::now();
 
         inst.exec(self, insts, pc)?;
 
         #[cfg(test)]
-        println!(
-            "-------- CallFrame {} --------\n{}",
-            self.call_frames.len() - 1,
-            self.current_frame()
-        );
+        {
+            let duration = start.elapsed().as_nanos();
+            let entry = self.inst_times.entry(inst.name()).or_insert((0, 0));
+            *entry = (entry.0 + duration, entry.1 + 1);
+        }
+
+        // #[cfg(test)]
+        // println!(
+        //     "-------- CallFrame {} --------\n{}",
+        //     self.call_frames.len() - 1,
+        //     self.current_frame()
+        // );
 
         *pc += 1;
         Ok(())
@@ -582,17 +590,56 @@ impl VM {
 
     pub fn run(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let buildin_values = self.buildin.values.clone();
-
         let frame = self.current_frame();
 
         frame.extend_locals(buildin_values);
         frame.ra = insts.len();
+
+        #[cfg(test)]
+        self.inst_times.clear();
 
         while *pc < insts.len() {
             self.step(insts, pc)?;
         }
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn print_times(&self) {
+        let mut data: Vec<_> = self
+            .inst_times
+            .iter()
+            .map(|(name, (total_time, count))| {
+                (
+                    name,
+                    *total_time,
+                    (*total_time as f64) / (*count as f64),
+                    *count,
+                )
+            })
+            .collect();
+
+        println!("");
+        // Sort and print by total time
+        data.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        for (name, total_time, ..) in &data {
+            println!("Total time for {}: {} ns", name, total_time);
+        }
+
+        println!("");
+        // Sort and print by average time
+        data.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+        for (name, _, average_time, _) in &data {
+            println!("Average time for {}: {:.2} ns", name, average_time);
+        }
+
+        println!("");
+        // Sort and print by count
+        data.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap());
+        for (name, .., count) in &data {
+            println!("Count for {}: {} times", name, count);
+        }
     }
 }
 
@@ -1226,4 +1273,22 @@ fn test_exec_builtin() {
         callframe.resolve_local("t").unwrap(),
         &Value::Str("fn".to_string())
     )
+}
+
+#[test]
+fn test_profile() {
+    let code = "
+[let fib /[n] 
+  [if [<= n 2] 
+    1
+    [+ [fib [- n 1]] [fib [- n 2]]]]]
+
+[println [fib 20]]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+    vm.print_times();
 }

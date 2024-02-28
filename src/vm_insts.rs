@@ -46,6 +46,42 @@ pub enum Inst {
     PATCH(Value),
 }
 
+impl Inst {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Inst::PUSH(_) => "PUSH",
+            Inst::POP => "POP",
+            Inst::ADD => "ADD",
+            Inst::SUB => "SUB",
+            Inst::MUL => "MUL",
+            Inst::DIV => "DIV",
+            Inst::REM => "REM",
+            Inst::BITAND => "AND",
+            Inst::BITOR => "OR",
+            Inst::BITXOR => "XOR",
+            Inst::BITNOT => "NOT",
+            Inst::EQ => "EQ",
+            Inst::NE => "NE",
+            Inst::LT => "LT",
+            Inst::LE => "LE",
+            Inst::GT => "GT",
+            Inst::GE => "GE",
+            Inst::SHL => "SHL",
+            Inst::SHR => "SHR",
+            Inst::JMP(_) => "JMP",
+            Inst::JNE(_) => "JNE",
+            Inst::STORE(_) => "STORE",
+            Inst::LOAD(_) => "LOAD",
+            Inst::CALL => "CALL",
+            Inst::RET => "RET",
+            Inst::PUSH_CLOSURE(_) => "PUSH_CLOSURE",
+            Inst::PACK(_) => "PACK",
+            Inst::PEEK(_) => "PEEK",
+            Inst::PATCH(_) => "PATCH",
+        }
+    }
+}
+
 impl fmt::Display for Inst {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
