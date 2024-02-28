@@ -81,28 +81,26 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
     [begin
         [let i 0]
         [while [< i 10]
-            [callcc /[cc]
-                [yield [vec i cc]]]]]]
+            [callcc /[iter_k]
+                [yield [vec i iter_k]]]]]]
 
-[let innerCc nil]
+[let [i iter_k] [vec 0 0]]
 
 [let next /[g]
-    [if [== [typeof innerCc] 'fn']
-        [innerCc]
+    [if [== [typeof iter_k] 'fn']
+        [iter_k]
         [begin
-            [let p [callcc /[cc] [g cc]]]
+            [let p [callcc /[yield] [g yield]]]
             [if [== [typeof p] 'vec']
                 [begin
-                    [let i nil]
-                    [= [i innerCc] p]
-                    [print i]]]]]]
-                    
-[next gen]
-[next gen]
-[next gen]
-[next gen]
-[next gen]
+                    [= [i iter_k] p]
+                    [println i]]]]]]
 
+[next gen]
+[next gen]
+[next gen]
+[next gen]
+[next gen]
 ```
 
 ## Structure

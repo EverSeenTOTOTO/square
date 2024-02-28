@@ -7,12 +7,13 @@ use alloc::vec;
 use hashbrown::HashMap;
 
 use crate::errors::SquareError;
+use crate::vm::CallFrame;
 use crate::{
     vm::{ExecResult, VM},
     vm_value::{Closure, Value},
 };
 
-pub type Syscall = Rc<dyn Fn(&mut VM, Value, &mut usize) -> ExecResult>;
+pub type Syscall = Rc<dyn Fn(&mut VM, Rc<RefCell<Closure>>, Value, &mut usize) -> ExecResult>;
 
 pub struct Builtin {
     pub values: HashMap<String, Value>,
@@ -43,13 +44,18 @@ impl Builtin {
             Value::Closure(Rc::new(RefCell::new(Closure::new(-4)))),
         );
         values.insert(
-            "concat".to_string(),
-            Value::Closure(Rc::new(RefCell::new(Closure::new(-5)))),
+            "__concat".to_string(),
+            Value::Closure(Rc::new(RefCell::new(Closure::new(-4)))),
         );
         values.insert(
             "obj".to_string(),
             Value::Closure(Rc::new(RefCell::new(Closure::new(-6)))),
         );
+        values.insert(
+            "callcc".to_string(),
+            Value::Closure(Rc::new(RefCell::new(Closure::new(-7)))),
+        );
+        // -8 is used for call cc
 
         #[cfg(not(test))]
         use crate::print;
@@ -60,7 +66,11 @@ impl Builtin {
         syscalls.insert(
             -1,
             Rc::new(
-                |_vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                |_vm: &mut VM,
+                 _fn: Rc<RefCell<Closure>>,
+                 params: Value,
+                 _pc: &mut usize|
+                 -> ExecResult {
                     if let Value::Vec(top) = params {
                         top.borrow().iter().for_each(|val| print!("{}", val));
                     }
@@ -72,7 +82,11 @@ impl Builtin {
         syscalls.insert(
             -2,
             Rc::new(
-                |_vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                |_vm: &mut VM,
+                 _fn: Rc<RefCell<Closure>>,
+                 params: Value,
+                 _pc: &mut usize|
+                 -> ExecResult {
                     if let Value::Vec(top) = params {
                         top.borrow().iter().for_each(|val| print!("{}", val));
                     }
@@ -85,7 +99,11 @@ impl Builtin {
         syscalls.insert(
             -3,
             Rc::new(
-                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                |vm: &mut VM,
+                 _fn: Rc<RefCell<Closure>>,
+                 params: Value,
+                 _pc: &mut usize|
+                 -> ExecResult {
                     // params have already be packed
                     Ok(vm.current_frame().push(params))
                 },
@@ -95,7 +113,11 @@ impl Builtin {
         syscalls.insert(
             -4,
             Rc::new(
-                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                |vm: &mut VM,
+                 _fn: Rc<RefCell<Closure>>,
+                 params: Value,
+                 _pc: &mut usize|
+                 -> ExecResult {
                     if let Value::Vec(ref top) = params {
                         if let Some(val) = top.borrow().get(0) {
                             return Ok(vm
@@ -117,7 +139,11 @@ impl Builtin {
         syscalls.insert(
             -5,
             Rc::new(
-                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                |vm: &mut VM,
+                 _fn: Rc<RefCell<Closure>>,
+                 params: Value,
+                 _pc: &mut usize|
+                 -> ExecResult {
                     if let Value::Vec(ref top) = params {
                         if top.borrow().len() != 2 {
                             return Err(SquareError::RuntimeError(format!(
@@ -126,7 +152,7 @@ impl Builtin {
                             )));
                         }
 
-                        match (top.borrow().get(0).unwrap(), top.borrow().get(1).unwrap()) {
+                        match (&top.borrow()[0], &top.borrow()[1]) {
                             (Value::Str(s1), Value::Str(s2)) => {
                                 return Ok(vm.current_frame().push(Value::Str(s1.to_string() + s2)))
                             }
@@ -162,7 +188,11 @@ impl Builtin {
         syscalls.insert(
             -6,
             Rc::new(
-                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                |vm: &mut VM,
+                 _fn: Rc<RefCell<Closure>>,
+                 params: Value,
+                 _pc: &mut usize|
+                 -> ExecResult {
                     if let Value::Vec(ref top) = params {
                         let mut obj = HashMap::new();
                         for i in (0..top.borrow().len()).step_by(2) {
@@ -184,6 +214,59 @@ impl Builtin {
                     }
 
                     unreachable!()
+                },
+            ) as Syscall,
+        );
+        // cc
+        syscalls.insert(
+            -7,
+            Rc::new(
+                |vm: &mut VM,
+                 _fn: Rc<RefCell<Closure>>,
+                 params: Value,
+                 pc: &mut usize|
+                 -> ExecResult {
+                    if let Value::Vec(ref top) = params {
+                        if let Value::Closure(ref iife) = top.borrow()[0] {
+                            let mut cc = Closure::new(-8);
+                            cc.capture_ctx(*pc, vm.save_context());
+
+                            vm.current_frame().push(Value::Closure(iife.clone()));
+                            vm.current_frame()
+                                .push(Value::Closure(Rc::new(RefCell::new(cc))));
+
+                            Ok(())
+                        } else {
+                            Err(SquareError::RuntimeError(format!(
+                                "callcc only accept one function parameter, got {}",
+                                params
+                            )))
+                        }
+                    } else {
+                        unreachable!()
+                    }
+                },
+            ) as Syscall,
+        );
+        syscalls.insert(
+            -8,
+            Rc::new(
+                |vm: &mut VM,
+                 closure: Rc<RefCell<Closure>>,
+                 params: Value,
+                 pc: &mut usize|
+                 -> ExecResult {
+                    if let Value::Vec(ref top) = params {
+                        let cc = closure.borrow().context.clone().unwrap();
+                        *pc = cc.0;
+                        vm.restore_context(cc.1);
+                        Ok(vm.current_frame().push(top.borrow()[0].clone()))
+                    } else {
+                        Err(SquareError::RuntimeError(format!(
+                            "cc only accept one parameter, got {}",
+                            params
+                        )))
+                    }
                 },
             ) as Syscall,
         );

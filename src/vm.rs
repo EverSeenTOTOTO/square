@@ -180,14 +180,14 @@ impl Inst {
                     if let Some(value) = frame.resolve_local(&name) {
                         let upvalue = value.upgrade();
 
-                        closure.capture(&name, &upvalue);
+                        closure.capture_val(&name, &upvalue);
                         frame.insert_local(&name, upvalue.clone());
                     } else {
                         // else undefined yet, if later be defined in same scope,
                         // the value will be assigned
                         let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
 
-                        closure.capture(&name, &upvalue);
+                        closure.capture_val(&name, &upvalue);
                         frame.insert_local(&name, upvalue.clone());
                     }
                 }
@@ -274,7 +274,7 @@ impl Inst {
         pc: &mut usize,
     ) -> ExecResult {
         if closure.borrow().ip < 0 {
-            return self.syscall(vm, closure.borrow().ip, params, pc);
+            return self.syscall(vm, closure.clone(), params, pc);
         }
 
         if is_tail_call {
@@ -303,12 +303,18 @@ impl Inst {
         Ok(())
     }
 
-    fn syscall(&self, vm: &mut VM, ip: i32, params: Value, pc: &mut usize) -> ExecResult {
-        if let Some(syscall) = vm.buildin.syscalls.get(&ip) {
-            syscall.clone()(vm, params, pc)
+    fn syscall(
+        &self,
+        vm: &mut VM,
+        closure: Rc<RefCell<Closure>>,
+        params: Value,
+        pc: &mut usize,
+    ) -> ExecResult {
+        if let Some(syscall) = vm.buildin.syscalls.get(&closure.borrow().ip) {
+            syscall.clone()(vm, closure.clone(), params, pc)
         } else {
             Err(SquareError::InstructionError(
-                format!("undefined syscall {}", ip),
+                format!("undefined syscall {}", closure.borrow().ip),
                 self.clone(),
                 *pc,
             ))
@@ -436,15 +442,16 @@ impl Inst {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallFrame {
-    locals: HashMap<String, Value>,
+    pub locals: HashMap<String, Value>,
 
     // operand stack
-    stack: Vec<Value>,
+    pub stack: Vec<Value>,
     // fake stack pointer, avoid frequent operand stack push/pop
-    sp: usize,
+    pub sp: usize,
 
-    ra: usize, // return address
+    pub ra: usize, // return address
 }
 
 impl fmt::Display for CallFrame {
@@ -466,7 +473,7 @@ impl fmt::Display for CallFrame {
 }
 
 impl CallFrame {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             locals: HashMap::new(),
             stack: vec![Value::Nil; 8],
@@ -559,11 +566,21 @@ impl VM {
         self.call_frames.pop()
     }
 
+    #[inline]
+    pub fn save_context(&self) -> Vec<CallFrame> {
+        self.call_frames.clone()
+    }
+
+    #[inline]
+    pub fn restore_context(&mut self, context: Vec<CallFrame>) {
+        self.call_frames = context;
+    }
+
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
-        // #[cfg(test)]
-        // println!("{}: {}", *pc, inst);
+        #[cfg(test)]
+        println!("{}: {}", *pc, inst);
 
         #[cfg(test)]
         let start = Instant::now();
@@ -577,12 +594,12 @@ impl VM {
             *entry = (entry.0 + duration, entry.1 + 1);
         }
 
-        // #[cfg(test)]
-        // println!(
-        //     "-------- CallFrame {} --------\n{}",
-        //     self.call_frames.len() - 1,
-        //     self.current_frame()
-        // );
+        #[cfg(test)]
+        println!(
+            "-------- CallFrame {} --------\n{}",
+            self.call_frames.len() - 1,
+            self.current_frame()
+        );
 
         *pc += 1;
         Ok(())
@@ -1273,6 +1290,22 @@ fn test_exec_builtin() {
         callframe.resolve_local("t").unwrap(),
         &Value::Str("fn".to_string())
     )
+}
+
+#[test]
+fn test_callcc() {
+    let code = "
+        [println [callcc /[cc] 42]]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    insts
+        .iter()
+        .enumerate()
+        .for_each(|(i, inst)| println!("{}: {}", i, inst));
+    vm.run(&insts, &mut 0).unwrap();
 }
 
 #[test]

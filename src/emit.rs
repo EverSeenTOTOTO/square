@@ -332,7 +332,7 @@ fn emit_op(
             "|=" => op_assign_action(Inst::BITOR),
             "^=" => op_assign_action(Inst::BITXOR),
             ".." => {
-                let name = "concat".to_string();
+                let name = "__concat".to_string();
                 ctx.borrow_mut().mark_if_capture(&name);
                 let mut result = vec![];
                 result.push(Inst::LOAD(name));
@@ -497,7 +497,8 @@ fn test_emit_if_true() {
                     let mut unresolved_true = HashSet::new();
                     unresolved_true.insert("true".to_string());
                     unresolved_true
-                }
+                },
+                context: None
             }),
             Inst::PACK(0),
             Inst::CALL
@@ -528,7 +529,8 @@ fn test_emit_if_true_false() {
                     let mut unresolved_true = HashSet::new();
                     unresolved_true.insert("true".to_string());
                     unresolved_true
-                }
+                },
+                context: None
             }),
             Inst::PACK(0),
             Inst::CALL
@@ -599,7 +601,8 @@ fn test_emit_while() {
                     let mut unresolved_true = HashSet::new();
                     unresolved_true.insert("true".to_string());
                     unresolved_true
-                }
+                },
+                context: None
             }),
             Inst::PACK(0),
             Inst::CALL
@@ -739,7 +742,8 @@ fn test_cond() {
                     unresolved.insert("true".to_string());
                     unresolved.insert("false".to_string());
                     unresolved
-                }
+                },
+                context: None
             }),
             Inst::PACK(0),
             Inst::CALL
@@ -963,7 +967,8 @@ fn test_emit_fn_capture() {
             Inst::PUSH_CLOSURE(Closure {
                 ip: -4,
                 upvalues: HashMap::new(),
-                captures
+                captures,
+                context: None
             }),
         ]
     );
@@ -999,7 +1004,8 @@ fn test_emit_fn_capture_nested() {
                     unresolved_xy.insert("x".to_string());
                     unresolved_xy.insert("y".to_string());
                     unresolved_xy
-                }
+                },
+                context: None
             }),
             Inst::RET,
             Inst::PUSH_CLOSURE(Closure {
@@ -1009,7 +1015,8 @@ fn test_emit_fn_capture_nested() {
                     let mut unresolved_y = HashSet::new();
                     unresolved_y.insert("y".to_string());
                     unresolved_y
-                }
+                },
+                context: None
             }),
             Inst::PACK(0),
             Inst::CALL,
@@ -1021,7 +1028,8 @@ fn test_emit_fn_capture_nested() {
                     let mut unresolved_y = HashSet::new();
                     unresolved_y.insert("y".to_string());
                     unresolved_y
-                }
+                },
+                context: None
             }),
         ]
     );

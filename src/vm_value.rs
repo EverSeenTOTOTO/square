@@ -13,7 +13,7 @@ use core::{
 };
 use hashbrown::{HashMap, HashSet};
 
-use crate::errors::SquareError;
+use crate::{errors::SquareError, vm::CallFrame};
 
 // use at both runtime and compile time
 // at compile time, ip is the offset from instruction to fn definition, upvalues is empty and captures contains variable names
@@ -23,6 +23,7 @@ pub struct Closure {
     pub ip: i32,
     pub upvalues: HashMap<String, Value>,
     pub captures: HashSet<String>,
+    pub context: Option<(usize, Vec<CallFrame>)>, // use as continuation
 }
 
 impl Closure {
@@ -31,21 +32,28 @@ impl Closure {
             ip,
             upvalues: HashMap::new(),
             captures: HashSet::new(),
+            context: None,
         }
     }
 
-    pub fn capture(&mut self, name: &str, upvalue: &Value) -> bool {
+    pub fn capture_val(&mut self, name: &str, upvalue: &Value) -> bool {
         if self.captures.contains(name) {
             self.upvalues.insert(name.to_string(), upvalue.clone());
             return true;
         }
         false
     }
+
+    pub fn capture_ctx(&mut self, pc: usize, ctx: Vec<CallFrame>) {
+        self.context = Some((pc, ctx));
+    }
 }
 
 impl fmt::Display for Closure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.captures.is_empty() {
+        if let Some((pc, _)) = self.context {
+            write!(f, "Continuation({})", pc)
+        } else if self.captures.is_empty() {
             write!(f, "Closure({})", self.ip)
         } else {
             write!(
@@ -203,7 +211,7 @@ fn test_partial_eq() {
     assert_eq!(lhs, rhs);
 
     closure.borrow_mut().captures.insert("lhs".to_string());
-    closure.borrow_mut().capture("lhs", &lhs);
+    closure.borrow_mut().capture_val("lhs", &lhs);
 
     assert_eq!(lhs, rhs);
 
@@ -378,7 +386,13 @@ impl Value {
             Value::Str(_) => "str",
             Value::Vec(_) => "vec",
             Value::Obj(_) => "obj",
-            Value::Closure(_) => "fn",
+            Value::Closure(c) => {
+                if c.borrow().context.is_some() {
+                    "cont"
+                } else {
+                    "fn"
+                }
+            }
             Value::Nil => "nil",
             Value::UpValue(val) => val.borrow().typename(),
         }
@@ -401,3 +415,4 @@ fn test_upgrade() {
     assert_eq!(upval.upgrade().upgrade(), upval.upgrade());
     assert_eq!(upval.clone(), upval.upgrade());
 }
+
