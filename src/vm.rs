@@ -267,9 +267,9 @@ impl Inst {
                 let syscall = vm.buildin.syscalls[index].clone() as Syscall;
                 syscall(vm, params, pc)
             }
-            Function::Contiuation(ip, ref context) => {
+            Function::Contiuation(ra, ref context) => {
                 if let Value::Vec(ref top) = params {
-                    *pc = ip;
+                    *pc = ra;
                     vm.restore_context(context.clone());
                     Ok(vm.current_frame().push(top.borrow()[0].clone()))
                 } else {
@@ -1254,19 +1254,33 @@ fn test_exec_builtin() {
 }
 
 #[test]
-fn test_callcc() {
+fn test_callcc_flow() {
     let code = "
-[println [callcc /[cc] 42]]
+[let x [callcc /[cc] 42]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    insts
-        .iter()
-        .enumerate()
-        .for_each(|(i, inst)| println!("{}: {}", i, inst));
     vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0))
+}
+
+#[test]
+fn test_callcc_break() {
+    let code = "
+[let x [callcc /[cc] [cc 42]]]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0))
 }
 
 #[test]

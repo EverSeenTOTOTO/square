@@ -175,9 +175,10 @@ impl Builtin {
             // callcc
             Rc::new(|vm: &mut VM, params: Value, pc: &mut usize| -> ExecResult {
                 if let Value::Vec(ref top) = params {
-                    if let Value::Function(ref iife) = top.borrow()[0] {
+                    if let Some(ref iife) = top.borrow()[0].as_fn() {
                         let cc = Function::Contiuation(*pc, vm.save_context());
 
+                        *pc = *pc - 2; // callcc is actually another kind of CALL instruction, we reuse the PACK and CALL that call callcc itself to call the parameter lambda provided to callcc
                         vm.current_frame().push(Value::Function(iife.clone()));
                         vm.current_frame()
                             .push(Value::Function(Rc::new(RefCell::new(cc))));

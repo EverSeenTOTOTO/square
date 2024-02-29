@@ -20,7 +20,7 @@ pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
     Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
     Syscall(usize),                    // index
-    Contiuation(usize, Vec<CallFrame>), // (index, context)
+    Contiuation(usize, Vec<CallFrame>), // (ra, context)
 }
 
 impl fmt::Display for Function {
@@ -28,11 +28,11 @@ impl fmt::Display for Function {
         match self {
             Function::ClosureMeta(offset, captures) => {
                 if captures.is_empty() {
-                    write!(f, "ClosureMeta({})", offset)
+                    write!(f, "{}", offset)
                 } else {
                     write!(
                         f,
-                        "ClosureMeta({}, {})",
+                        "{}, {}",
                         offset,
                         captures
                             .iter()
@@ -61,8 +61,8 @@ impl fmt::Display for Function {
             Function::Syscall(index) => {
                 write!(f, "Syscall({})", index)
             }
-            Function::Contiuation(ip, context) => {
-                write!(f, "Continuation({}, {})", ip, context.len() - 1)
+            Function::Contiuation(ra, context) => {
+                write!(f, "Continuation({}, {})", ra, context.len() - 1)
             }
         }
     }

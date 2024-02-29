@@ -81,10 +81,12 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
     [begin
         [let i 0]
         [while [< i 10]
-            [callcc /[iter_k]
-                [yield [vec i iter_k]]]]]]
+            [begin
+                [+= i 1]
+                [callcc /[iter_k]
+                    [yield [vec i iter_k]]]]]]]
 
-[let [i iter_k] [vec 0 0]]
+[let [i iter_k] [vec nil nil]]
 
 [let next /[g]
     [if [== [typeof iter_k] 'fn']
