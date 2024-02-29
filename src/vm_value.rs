@@ -15,63 +15,55 @@ use hashbrown::{HashMap, HashSet};
 
 use crate::{errors::SquareError, vm::CallFrame};
 
-// use at both runtime and compile time
-// at compile time, ip is the offset from instruction to fn definition, upvalues is empty and captures contains variable names
-// at runtime, ip is the function address or syscall index(when < 0), upvalues contains captured variables
 #[derive(Debug, Clone, PartialEq)]
-pub struct Closure {
-    pub ip: i32,
-    pub upvalues: HashMap<String, Value>,
-    pub captures: HashSet<String>,
-    pub context: Option<(usize, Vec<CallFrame>)>, // use as continuation
+pub enum Function {
+    ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
+    Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
+    Syscall(usize),                    // index
+    Contiuation(usize, Vec<CallFrame>), // (index, context)
 }
 
-impl Closure {
-    pub fn new(ip: i32) -> Self {
-        Self {
-            ip,
-            upvalues: HashMap::new(),
-            captures: HashSet::new(),
-            context: None,
-        }
-    }
-
-    pub fn capture_val(&mut self, name: &str, upvalue: &Value) -> bool {
-        if self.captures.contains(name) {
-            self.upvalues.insert(name.to_string(), upvalue.clone());
-            return true;
-        }
-        false
-    }
-
-    pub fn capture_ctx(&mut self, pc: usize, ctx: Vec<CallFrame>) {
-        self.context = Some((pc, ctx));
-    }
-}
-
-impl fmt::Display for Closure {
+impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some((pc, _)) = self.context {
-            write!(f, "Continuation({})", pc)
-        } else if self.captures.is_empty() {
-            write!(f, "Closure({})", self.ip)
-        } else {
-            write!(
-                f,
-                "Closure({}, {})",
-                self.ip,
-                self.captures
-                    .iter()
-                    .map(|k| {
-                        if self.upvalues.contains_key(k) {
-                            format!("{}✓", k)
-                        } else {
-                            format!("{}?", k)
-                        }
-                    })
-                    .collect::<Vec<String>>()
-                    .join(",")
-            )
+        match self {
+            Function::ClosureMeta(offset, captures) => {
+                if captures.is_empty() {
+                    write!(f, "ClosureMeta({})", offset)
+                } else {
+                    write!(
+                        f,
+                        "ClosureMeta({}, {})",
+                        offset,
+                        captures
+                            .iter()
+                            .map(|k| { format!("{}?", k) })
+                            .collect::<Vec<String>>()
+                            .join(",")
+                    )
+                }
+            }
+            Function::Closure(ip, upvalues) => {
+                if upvalues.is_empty() {
+                    write!(f, "Closure({})", ip)
+                } else {
+                    write!(
+                        f,
+                        "Closure({}, {})",
+                        ip,
+                        upvalues
+                            .iter()
+                            .map(|(k, _)| format!("{}✓", k))
+                            .collect::<Vec<String>>()
+                            .join(",")
+                    )
+                }
+            }
+            Function::Syscall(index) => {
+                write!(f, "Syscall({})", index)
+            }
+            Function::Contiuation(ip, context) => {
+                write!(f, "Continuation({}, {})", ip, context.len() - 1)
+            }
         }
     }
 }
@@ -83,7 +75,7 @@ pub enum Value {
     Str(String),
     Vec(Rc<RefCell<Vec<Value>>>),
     Obj(Rc<RefCell<HashMap<String, Value>>>),
-    Closure(Rc<RefCell<Closure>>),
+    Function(Rc<RefCell<Function>>),
     UpValue(Rc<RefCell<Value>>),
     Nil,
 }
@@ -130,7 +122,7 @@ impl fmt::Display for Value {
                         .join(", ")
                 )
             }
-            Value::Closure(closure) => closure.borrow().fmt(f),
+            Value::Function(func) => func.borrow().fmt(f),
             Value::UpValue(val) => match *val.borrow() {
                 Value::UpValue(_) => panic!("nested upvalue"), // this should be unreachable, see Value::upgrade && CallFrame::assign_local
                 _ => write!(f, "{}", stringify_nested(&val.borrow())),
@@ -191,7 +183,7 @@ impl PartialEq for Value {
             (Value::Str(lhs), Value::Str(rhs)) => lhs == rhs,
             (Value::Vec(lhs), Value::Vec(rhs)) => Rc::ptr_eq(lhs, rhs),
             (Value::Obj(lhs), Value::Obj(rhs)) => Rc::ptr_eq(lhs, rhs),
-            (Value::Closure(lhs), Value::Closure(rhs)) => Rc::ptr_eq(lhs, rhs),
+            (Value::Function(lhs), Value::Function(rhs)) => Rc::ptr_eq(lhs, rhs),
 
             (Value::UpValue(lhs), Value::UpValue(rhs)) => lhs.borrow().eq(&rhs.borrow()),
             (Value::UpValue(lhs), rhs) => lhs.borrow().eq(rhs),
@@ -200,25 +192,6 @@ impl PartialEq for Value {
             _ => false,
         }
     }
-}
-
-#[test]
-fn test_partial_eq() {
-    let closure = Rc::new(RefCell::new(Closure::new(0)));
-    let lhs = Value::Closure(closure.clone());
-    let rhs = Value::Closure(closure.clone());
-
-    assert_eq!(lhs, rhs);
-
-    closure.borrow_mut().captures.insert("lhs".to_string());
-    closure.borrow_mut().capture_val("lhs", &lhs);
-
-    assert_eq!(lhs, rhs);
-
-    let lhs_up = lhs.upgrade();
-    let rhs_up = rhs.upgrade();
-
-    assert_eq!(lhs_up, rhs_up);
 }
 
 pub type CalcResult = Result<Value, SquareError>;
@@ -371,10 +344,10 @@ impl Value {
         }
     }
 
-    pub fn as_closure(&self) -> Option<Rc<RefCell<Closure>>> {
+    pub fn as_fn(&self) -> Option<Rc<RefCell<Function>>> {
         match self {
-            Value::Closure(val) => Some(val.clone()),
-            Value::UpValue(val) => val.borrow().as_closure(),
+            Value::Function(val) => Some(val.clone()),
+            Value::UpValue(val) => val.borrow().as_fn(),
             _ => None,
         }
     }
@@ -386,13 +359,10 @@ impl Value {
             Value::Str(_) => "str",
             Value::Vec(_) => "vec",
             Value::Obj(_) => "obj",
-            Value::Closure(c) => {
-                if c.borrow().context.is_some() {
-                    "cont"
-                } else {
-                    "fn"
-                }
-            }
+            Value::Function(f) => match *f.borrow() {
+                Function::Contiuation(..) => "cont",
+                _ => "fn",
+            },
             Value::Nil => "nil",
             Value::UpValue(val) => val.borrow().typename(),
         }
@@ -408,11 +378,10 @@ impl Value {
 
 #[test]
 fn test_upgrade() {
-    let closure = Value::Closure(Rc::new(RefCell::new(Closure::new(0))));
+    let closure = Value::Function(Rc::new(RefCell::new(Function::Syscall(0))));
     let upval = Value::UpValue(Rc::new(RefCell::new(closure)));
 
     assert_eq!(upval, upval.upgrade());
     assert_eq!(upval.upgrade().upgrade(), upval.upgrade());
     assert_eq!(upval.clone(), upval.upgrade());
 }
-

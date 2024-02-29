@@ -1,4 +1,4 @@
-use crate::vm_value::{Closure, Value};
+use crate::vm_value::{Function, Value};
 
 use alloc::string::String;
 use core::fmt;
@@ -35,13 +35,13 @@ pub enum Inst {
 
     CALL,
     RET,
-    PUSH_CLOSURE(Closure), // create a closure and push on top of the operand stack
+    PUSH_CLOSURE(Function), // create a closure and push on top of the operand stack
 
     PACK(usize), // pack n elements on top of the operand stack
 
-    // (offset, index), peek an element within the top pack of the operand stack.
+    // peek_vec: (offset, index), peek an element within the top pack of the operand stack.
     // 'offset' is either 0 or the number of elements consumed once greedy placehoder appeared.
-    // (key, nil), peek a member within the top object of the operand stack
+    // peek_obj: (key, nil), peek a member within the top object of the operand stack
     PEEK((Value, Value)),
     PATCH(Value),
 }

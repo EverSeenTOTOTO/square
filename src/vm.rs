@@ -4,10 +4,10 @@ use core::{cell::RefCell, fmt};
 use hashbrown::HashMap;
 
 use crate::{
-    builtin::Builtin,
+    builtin::{Builtin, Syscall},
     errors::SquareError,
     vm_insts::Inst,
-    vm_value::{CalcResult, Closure, Value},
+    vm_value::{CalcResult, Function, Value},
 };
 
 #[cfg(test)]
@@ -47,20 +47,12 @@ impl Inst {
             Inst::SHR => self.binop(vm, &|a, b| a >> b, pc),
             Inst::BITNOT => {
                 let frame = vm.current_frame();
-
-                if frame.sp < 1 {
-                    return Err(SquareError::InstructionError(
-                        format!("bad binary operation, operand stack length is {}", frame.sp),
-                        self.clone(),
-                        *pc,
-                    ));
-                }
-
-                let result = !&frame.stack[frame.sp - 1];
-
-                if let Err(SquareError::RuntimeError(msg)) = result {
-                    return Err(SquareError::InstructionError(msg, self.clone(), *pc));
-                }
+                let result = (!frame.top().unwrap()).map_err(|e| match e {
+                    SquareError::RuntimeError(msg) => {
+                        SquareError::InstructionError(msg, self.clone(), *pc)
+                    }
+                    _ => e,
+                });
 
                 frame.stack[frame.sp - 1] = result?;
                 Ok(())
@@ -69,14 +61,6 @@ impl Inst {
             Inst::JMP(value) => self.jump(insts, pc, *value),
             Inst::JNE(value) => {
                 let frame = vm.current_frame();
-
-                if frame.sp < 1 {
-                    return Err(SquareError::InstructionError(
-                        "bad jne, operand stack empty".to_string(),
-                        self.clone(),
-                        *pc,
-                    ));
-                }
 
                 if !frame.top().unwrap().as_bool() {
                     frame.pop();
@@ -119,22 +103,14 @@ impl Inst {
                 // call closure
                 let frame = vm.current_frame();
 
-                if frame.sp < 2 {
-                    return Err(SquareError::InstructionError(
-                        "bad call, closure and params required".to_string(),
-                        self.clone(),
-                        *pc,
-                    ));
-                }
-
                 let params = frame.stack[frame.sp - 1].clone();
-                let func = frame.stack[frame.sp - 2].as_closure();
+                let func = frame.stack[frame.sp - 2].as_fn();
 
                 frame.sp -= 2;
 
-                if let Some(closure) = func {
+                if let Some(val) = func {
                     let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
-                    self.call(vm, closure, params, is_tail_call, pc)
+                    self.call(vm, val, params, is_tail_call, pc)
                 } else {
                     Err(SquareError::InstructionError(
                         format!(
@@ -160,57 +136,44 @@ impl Inst {
                 Ok(vm.current_frame().push(top))
             }
             Inst::PUSH_CLOSURE(meta) => {
-                // create closure
-                let mut closure = meta.clone();
-                closure.ip = (*pc as i32) + closure.ip;
+                if let Function::ClosureMeta(offset, captures) = meta {
+                    // create closure
+                    let mut upvalues = HashMap::new();
+                    let ip = (*pc as i32) + offset;
+                    let frame = vm.current_frame();
 
-                if closure.ip < 0 {
-                    return Err(SquareError::InstructionError(
-                        format!("invalid function address: {}", closure.ip),
-                        self.clone(),
-                        *pc,
-                    ));
-                }
+                    let varnames = captures.iter().cloned().collect::<Vec<_>>();
+                    // upgrade value to captured
+                    for name in varnames {
+                        if let Some(value) = frame.resolve_local(&name) {
+                            let upvalue = value.upgrade();
 
-                let frame = vm.current_frame();
+                            upvalues.insert(name.clone(), upvalue.clone());
+                            frame.insert_local(&name, upvalue);
+                        } else {
+                            // else undefined yet, if later be defined in same scope,
+                            // the value will be assigned
+                            let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
 
-                let varnames = closure.captures.iter().cloned().collect::<Vec<_>>();
-                // upgrade value to captured
-                for name in varnames {
-                    if let Some(value) = frame.resolve_local(&name) {
-                        let upvalue = value.upgrade();
-
-                        closure.capture_val(&name, &upvalue);
-                        frame.insert_local(&name, upvalue.clone());
-                    } else {
-                        // else undefined yet, if later be defined in same scope,
-                        // the value will be assigned
-                        let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
-
-                        closure.capture_val(&name, &upvalue);
-                        frame.insert_local(&name, upvalue.clone());
+                            upvalues.insert(name.clone(), upvalue.clone());
+                            frame.insert_local(&name, upvalue);
+                        }
                     }
+
+                    return Ok(frame.push(Value::Function(Rc::new(RefCell::new(
+                        Function::Closure(ip as usize, upvalues),
+                    )))));
                 }
 
-                Ok(frame.push(Value::Closure(Rc::new(RefCell::new(closure)))))
+                unreachable!()
             }
 
             Inst::PACK(len) => {
                 let frame = vm.current_frame();
+                let result = frame.stack[frame.sp - len..frame.sp].to_vec().clone();
 
-                if frame.sp < *len {
-                    return Err(SquareError::InstructionError(
-                        format!("bad pack, {} requied, {} provided", len, frame.sp),
-                        self.clone(),
-                        *pc,
-                    ));
-                }
-
-                let mut result = vec![];
-                for index in frame.sp - len..frame.sp {
-                    result.push(frame.stack[index].clone());
-                }
                 frame.sp -= *len;
+
                 Ok(frame.push(Value::Vec(Rc::new(RefCell::new(result)))))
             }
             Inst::PEEK(pair) => match pair {
@@ -255,7 +218,7 @@ impl Inst {
         let new_pc = *pc as i32 + offset;
         if new_pc < 0 || new_pc >= insts.len() as i32 {
             return Err(SquareError::InstructionError(
-                "bad pc".to_string(),
+                "bad jump".to_string(),
                 self.clone(),
                 *pc,
             ));
@@ -268,56 +231,54 @@ impl Inst {
     fn call(
         &self,
         vm: &mut VM,
-        closure: Rc<RefCell<Closure>>,
+        closure: Rc<RefCell<Function>>,
         params: Value,
         is_tail_call: bool,
         pc: &mut usize,
     ) -> ExecResult {
-        if closure.borrow().ip < 0 {
-            return self.syscall(vm, closure.clone(), params, pc);
-        }
+        match *closure.borrow() {
+            Function::ClosureMeta(..) => unreachable!(),
+            Function::Closure(ip, ref upvalues) => {
+                if is_tail_call {
+                    let frame = vm.current_frame();
+                    // always push params as first operand
+                    frame.stack[0] = params;
+                    frame.sp = 1;
+                    frame.clear_local();
+                    // fill up captures
+                    frame.extend_locals(upvalues.clone());
+                } else {
+                    let mut frame = CallFrame::new();
+                    frame.ra = *pc;
+                    // always push params as first operand
+                    frame.stack[0] = params;
+                    frame.sp = 1;
+                    // fill up captures
+                    frame.extend_locals(upvalues.clone());
 
-        if is_tail_call {
-            let frame = vm.current_frame();
-            // always push params as first operand
-            frame.stack[0] = params;
-            frame.sp = 1;
-            frame.clear_local();
-            // fill up captures
-            frame.extend_locals(closure.borrow().upvalues.clone());
-        } else {
-            let mut frame = CallFrame::new();
-            frame.ra = *pc;
-            // always push params as first operand
-            frame.stack[0] = params;
-            frame.sp = 1;
-            // fill up captures
-            frame.extend_locals(closure.borrow().upvalues.clone());
+                    vm.push_frame(frame);
+                }
 
-            vm.push_frame(frame);
-        }
-
-        // jump to function
-        *pc = closure.borrow().ip as usize;
-
-        Ok(())
-    }
-
-    fn syscall(
-        &self,
-        vm: &mut VM,
-        closure: Rc<RefCell<Closure>>,
-        params: Value,
-        pc: &mut usize,
-    ) -> ExecResult {
-        if let Some(syscall) = vm.buildin.syscalls.get(&closure.borrow().ip) {
-            syscall.clone()(vm, closure.clone(), params, pc)
-        } else {
-            Err(SquareError::InstructionError(
-                format!("undefined syscall {}", closure.borrow().ip),
-                self.clone(),
-                *pc,
-            ))
+                // jump to function
+                *pc = ip;
+                Ok(())
+            }
+            Function::Syscall(index) => {
+                let syscall = vm.buildin.syscalls[index].clone() as Syscall;
+                syscall(vm, params, pc)
+            }
+            Function::Contiuation(ip, ref context) => {
+                if let Value::Vec(ref top) = params {
+                    *pc = ip;
+                    vm.restore_context(context.clone());
+                    Ok(vm.current_frame().push(top.borrow()[0].clone()))
+                } else {
+                    Err(SquareError::RuntimeError(format!(
+                        "cc only accept one parameter, got {}",
+                        params
+                    )))
+                }
+            }
         }
     }
 
@@ -345,9 +306,9 @@ impl Inst {
 
             if index < pack.len() {
                 // frame.pop();
-                Ok(frame.push(pack[index].clone()))
+                return Ok(frame.push(pack[index].clone()));
             } else {
-                Err(SquareError::InstructionError(
+                return Err(SquareError::InstructionError(
                     format!(
                         "bad peek, index {} out of range, pack length is {}",
                         index,
@@ -355,18 +316,18 @@ impl Inst {
                     ),
                     self.clone(),
                     *pc,
-                ))
+                ));
             }
-        } else {
-            Err(SquareError::InstructionError(
-                format!(
-                    "bad peek, top value is not an vector, got {}",
-                    frame.top().unwrap_or(&Value::Nil).clone()
-                ),
-                self.clone(),
-                *pc,
-            ))
         }
+
+        Err(SquareError::InstructionError(
+            format!(
+                "bad peek, top value is not an vector, got {}",
+                frame.top().unwrap_or(&Value::Nil).clone()
+            ),
+            self.clone(),
+            *pc,
+        ))
     }
 
     fn peek_obj(&self, vm: &mut VM, key: &str, pc: &mut usize) -> ExecResult {
@@ -522,8 +483,8 @@ impl CallFrame {
     }
 
     pub fn assign_local(&mut self, name: &str, value: Value) {
-        let new = if let Value::UpValue(new) = value {
-            new.borrow().clone()
+        let new = if let Value::UpValue(upval) = value {
+            upval.borrow().clone()
         } else {
             value
         };
@@ -579,8 +540,8 @@ impl VM {
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
-        #[cfg(test)]
-        println!("{}: {}", *pc, inst);
+        // #[cfg(test)]
+        // println!("{}: {}", *pc, inst);
 
         #[cfg(test)]
         let start = Instant::now();
@@ -594,12 +555,12 @@ impl VM {
             *entry = (entry.0 + duration, entry.1 + 1);
         }
 
-        #[cfg(test)]
-        println!(
-            "-------- CallFrame {} --------\n{}",
-            self.call_frames.len() - 1,
-            self.current_frame()
-        );
+        // #[cfg(test)]
+        // println!(
+        //     "-------- CallFrame {} --------\n{}",
+        //     self.call_frames.len() - 1,
+        //     self.current_frame()
+        // );
 
         *pc += 1;
         Ok(())
@@ -1295,7 +1256,7 @@ fn test_exec_builtin() {
 #[test]
 fn test_callcc() {
     let code = "
-        [println [callcc /[cc] 42]]
+[println [callcc /[cc] 42]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();

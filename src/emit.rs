@@ -5,15 +5,13 @@ use crate::{
     parse::Node,
     scan::Token,
     vm_insts::Inst,
-    vm_value::{Closure, Value},
+    vm_value::{Function, Value},
 };
 
 #[cfg(test)]
 use crate::code_frame::Position;
 #[cfg(test)]
 use crate::parse::parse;
-#[cfg(test)]
-use hashbrown::HashMap;
 
 use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 use hashbrown::HashSet;
@@ -454,10 +452,10 @@ fn emit_if(
             0,
             Inst::JMP(condition_len + true_branch_len + false_branch_len + 3),
         );
-
-        let mut meta = Closure::new(-4 - (condition_len + true_branch_len + false_branch_len));
-        meta.captures = captures;
-        result.push(Inst::PUSH_CLOSURE(meta));
+        result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
+            -4 - (condition_len + true_branch_len + false_branch_len),
+            captures,
+        )));
     } else {
         captures.extend(ctx.borrow_mut().pop_scope());
 
@@ -465,10 +463,10 @@ fn emit_if(
         result.push(Inst::PUSH(Value::Nil)); // FIXME: else { nil }
         result.push(Inst::RET);
         result.insert(0, Inst::JMP(condition_len + true_branch_len + 4));
-
-        let mut meta = Closure::new(-5 - (condition_len + true_branch_len));
-        meta.captures = captures;
-        result.push(Inst::PUSH_CLOSURE(meta));
+        result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
+            -5 - (condition_len + true_branch_len),
+            captures,
+        )));
     }
 
     return Ok(result);
@@ -490,16 +488,11 @@ fn test_emit_if_true() {
             Inst::JMP(1),
             Inst::PUSH(Value::Nil),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure {
-                ip: -7,
-                upvalues: HashMap::new(),
-                captures: {
-                    let mut unresolved_true = HashSet::new();
-                    unresolved_true.insert("true".to_string());
-                    unresolved_true
-                },
-                context: None
-            }),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, {
+                let mut unresolved_true = HashSet::new();
+                unresolved_true.insert("true".to_string());
+                unresolved_true
+            })),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -522,16 +515,11 @@ fn test_emit_if_true_false() {
             Inst::JMP(1),
             Inst::PUSH(Value::Num(24.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure {
-                ip: -7,
-                upvalues: HashMap::new(),
-                captures: {
-                    let mut unresolved_true = HashSet::new();
-                    unresolved_true.insert("true".to_string());
-                    unresolved_true
-                },
-                context: None
-            }),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, {
+                let mut unresolved_true = HashSet::new();
+                unresolved_true.insert("true".to_string());
+                unresolved_true
+            })),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -572,10 +560,10 @@ fn emit_while(
     result.extend(body_result);
     result.push(Inst::JMP(-((condition_len + body_len + 2) as i32)));
     result.push(Inst::RET);
-
-    let mut meta = Closure::new(-4 - offset);
-    meta.captures = captures;
-    result.push(Inst::PUSH_CLOSURE(meta));
+    result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
+        -4 - offset,
+        captures,
+    )));
     return Ok(result);
 }
 
@@ -594,16 +582,11 @@ fn test_emit_while() {
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(-4),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure {
-                ip: -6,
-                upvalues: HashMap::new(),
-                captures: {
-                    let mut unresolved_true = HashSet::new();
-                    unresolved_true.insert("true".to_string());
-                    unresolved_true
-                },
-                context: None
-            }),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, {
+                let mut unresolved_true = HashSet::new();
+                unresolved_true.insert("true".to_string());
+                unresolved_true
+            })),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -623,10 +606,10 @@ fn emit_begin(
     let mut result = vec![Inst::JMP(1 + offset)];
     result.extend(body);
     result.push(Inst::RET);
-
-    let mut meta = Closure::new(-2 - offset);
-    meta.captures = captures;
-    result.push(Inst::PUSH_CLOSURE(meta));
+    result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
+        -2 - offset,
+        captures,
+    )));
 
     return Ok(result);
 }
@@ -643,7 +626,7 @@ fn test_emit_begin() {
             Inst::JMP(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure::new(-3)),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-3, HashSet::new())),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -705,9 +688,11 @@ fn emit_cond(
     result.insert(0, Inst::JMP(result_len + 2));
 
     let captures = ctx.borrow_mut().pop_scope();
-    let mut meta = Closure::new(-result_len - 3);
-    meta.captures = captures;
-    result.push(Inst::PUSH_CLOSURE(meta));
+
+    result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
+        -result_len - 3,
+        captures,
+    )));
 
     return Ok(result);
 }
@@ -734,17 +719,12 @@ fn test_cond() {
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(0),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure {
-                ip: -11,
-                upvalues: HashMap::new(),
-                captures: {
-                    let mut unresolved = HashSet::new();
-                    unresolved.insert("true".to_string());
-                    unresolved.insert("false".to_string());
-                    unresolved
-                },
-                context: None
-            }),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-11, {
+                let mut unresolved = HashSet::new();
+                unresolved.insert("true".to_string());
+                unresolved.insert("false".to_string());
+                unresolved
+            })),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -898,11 +878,10 @@ fn emit_fn(
         result.extend(params_result);
         result.extend(body_result);
         result.push(Inst::RET);
-
-        let mut meta = Closure::new(-(offset + 2));
-        meta.captures = captures;
-
-        result.push(Inst::PUSH_CLOSURE(meta));
+        result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
+            -(offset + 2),
+            captures,
+        )));
 
         return Ok(result);
     }
@@ -923,7 +902,7 @@ fn test_emit_fn() {
             Inst::POP, // pop param pack
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure::new(-4)),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-4, HashSet::new())),
         ]
     );
 }
@@ -943,7 +922,7 @@ fn test_emit_fn_params() {
             Inst::POP, // pop param pack
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure::new(-6)),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, HashSet::new())),
         ]
     );
 }
@@ -954,9 +933,6 @@ fn test_emit_fn_capture() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    let mut captures = HashSet::new();
-    captures.insert("y".to_string());
-
     assert_eq!(
         insts,
         vec![
@@ -964,12 +940,11 @@ fn test_emit_fn_capture() {
             Inst::POP,
             Inst::LOAD("y".to_string()),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure {
-                ip: -4,
-                upvalues: HashMap::new(),
-                captures,
-                context: None
-            }),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-4, {
+                let mut captures = HashSet::new();
+                captures.insert("y".to_string());
+                captures
+            })),
         ]
     );
 }
@@ -996,41 +971,26 @@ fn test_emit_fn_capture_nested() {
             Inst::LOAD("y".to_string()),
             Inst::ADD,
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure {
-                ip: -6,
-                upvalues: HashMap::new(),
-                captures: {
-                    let mut unresolved_xy = HashSet::new();
-                    unresolved_xy.insert("x".to_string());
-                    unresolved_xy.insert("y".to_string());
-                    unresolved_xy
-                },
-                context: None
-            }),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, {
+                let mut unresolved_xy = HashSet::new();
+                unresolved_xy.insert("x".to_string());
+                unresolved_xy.insert("y".to_string());
+                unresolved_xy
+            })),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure {
-                ip: -11,
-                upvalues: HashMap::new(),
-                captures: {
-                    let mut unresolved_y = HashSet::new();
-                    unresolved_y.insert("y".to_string());
-                    unresolved_y
-                },
-                context: None
-            }),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-11, {
+                let mut unresolved_y = HashSet::new();
+                unresolved_y.insert("y".to_string());
+                unresolved_y
+            })),
             Inst::PACK(0),
             Inst::CALL,
             Inst::RET,
-            Inst::PUSH_CLOSURE(Closure {
-                ip: -17,
-                upvalues: HashMap::new(),
-                captures: {
-                    let mut unresolved_y = HashSet::new();
-                    unresolved_y.insert("y".to_string());
-                    unresolved_y
-                },
-                context: None
-            }),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-17, {
+                let mut unresolved_y = HashSet::new();
+                unresolved_y.insert("y".to_string());
+                unresolved_y
+            })),
         ]
     );
 }
