@@ -271,7 +271,9 @@ impl Inst {
                 if let Value::Vec(ref top) = params {
                     *pc = ra;
                     vm.restore_context(context.clone());
-                    Ok(vm.current_frame().push(top.borrow()[0].clone()))
+                    Ok(vm
+                        .current_frame()
+                        .push(top.borrow().get(0).unwrap_or(&Value::Nil).clone()))
                 } else {
                     Err(SquareError::RuntimeError(format!(
                         "cc only accept one parameter, got {}",
@@ -712,6 +714,19 @@ fn test_exec_assign() {
 }
 
 #[test]
+fn test_exec_assign_capture() {
+    let code = "[let x nil] [begin [= x 42]]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+}
+
+#[test]
 fn test_exec_define_expand() {
     let code = "[let [x] [vec 42]]";
     let ast = parse(code, &mut Position::new()).unwrap();
@@ -727,6 +742,19 @@ fn test_exec_define_expand() {
 #[test]
 fn test_exec_assign_expand() {
     let code = "[let x nil] [= [x] [vec 42]]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+}
+
+#[test]
+fn test_exec_assign_expand_capture() {
+    let code = "[let x nil] [begin [= [x] [vec 42]]]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
@@ -950,7 +978,7 @@ fn test_exec_scope() {
 
 #[test]
 fn test_exec_tail_call() {
-    let code = "[begin [begin 42]]";
+    let code = "[begin [begin [begin 42]]]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();

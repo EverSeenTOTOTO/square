@@ -320,6 +320,7 @@ fn test_reference() {
 impl Value {
     pub fn as_bool(&self) -> bool {
         match self {
+            Value::Nil => false,
             Value::Bool(val) => *val,
             Value::Num(val) => *val != 0.0,
             Value::Str(val) => !val.is_empty(),

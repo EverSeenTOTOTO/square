@@ -153,6 +153,8 @@ fn emit_assign(
                 } else {
                     if is_define {
                         ctx.borrow_mut().add_local(source.clone());
+                    } else {
+                        ctx.borrow_mut().mark_if_capture(source);
                     }
 
                     result.extend(value);
@@ -545,10 +547,10 @@ fn emit_while(
     ctx.borrow_mut().push_scope();
     let condition_result = emit_node(input, condition, ctx)?;
     let condition_len = condition_result.len() as i32;
-    let body = expressions.get(2).unwrap();
+    let body = &expressions[2..].to_vec();
 
     ctx.borrow_mut().push_scope();
-    let body_result = emit_node(input, body, ctx)?;
+    let body_result = emit(input, body, ctx)?;
     let mut captures = ctx.borrow_mut().pop_scope();
     captures.extend(ctx.borrow_mut().pop_scope());
     let body_len = body_result.len() as i32;
@@ -1023,6 +1025,8 @@ fn emit_expand(
                 Token::Id(_, source) => {
                     if is_define {
                         ctx.borrow_mut().add_local(source.clone());
+                    } else {
+                        ctx.borrow_mut().mark_if_capture(source);
                     }
 
                     result.push(Inst::PEEK((
