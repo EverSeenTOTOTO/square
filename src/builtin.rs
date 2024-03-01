@@ -55,7 +55,7 @@ impl Builtin {
             Value::Function(Rc::new(RefCell::new(Function::Syscall(6)))),
         );
 
-        #[cfg(not(test))]
+        #[cfg(target_family = "wasm")]
         use crate::print;
 
         let syscalls = vec![

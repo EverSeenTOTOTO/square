@@ -23,8 +23,7 @@ const writeUtf8String = (exports: WasmExports, source: string) => {
 };
 
 type Square = {
-  init_vm(): number,
-  exec(vmAddr: number, sourceAddr: number, size: number): void,
+  exec(sourceAddr: number, size: number): void,
 };
 
 type WasmExports = {
@@ -48,15 +47,13 @@ type WasmExports = {
 
         process.stdout.write(message);
       },
-    },
-    wasm: {
       get_data_end() {
         return (instance.exports as WasmExports).__data_end.value;
       },
       get_heap_base() {
         return (instance.exports as WasmExports).__heap_base.value;
       },
-      get_stack_base() {
+      get_memory_size() {
         return (instance.exports as WasmExports).memory.buffer.byteLength;
       },
     },
@@ -65,28 +62,18 @@ type WasmExports = {
   const square = instance.exports as WasmExports;
 
   try {
-    const vmAddr = square.init_vm();
-
     const code = `
-[let o [obj 
-        'x' 42
-        'inc' /[] [+= o.x 1]]]
+[let fib /[n] 
+  [if [<= n 2] 
+    1
+    [+ [fib [- n 1]] [fib [- n 2]]]]]
 
-[println o]
-
-[o.inc]
-[= o.o o]
-
-[println o]
-
-[o.o.o.o.o.o.inc]
- 
-[println o.x]
+[println [fib 30]]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);
 
-    square.exec(vmAddr, sourceAddr, sourceLength);
+    square.exec(sourceAddr, sourceLength);
     square.dealloc(sourceAddr, sourceLength);
   } catch (e) {
     console.error(e);

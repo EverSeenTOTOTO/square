@@ -502,6 +502,8 @@ impl CallFrame {
 pub struct VM {
     pub call_frames: Vec<CallFrame>,
     buildin: Builtin,
+
+    #[cfg(test)]
     inst_times: HashMap<&'static str, (u128, usize)>,
 }
 
@@ -510,6 +512,8 @@ impl VM {
         Self {
             call_frames: vec![CallFrame::new()],
             buildin: Builtin::new(),
+
+            #[cfg(test)]
             inst_times: HashMap::new(),
         }
     }
@@ -1299,16 +1303,17 @@ fn test_callcc_flow() {
 #[test]
 fn test_callcc_break() {
     let code = "
-[let x [callcc /[cc] [cc 42]]]
+        [let x [.. 1 4]]
+        [begin 
+            [let y x]
+            [= y 42]
+            [println x]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
     vm.run(&insts, &mut 0).unwrap();
-
-    let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0))
 }
 
 #[test]

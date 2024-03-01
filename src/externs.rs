@@ -1,16 +1,15 @@
 use lazy_static::lazy_static;
 use spin::Mutex;
 
-pub mod wasm {
-    #[link(wasm_import_module = "wasm")]
-    extern "C" {
-        pub fn get_stack_base() -> usize;
-        pub fn get_heap_base() -> usize;
-    }
-}
-
 pub mod memory {
     use core::fmt;
+
+    #[link(wasm_import_module = "memory")]
+    extern "C" {
+        pub fn get_data_end() -> usize;
+        pub fn get_heap_base() -> usize;
+        pub fn get_memory_size() -> usize;
+    }
 
     mod inner {
         #[link(wasm_import_module = "memory")]
