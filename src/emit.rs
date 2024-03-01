@@ -30,10 +30,20 @@ impl EmitContext {
         };
     }
 
-    pub fn add_local(&mut self, name: String) {
+    pub fn add_local(&mut self, name: String) -> Result<(), SquareError> {
         let (ref mut locals, ref mut captures) = self.scopes.last_mut().unwrap();
+
+        if locals.contains(&name) {
+            return Err(SquareError::RuntimeError(format!(
+                "redefine of variable {}",
+                name
+            )));
+        }
+
         captures.remove(&name); // scope shadow
         locals.insert(name);
+
+        Ok(())
     }
 
     pub fn mark_if_capture(&mut self, name: &String) {
@@ -152,7 +162,17 @@ fn emit_assign(
                     }
                 } else {
                     if is_define {
-                        ctx.borrow_mut().add_local(source.clone());
+                        ctx.borrow_mut()
+                            .add_local(source.clone())
+                            .map_err(|e| match e {
+                                SquareError::RuntimeError(msg) => SquareError::SyntaxError(
+                                    input.to_string(),
+                                    msg,
+                                    id.pos().clone(),
+                                    None,
+                                ),
+                                _ => e,
+                            })?;
                     } else {
                         ctx.borrow_mut().mark_if_capture(source);
                     }
@@ -220,6 +240,26 @@ fn test_emit_define() {
     assert_eq!(
         insts,
         vec![Inst::PUSH(Value::Num(42.0)), Inst::STORE("a".to_string())]
+    );
+}
+
+#[test]
+fn test_emit_redefine() {
+    let code = "[let a 42] [let a 24]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+
+    assert_eq!(
+        emit(code, &ast, &RefCell::new(EmitContext::new())),
+        Err(SquareError::SyntaxError(
+            code.to_string(),
+            "redefine of variable a".to_string(),
+            Position {
+                line: 1,
+                column: 17,
+                cursor: 16
+            },
+            None
+        ))
     );
 }
 
@@ -1021,10 +1061,20 @@ fn emit_expand(
                 )));
                 result.extend(emit_expand(input, is_define, nested, ctx)?);
             }
-            Node::Token(token) => match token {
+            Node::Token(id) => match id {
                 Token::Id(_, source) => {
                     if is_define {
-                        ctx.borrow_mut().add_local(source.clone());
+                        ctx.borrow_mut()
+                            .add_local(source.clone())
+                            .map_err(|e| match e {
+                                SquareError::RuntimeError(msg) => SquareError::SyntaxError(
+                                    input.to_string(),
+                                    msg,
+                                    id.pos().clone(),
+                                    None,
+                                ),
+                                _ => e,
+                            })?;
                     } else {
                         ctx.borrow_mut().mark_if_capture(source);
                     }
@@ -1058,7 +1108,7 @@ fn emit_expand(
                             input.to_string(),
                             format!(
                                 "failed to emit_expand, expect identifier or placeholder, got {}",
-                                token.to_string()
+                                id.to_string()
                             ),
                             pos.clone(),
                             None,

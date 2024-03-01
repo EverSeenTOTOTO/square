@@ -125,7 +125,7 @@ impl fmt::Display for Value {
             Value::Function(func) => func.borrow().fmt(f),
             Value::UpValue(val) => match *val.borrow() {
                 Value::UpValue(_) => panic!("nested upvalue"), // this should be unreachable, see Value::upgrade && CallFrame::assign_local
-                _ => write!(f, "{}", stringify_nested(&val.borrow())),
+                _ => write!(f, "&{}", stringify_nested(&val.borrow())),
             },
             Value::Nil => {
                 write!(f, "nil")
