@@ -65,9 +65,7 @@ type WasmExports = {
     const code = `
 [let cc [callcc /[cc] cc]]
 
-[println 42]
-
-[cc /[] nil]
+[cc 42]
 
 [println cc]
 `;

@@ -74,9 +74,7 @@ impl Inst {
                 let frame = vm.current_frame();
 
                 if let Some(val) = frame.top() {
-                    let cloned = val.clone();
-                    frame.pop();
-                    Ok(frame.assign_local(name, cloned))
+                    Ok(frame.assign_local(name, val.clone()))
                 } else {
                     Err(SquareError::InstructionError(
                         "bad store, operand stack empty".to_string(),
@@ -275,6 +273,7 @@ impl Inst {
             Function::Contiuation(ra, ref context) => {
                 if let Value::Vec(ref top) = params {
                     *pc = ra;
+
                     vm.restore_context(context.clone());
                     Ok(vm
                         .current_frame()
@@ -506,6 +505,7 @@ impl CallFrame {
 
 pub struct VM {
     pub call_frames: Vec<CallFrame>,
+
     buildin: Builtin,
 
     #[cfg(test)]
@@ -551,8 +551,8 @@ impl VM {
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
-        // #[cfg(test)]
-        // println!("{}: {}", *pc, inst);
+        #[cfg(test)]
+        println!("{}: {}", *pc, inst);
 
         #[cfg(test)]
         let start = Instant::now();
@@ -566,12 +566,12 @@ impl VM {
             *entry = (entry.0 + duration, entry.1 + 1);
         }
 
-        // #[cfg(test)]
-        // println!(
-        //     "-------- CallFrame {} --------\n{}",
-        //     self.call_frames.len() - 1,
-        //     self.current_frame()
-        // );
+        #[cfg(test)]
+        println!(
+            "-------- CallFrame {} --------\n{}",
+            self.call_frames.len() - 1,
+            self.current_frame()
+        );
 
         *pc += 1;
         Ok(())
@@ -703,6 +703,21 @@ fn test_exec_define() {
 
     let callframe = vm.current_frame();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+}
+
+#[test]
+fn test_exec_define_chain() {
+    let code = "[let [x] [let [y] [let [z] [vec 42]]]]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("z").unwrap(), &Value::Num(42.0));
 }
 
 #[test]

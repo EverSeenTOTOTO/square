@@ -104,7 +104,7 @@ impl Builtin {
                     unreachable!()
                 },
             ) as Syscall,
-            // concat
+            // __concat
             Rc::new(
                 |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
                     if let Value::Vec(ref top) = params {

@@ -912,12 +912,13 @@ fn emit_fn(
         let captures = ctx.borrow_mut().pop_scope();
         let offset = (params_result.len() + body_result.len()) as i32;
 
-        let mut result = vec![Inst::JMP(offset + 1)];
+        let mut result = vec![Inst::JMP(offset + 2)];
         result.extend(params_result);
+        result.push(Inst::POP); // drop params pack
         result.extend(body_result);
         result.push(Inst::RET);
         result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
-            -(offset + 2),
+            -(offset + 3),
             captures,
         )));
 
@@ -937,7 +938,7 @@ fn test_emit_fn() {
         insts,
         vec![
             Inst::JMP(3),
-            Inst::POP, // pop param pack
+            Inst::POP, // drop param pack
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
             Inst::PUSH_CLOSURE(Function::ClosureMeta(-4, HashSet::new())),
@@ -954,13 +955,14 @@ fn test_emit_fn_params() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(5),
+            Inst::JMP(6),
             Inst::PEEK((Value::Num(0.0), Value::Num(0.0))), // peek param
             Inst::STORE("x".to_string()),
-            Inst::POP, // pop param pack
+            Inst::POP, // drop param x
+            Inst::POP, // drop total param pack
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, HashSet::new())),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, HashSet::new())),
         ]
     );
 }
@@ -1080,6 +1082,7 @@ fn emit_expand(
                         Value::Num(index as f64),
                     )));
                     result.push(Inst::STORE(source.clone()));
+                    result.push(Inst::POP);
                 }
                 Token::Op(pos, op) => {
                     if op == "." {
@@ -1117,8 +1120,6 @@ fn emit_expand(
         }
     }
 
-    result.push(Inst::POP); // drop the pack on top of operand stack
-
     return Ok(result);
 }
 
@@ -1134,6 +1135,7 @@ fn test_emit_expand() {
             Inst::LOAD("c".to_string()),
             Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
             Inst::STORE("a".to_string()),
+            Inst::POP,
             Inst::PEEK((Value::Num(0.0), Value::Num(1.0))),
             Inst::STORE("b".to_string()),
             Inst::POP
@@ -1212,8 +1214,6 @@ fn test_emit_expand_nested() {
             Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
             Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
             Inst::STORE("b".to_string()),
-            Inst::POP,
-            Inst::POP,
             Inst::POP,
         ]
     );
