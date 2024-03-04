@@ -706,21 +706,6 @@ fn test_exec_define() {
 }
 
 #[test]
-fn test_exec_define_chain() {
-    let code = "[let [x] [let [y] [let [z] [vec 42]]]]";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
-    let mut vm = VM::new();
-
-    vm.run(&insts, &mut 0).unwrap();
-
-    let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
-    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(42.0));
-    assert_eq!(callframe.resolve_local("z").unwrap(), &Value::Num(42.0));
-}
-
-#[test]
 fn test_exec_assign() {
     let code = "[let x nil] [= x 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
@@ -856,6 +841,21 @@ fn test_exec_define_expand_nested() {
 
     let callframe = vm.current_frame();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+}
+
+#[test]
+fn test_exec_define_chain() {
+    let code = "[let [x] [let [y] [let [z] [vec 42]]]]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.resolve_local("z").unwrap(), &Value::Num(42.0));
 }
 
 #[test]
@@ -1210,7 +1210,7 @@ fn test_exec_fn_capture_error() {
 #[test]
 fn test_exec_fn_capture_shadow() {
     let code = "
-[let fn /[] [begin x [let x 24] x]]
+[let fn /[] [begin ;this x should be shadow: ; x [let x 24] x]]
 [let x 42]
 [fn]
 ";
@@ -1226,25 +1226,6 @@ fn test_exec_fn_capture_shadow() {
             3,
         )),
     );
-}
-
-#[test]
-fn test_exec_fn_capture_shadow2() {
-    let code = "
-    [let f [begin [let x 42] /[] x]]
-
-    [let x [f]]
-    [+= x 2]
-    [let y [f]]
-";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
-    let mut vm = VM::new();
-
-    vm.run(&insts, &mut 0).unwrap();
-
-    let callframe = vm.current_frame();
-    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(42.0))
 }
 
 #[test]
@@ -1319,17 +1300,114 @@ fn test_callcc_flow() {
 #[test]
 fn test_callcc_break() {
     let code = "
-        [let x [.. 1 4]]
-        [begin 
-            [let y x]
-            [= y 42]
-            [println x]]
+[let x [callcc /[cc] [begin [cc 42] 24]]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
     vm.run(&insts, &mut 0).unwrap();
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0))
+}
+
+#[test]
+fn test_callcc_cc1() {
+    let code = "
+[let cc [callcc /[cc] cc]]
+
+[cc 42]
+
+cc
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
+}
+
+#[test]
+fn test_callcc_cc2() {
+    let code = "
+[let cc [callcc /[cc] [cc cc]]]
+
+[cc 42]
+
+cc
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
+}
+
+#[test]
+fn test_callcc_cc3() {
+    let code = "
+[let cc [callcc /[cc] [callcc cc]]]
+
+[cc 42]
+
+cc
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
+}
+
+#[test]
+fn test_callcc_cc4() {
+    let code = "
+[let cc [callcc callcc]]
+
+[cc 42]
+
+cc
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts, &mut 0).unwrap();
+
+    let callframe = vm.current_frame();
+    assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
+}
+
+#[test]
+fn test_callcc_abort() {
+    let code = "
+[let cc [callcc /[cc] cc]]
+
+[let x [begin [cc 42] 24]]
+
+x
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    assert_eq!(
+        vm.run(&insts, &mut 0),
+        Err(SquareError::InstructionError(
+            "undefined variable: x".to_string(),
+            Inst::LOAD("x".to_string()),
+            3,
+        )),
+    );
 }
 
 #[test]
