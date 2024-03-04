@@ -15,8 +15,8 @@ use crate::{
 pub type Syscall = Rc<dyn Fn(&mut VM, Value, &mut usize) -> ExecResult>;
 
 pub struct Builtin {
-    pub values: HashMap<String, Value>,
-    pub syscalls: Vec<Syscall>,
+    values: HashMap<String, Value>,
+    syscalls: Vec<Syscall>,
 }
 
 impl Builtin {
@@ -197,5 +197,17 @@ impl Builtin {
         ];
 
         Self { values, syscalls }
+    }
+
+    pub fn is_builtin(&self, name: &str) -> bool {
+        return self.values.contains_key(name);
+    }
+
+    pub fn resolve_builtin(&self, name: &str) -> Option<&Value> {
+        return self.values.get(name);
+    }
+
+    pub fn get_syscall(&self, index: usize) -> Syscall {
+        return self.syscalls[index].clone();
     }
 }

@@ -61,10 +61,10 @@ pub extern "C" fn exec(source_addr: *mut u8, source_length: usize) {
     use emit::EmitContext;
     use vm::VM;
 
-    println!(
-        "Before: {:?}",
-        allocator::TALC.lock().get_counters().allocated_bytes
-    );
+    // println!(
+    //     "Before: {:?}",
+    //     allocator::TALC.lock().get_counters().allocated_bytes
+    // );
 
     let mut vm = VM::new();
     let code = memory::read(source_addr as usize, source_length);
@@ -89,8 +89,8 @@ pub extern "C" fn exec(source_addr: *mut u8, source_length: usize) {
         println!("{}", e);
     }
 
-    println!(
-        "After: {:?}",
-        allocator::TALC.lock().get_counters().allocated_bytes
-    );
+    // println!(
+    //     "After: {:?}",
+    //     allocator::TALC.lock().get_counters().allocated_bytes
+    // );
 }

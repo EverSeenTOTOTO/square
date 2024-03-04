@@ -19,7 +19,7 @@ use crate::{errors::SquareError, vm::CallFrame};
 pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
     Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
-    Syscall(usize),                    // index
+    Syscall(usize),                    // (index)
     Contiuation(usize, Vec<CallFrame>), // (ra, context)
 }
 
@@ -84,6 +84,10 @@ fn stringify_nested(val: &Value) -> String {
     match val {
         Value::Vec(_) => "[...]".to_string(),
         Value::Obj(_) => "{...}".to_string(),
+        Value::UpValue(val) => match *val.borrow() {
+            Value::UpValue(_) => panic!("nested upvalue"), // this should be unreachable, see Value::upgrade && CallFrame::assign_local
+            _ => format!("&{}", stringify_nested(&val.borrow())),
+        },
         _ => format!("{}", val),
     }
 }
@@ -124,8 +128,8 @@ impl fmt::Display for Value {
             }
             Value::Function(func) => func.borrow().fmt(f),
             Value::UpValue(val) => match *val.borrow() {
-                Value::UpValue(_) => panic!("nested upvalue"), // this should be unreachable, see Value::upgrade && CallFrame::assign_local
-                _ => write!(f, "&{}", stringify_nested(&val.borrow())),
+                Value::UpValue(_) => panic!("nested upvalue"),
+                _ => write!(f, "&{}", &val.borrow()),
             },
             Value::Nil => {
                 write!(f, "nil")
@@ -144,7 +148,7 @@ fn test_print_circular() {
     obj.borrow_mut()
         .insert("obj".to_string(), Value::Obj(obj.clone()).upgrade());
 
-    assert_eq!(format!("{}", Value::Obj(obj)), "{obj: {...}, vec: [...]}");
+    assert_eq!(format!("{}", Value::Obj(obj)), "{obj: &{...}, vec: [...]}");
     assert_eq!(format!("{}", Value::Vec(vec)), "[{...}]");
 }
 
@@ -323,7 +327,6 @@ impl Value {
             Value::Nil => false,
             Value::Bool(val) => *val,
             Value::Num(val) => *val != 0.0,
-            Value::Str(val) => !val.is_empty(),
             Value::UpValue(val) => val.borrow().as_bool(),
             _ => true,
         }
@@ -361,7 +364,7 @@ impl Value {
             Value::Vec(_) => "vec",
             Value::Obj(_) => "obj",
             Value::Function(f) => match *f.borrow() {
-                Function::Contiuation(..) => "cont",
+                Function::Contiuation(..) => "cc",
                 _ => "fn",
             },
             Value::Nil => "nil",

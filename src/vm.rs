@@ -4,7 +4,7 @@ use core::{cell::RefCell, fmt};
 use hashbrown::HashMap;
 
 use crate::{
-    builtin::{Builtin, Syscall},
+    builtin::Builtin,
     errors::SquareError,
     vm_insts::Inst,
     vm_value::{CalcResult, Function, Value},
@@ -86,6 +86,11 @@ impl Inst {
                 }
             }
             Inst::LOAD(name) => {
+                if let Some(value) = vm.buildin.resolve_builtin(name) {
+                    let cloned = value.clone();
+                    return Ok(vm.current_frame().push(cloned));
+                }
+
                 let frame = vm.current_frame();
                 if let Some(value) = frame.resolve_local(name) {
                     let cloned = value.clone();
@@ -244,7 +249,7 @@ impl Inst {
                     // always push params as first operand
                     frame.stack[0] = params;
                     frame.sp = 1;
-                    frame.clear_local();
+                    frame.clear_locals();
                     // fill up captures
                     frame.extend_locals(upvalues.clone());
                 } else {
@@ -264,7 +269,7 @@ impl Inst {
                 Ok(())
             }
             Function::Syscall(index) => {
-                let syscall = vm.buildin.syscalls[index].clone() as Syscall;
+                let syscall = vm.buildin.get_syscall(index);
                 syscall(vm, params, pc)
             }
             Function::Contiuation(ra, ref context) => {
@@ -480,13 +485,13 @@ impl CallFrame {
     }
 
     #[inline]
-    pub fn clear_local(&mut self) {
+    pub fn clear_locals(&mut self) {
         self.locals.clear();
     }
 
     pub fn assign_local(&mut self, name: &str, value: Value) {
         let new = if let Value::UpValue(upval) = value {
-            upval.borrow().clone()
+            upval.borrow().clone() // if ref appeared as right value, it should be cloned
         } else {
             value
         };
@@ -573,11 +578,7 @@ impl VM {
     }
 
     pub fn run(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
-        let buildin_values = self.buildin.values.clone();
-        let frame = self.current_frame();
-
-        frame.extend_locals(buildin_values);
-        frame.ra = insts.len();
+        self.current_frame().ra = insts.len();
 
         #[cfg(test)]
         self.inst_times.clear();

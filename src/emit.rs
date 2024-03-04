@@ -1,6 +1,7 @@
 use core::cell::RefCell;
 
 use crate::{
+    builtin::Builtin,
     errors::SquareError,
     parse::Node,
     scan::Token,
@@ -18,19 +19,27 @@ use hashbrown::HashSet;
 
 pub type EmitResult = Result<Vec<Inst>, SquareError>;
 
-#[derive(Debug)]
 pub struct EmitContext {
     scopes: Vec<(HashSet<String>, HashSet<String>)>, // (locals, captures)
+    builtin: Builtin,
 }
 
 impl EmitContext {
     pub fn new() -> Self {
         return Self {
             scopes: vec![(HashSet::new(), HashSet::new())],
+            builtin: Builtin::new(),
         };
     }
 
     pub fn add_local(&mut self, name: String) -> Result<(), SquareError> {
+        if self.builtin.is_builtin(&name) {
+            return Err(SquareError::RuntimeError(format!(
+                "redefine of builtin variable {}",
+                name
+            )));
+        }
+
         let (ref mut locals, ref mut captures) = self.scopes.last_mut().unwrap();
 
         if locals.contains(&name) {
@@ -47,6 +56,10 @@ impl EmitContext {
     }
 
     pub fn mark_if_capture(&mut self, name: &String) {
+        if self.builtin.is_builtin(&name) {
+            return;
+        }
+
         // once a value is captured, it will be captured in all upper scopes until where it is defined
         for (locals, ref mut captures) in self.scopes.iter_mut().rev() {
             if !locals.contains(name) {
@@ -530,11 +543,7 @@ fn test_emit_if_true() {
             Inst::JMP(1),
             Inst::PUSH(Value::Nil),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, {
-                let mut unresolved_true = HashSet::new();
-                unresolved_true.insert("true".to_string());
-                unresolved_true
-            })),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, HashSet::new())),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -557,11 +566,7 @@ fn test_emit_if_true_false() {
             Inst::JMP(1),
             Inst::PUSH(Value::Num(24.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, {
-                let mut unresolved_true = HashSet::new();
-                unresolved_true.insert("true".to_string());
-                unresolved_true
-            })),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, HashSet::new())),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -624,11 +629,7 @@ fn test_emit_while() {
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(-4),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, {
-                let mut unresolved_true = HashSet::new();
-                unresolved_true.insert("true".to_string());
-                unresolved_true
-            })),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, HashSet::new())),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -740,7 +741,7 @@ fn emit_cond(
 }
 
 #[test]
-fn test_cond() {
+fn test_emit_cond() {
     let code = "[cond
         [false 24]
         [true 42]]";
@@ -761,12 +762,7 @@ fn test_cond() {
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(0),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-11, {
-                let mut unresolved = HashSet::new();
-                unresolved.insert("true".to_string());
-                unresolved.insert("false".to_string());
-                unresolved
-            })),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-11, HashSet::new())),
             Inst::PACK(0),
             Inst::CALL
         ]

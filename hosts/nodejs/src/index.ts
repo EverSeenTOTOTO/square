@@ -63,12 +63,13 @@ type WasmExports = {
 
   try {
     const code = `
-[let fib /[n] 
-  [if [<= n 2] 
-    1
-    [+ [fib [- n 1]] [fib [- n 2]]]]]
+[let cc [callcc /[cc] cc]]
 
-[println [fib 30]]
+[println 42]
+
+[cc /[] nil]
+
+[println cc]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);
