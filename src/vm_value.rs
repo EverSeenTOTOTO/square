@@ -19,7 +19,7 @@ use crate::{errors::SquareError, vm::CallFrame};
 pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
     Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
-    Syscall(usize),                    // (index)
+    Syscall(&'static str),             // (name)
     Contiuation(usize, Vec<CallFrame>), // (ra, context)
 }
 
@@ -332,6 +332,22 @@ impl Value {
         }
     }
 
+    pub fn as_num(&self) -> Option<f64> {
+        match self {
+            Value::Num(val) => Some(*val),
+            Value::UpValue(val) => val.borrow().as_num(),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<String> {
+        match self {
+            Value::Str(val) => Some(val.clone()),
+            Value::UpValue(val) => val.borrow().as_str(),
+            _ => None,
+        }
+    }
+
     pub fn as_vec(&self) -> Option<Rc<RefCell<Vec<Value>>>> {
         match self {
             Value::Vec(val) => Some(val.clone()),
@@ -382,7 +398,7 @@ impl Value {
 
 #[test]
 fn test_upgrade() {
-    let closure = Value::Function(Rc::new(RefCell::new(Function::Syscall(0))));
+    let closure = Value::Function(Rc::new(RefCell::new(Function::Syscall("print"))));
     let upval = Value::UpValue(Rc::new(RefCell::new(closure)));
 
     assert_eq!(upval, upval.upgrade());

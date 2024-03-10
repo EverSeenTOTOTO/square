@@ -63,11 +63,7 @@ type WasmExports = {
 
   try {
     const code = `
-[let cc [callcc /[cc] cc]]
-
-[cc 42]
-
-[println cc]
+[println [.. 1 4]]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);

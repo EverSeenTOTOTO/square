@@ -20,14 +20,12 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 ; basic
 [let x 2] ; x = 2
 
-[let x [.. 1 4]] ; x = [1 2 3 4], `..` can concat strings, ranges and vectors
-
 ; expansion
 [let [x y] [vec 1 2]] ; x = 1, y = 2
 
 ; convenient placehoders in expansion
 [let [. x] [vec 1 2 3]] ; x = 2, `.` is a placehoder that MUST occupy one position
-[let [... x] [.. 1 10]] ; x = 10, `...` is a placehoder that can occupy zero or as many positions as possible
+[let [... x] [1 2 3 4]] ; x = 4, `...` is a placehoder that can occupy zero or as many positions as possible
 [let [. [x] ... y] [vec 1 [vec 2] 3 4 5]] ; x = 2, y  5
 ```
 
@@ -60,7 +58,7 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 [foo]
 
 ; expansion in parameter
-[let foo /[. z] [print [.. z 4]]]
+[let foo /[. z] [print z]]
 
 [foo 'ignored' 0]
 
@@ -70,8 +68,6 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
     [+ [fib [- n 1]] [fib [- n 2]]]]]
 
 [println [fib 30]]
-
-[print [[.. 1 10].map /[x] [fib x]]]
 ```
 
 ## Continuation(first class)
@@ -143,6 +139,6 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 
     call -> [ assign | op | expr* ]
 
-    dot -> (id | call) prop*
+    dot -> (str | id | call) prop*
 
-    expr -> fn | str | -?(num | dot)
+    expr -> fn | -?(num | dot)

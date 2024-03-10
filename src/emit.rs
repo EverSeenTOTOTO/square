@@ -384,16 +384,6 @@ fn emit_op(
             "&=" => op_assign_action(Inst::BITAND),
             "|=" => op_assign_action(Inst::BITOR),
             "^=" => op_assign_action(Inst::BITXOR),
-            ".." => {
-                let name = "__concat".to_string();
-                ctx.borrow_mut().mark_if_capture(&name);
-                let mut result = vec![];
-                result.push(Inst::LOAD(name));
-                result.extend(emit(input, expressions, ctx)?);
-                result.push(Inst::PACK(2));
-                result.push(Inst::CALL);
-                return Ok(result);
-            }
             _ => todo!(),
         };
     }

@@ -27,7 +27,10 @@ impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         match self {
             Inst::PUSH(value) => Ok(vm.current_frame().push(value.clone())),
-            Inst::POP => Ok(vm.current_frame().pop()),
+            Inst::POP => {
+                vm.current_frame().pop();
+                Ok(())
+            }
 
             Inst::ADD => self.binop(vm, &|a, b| a + b, pc),
             Inst::SUB => self.binop(vm, &|a, b| a - b, pc),
@@ -61,12 +64,12 @@ impl Inst {
             Inst::JMP(value) => self.jump(insts, pc, *value),
             Inst::JNE(value) => {
                 let frame = vm.current_frame();
+                let top = frame.pop();
 
-                if !frame.top().unwrap().as_bool() {
-                    frame.pop();
+                if !top.as_bool() {
                     self.jump(insts, pc, *value)
                 } else {
-                    Ok(frame.pop())
+                    Ok(())
                 }
             }
 
@@ -109,17 +112,13 @@ impl Inst {
                 let params = frame.stack[frame.sp - 1].clone();
                 let func = frame.stack[frame.sp - 2].as_fn();
 
-                frame.sp -= 2;
-
                 if let Some(val) = func {
+                    frame.sp -= 2;
                     let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
                     self.call(vm, val, params, is_tail_call, pc)
                 } else {
                     Err(SquareError::InstructionError(
-                        format!(
-                            "bad call, cannot call with {}",
-                            frame.top().unwrap_or(&Value::Nil).clone()
-                        ),
+                        format!("bad call, cannot call with {}", frame.stack[frame.sp - 2]),
                         self.clone(),
                         *pc,
                     ))
@@ -144,8 +143,8 @@ impl Inst {
                     let mut upvalues = HashMap::new();
                     let ip = (*pc as i32) + offset;
                     let frame = vm.current_frame();
-
                     let varnames = captures.iter().cloned().collect::<Vec<_>>();
+
                     // upgrade value to captured
                     for name in varnames {
                         if let Some(value) = frame.resolve_local(&name) {
@@ -191,7 +190,6 @@ impl Inst {
                 )),
             },
             Inst::PATCH(key) => match key {
-                Value::Num(index) => self.patch_vec(vm, *index as usize, pc),
                 Value::Str(key) => self.patch_obj(vm, key, pc),
                 _ => Err(SquareError::InstructionError(
                     format!("bad patch, key {} must be string or number", key),
@@ -267,7 +265,7 @@ impl Inst {
                 Ok(())
             }
             Function::Syscall(index) => {
-                let syscall = vm.buildin.get_syscall(index);
+                let syscall = vm.buildin.get_syscall(index).unwrap();
                 syscall(vm, params, pc)
             }
             Function::Contiuation(ra, ref context) => {
@@ -298,7 +296,7 @@ impl Inst {
             if offset >= pack.len() {
                 return Err(SquareError::InstructionError(
                     format!(
-                        "bad peek, offset {} out of range, pack length is {}",
+                        "bad peek_vec, offset {} out of range, pack length is {}",
                         offset,
                         pack.len()
                     ),
@@ -316,7 +314,7 @@ impl Inst {
             } else {
                 return Err(SquareError::InstructionError(
                     format!(
-                        "bad peek, index {} out of range, pack length is {}",
+                        "bad peek_vec, index {} out of range, pack length is {}",
                         index,
                         pack.len()
                     ),
@@ -328,7 +326,7 @@ impl Inst {
 
         Err(SquareError::InstructionError(
             format!(
-                "bad peek, top value is not an vector, got {}",
+                "bad peek_vec, top value is not a vector, got {}",
                 frame.top().unwrap_or(&Value::Nil).clone()
             ),
             self.clone(),
@@ -338,53 +336,21 @@ impl Inst {
 
     fn peek_obj(&self, vm: &mut VM, key: &str, pc: &mut usize) -> ExecResult {
         let frame = vm.current_frame();
-        let top = frame.stack[frame.sp - 1].as_obj();
+        let top = frame.pop();
 
-        if let Some(obj) = top {
-            let cloned = obj.borrow().get(key).cloned().unwrap_or(Value::Nil);
-            frame.pop();
+        if let Some(o) = top.as_obj() {
+            let cloned = o.borrow().get(key).cloned().unwrap_or(Value::Nil);
             return Ok(frame.push(cloned));
+        } else {
+            return Err(SquareError::InstructionError(
+                format!(
+                    "bad peek_obj, top value is not an object, got {}",
+                    frame.top().unwrap_or(&Value::Nil).clone()
+                ),
+                self.clone(),
+                *pc,
+            ));
         }
-
-        Err(SquareError::InstructionError(
-            format!(
-                "bad peek, top value is not an object, got {}",
-                frame.top().unwrap_or(&Value::Nil).clone()
-            ),
-            self.clone(),
-            *pc,
-        ))
-    }
-
-    fn patch_vec(&self, vm: &mut VM, index: usize, pc: &mut usize) -> ExecResult {
-        let frame = vm.current_frame();
-        let value = frame.stack[frame.sp - 1].clone();
-        let target = frame.stack[frame.sp - 2].as_vec();
-
-        if let Some(val) = target {
-            let mut pack = val.borrow_mut();
-            if index < pack.len() {
-                pack[index] = value;
-                frame.pop();
-                return Ok(());
-            } else {
-                return Err(SquareError::InstructionError(
-                    format!(
-                        "bad patch, index {} out of range, pack length is {}",
-                        index,
-                        pack.len()
-                    ),
-                    self.clone(),
-                    *pc,
-                ));
-            }
-        }
-
-        Err(SquareError::InstructionError(
-            format!("bad patch, top value is not a vector, got {}", value),
-            self.clone(),
-            *pc,
-        ))
     }
 
     fn patch_obj(&self, vm: &mut VM, key: &String, pc: &mut usize) -> ExecResult {
@@ -400,7 +366,7 @@ impl Inst {
 
         Err(SquareError::InstructionError(
             format!(
-                "bad patch, top value is not an object, got {}",
+                "bad patch_obj, top value is not an object, got {}",
                 frame.stack[frame.sp - 2].clone()
             ),
             self.clone(),
@@ -459,8 +425,10 @@ impl CallFrame {
     }
 
     #[inline]
-    pub fn pop(&mut self) {
+    pub fn pop(&mut self) -> Value {
+        let top = self.stack.swap_remove(self.sp - 1);
         self.sp -= 1;
+        top
     }
 
     #[inline]
@@ -793,7 +761,7 @@ fn test_exec_define_expand_dot_error() {
     assert_eq!(
         vm.run(&insts, &mut 0),
         Err(SquareError::InstructionError(
-            "bad peek, index 1 out of range, pack length is 1".to_string(),
+            "bad peek_vec, index 1 out of range, pack length is 1".to_string(),
             Inst::PEEK((Value::Num(0.0), Value::Num(1.0))),
             6,
         ))
@@ -823,7 +791,7 @@ fn test_exec_define_expand_greed_error() {
     assert_eq!(
         vm.run(&insts, &mut 0),
         Err(SquareError::InstructionError(
-            "bad peek, offset 0 out of range, pack length is 0".to_string(),
+            "bad peek_vec, offset 0 out of range, pack length is 0".to_string(),
             Inst::PEEK((Value::Num(0.0), Value::Num(-1.0))),
             3,
         ))
@@ -1266,7 +1234,6 @@ fn test_exec_fn_capture_self() {
 fn test_exec_builtin() {
     let code = "
 [let p println]
-[p [.. [.. 1 4] [vec 4 5 6]]]
 [let t [typeof p]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();

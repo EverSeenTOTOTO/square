@@ -591,7 +591,13 @@ fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
                             chars.next();
                             pos.advance();
                         }
-                        _ => {}
+                        _ => {
+                            return Err(SquareError::UnexpectedToken(
+                                input.to_string(),
+                                "expect ..., got ..".to_string(),
+                                pos.clone(),
+                            ))
+                        }
                     }
                 }
                 _ => {}
@@ -661,14 +667,6 @@ fn test_raise_dot() {
     let token = raise_operator(input, &mut Position::new()).unwrap();
 
     assert_eq!(token.source(), ".");
-}
-
-#[test]
-fn test_raise_dot2() {
-    let input = "..+";
-    let token = raise_operator(input, &mut Position::new()).unwrap();
-
-    assert_eq!(token.source(), "..");
 }
 
 #[test]

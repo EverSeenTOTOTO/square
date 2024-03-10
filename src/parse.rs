@@ -602,8 +602,9 @@ fn test_parse_define_prop() {
 
 fn is_binary_op(op: &str) -> bool {
     match op {
-        "+" | "-" | "*" | "/" | "^" | "%" | "&" | "|" | "==" | "!=" | ">" | "<" | ">=" | "<="
-        | ".." => true,
+        "+" | "-" | "*" | "/" | "^" | "%" | "&" | "|" | "==" | "!=" | ">" | "<" | ">=" | "<=" => {
+            true
+        }
         _ => false,
     }
 }
@@ -676,13 +677,13 @@ fn parse_op(input: &str, pos: &mut Position) -> ParseResult {
 
 #[test]
 fn test_parse_op_binary() {
-    let input = ".. a 4";
+    let input = "+ a 4";
     let mut pos = Position::new();
     let node = parse_op(input, &mut pos).unwrap();
 
     if let Node::Op(op, exprs) = node.as_ref() {
         assert_eq!(exprs.len(), 2);
-        assert_eq!(op.source(), "..");
+        assert_eq!(op.source(), "+");
 
         return;
     }
@@ -787,8 +788,16 @@ fn parse_dot(input: &str, pos: &mut Position) -> ParseResult {
                 Ok(Box::new(Node::Dot(call, nodes)))
             }
         }
-        _ if let Token::Id(..) = leading => {
-            let id = wrap(raise_token(input, pos))?;
+        _ => {
+            let id = wrap(expect(
+                &|token| match token {
+                    Token::Id(..) => (true, "".to_string()),
+                    Token::Str(..) => (true, "".to_string()),
+                    _ => (false, "expect ID or STR".to_string()),
+                },
+                input,
+                pos,
+            ))?;
             let nodes = parse_prop_chain(input, pos)?;
 
             if nodes.len() == 0 {
@@ -797,15 +806,6 @@ fn parse_dot(input: &str, pos: &mut Position) -> ParseResult {
                 Ok(Box::new(Node::Dot(Box::new(Node::Token(id)), nodes)))
             }
         }
-        _ => Err(SquareError::SyntaxError(
-            input.to_string(),
-            format!(
-                "faield to parse_dot, expect identifier or call expression, got {}",
-                leading.to_string()
-            ),
-            leading.pos().clone(),
-            None,
-        )),
     }
 }
 
@@ -851,6 +851,38 @@ fn test_parse_dot() {
     panic!();
 }
 
+#[test]
+fn test_parse_dot_str() {
+    let input = "'ss'.foo";
+    let mut pos = Position::new();
+    let node = parse_dot(input, &mut pos).unwrap();
+
+    if let Node::Dot(_, props) = node.as_ref() {
+        if let Node::Prop(_, foo) = props[0].as_ref() {
+            assert_eq!(foo.source(), "foo");
+            return;
+        }
+    }
+
+    panic!();
+}
+
+#[test]
+fn test_parse_dot_id() {
+    let input = "ss.foo";
+    let mut pos = Position::new();
+    let node = parse_dot(input, &mut pos).unwrap();
+
+    if let Node::Dot(_, props) = node.as_ref() {
+        if let Node::Prop(_, foo) = props[0].as_ref() {
+            assert_eq!(foo.source(), "foo");
+            return;
+        }
+    }
+
+    panic!();
+}
+
 fn parse_expr(input: &str, pos: &mut Position) -> ParseResult {
     let wrap = create_wrapper("parse_expr");
     let leading = wrap(lookahead(input, pos))?;
@@ -880,7 +912,7 @@ fn parse_expr(input: &str, pos: &mut Position) -> ParseResult {
                 )))
             }
         }
-        Token::Num(..) | Token::Str(..) => Ok(Box::new(Node::Token(raise_token(input, pos)?))),
+        Token::Num(..) => Ok(Box::new(Node::Token(raise_token(input, pos)?))),
         _ => parse_dot(input, pos),
     }
 }

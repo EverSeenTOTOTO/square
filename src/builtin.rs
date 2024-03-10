@@ -2,8 +2,7 @@ use core::cell::RefCell;
 
 use alloc::format;
 use alloc::rc::Rc;
-use alloc::string::{String, ToString};
-use alloc::{vec, vec::Vec};
+use alloc::string::ToString;
 use hashbrown::HashMap;
 
 use crate::errors::SquareError;
@@ -15,199 +14,175 @@ use crate::{
 pub type Syscall = Rc<dyn Fn(&mut VM, Value, &mut usize) -> ExecResult>;
 
 pub struct Builtin {
-    values: HashMap<String, Value>,
-    syscalls: Vec<Syscall>,
+    values: HashMap<&'static str, (Value, Option<Syscall>)>,
 }
 
 impl Builtin {
     pub fn new() -> Self {
         let mut values = HashMap::new();
 
-        values.insert("true".to_string(), Value::Bool(true));
-        values.insert("false".to_string(), Value::Bool(false));
-        values.insert("nil".to_string(), Value::Nil);
-        values.insert(
-            "print".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(0)))),
-        );
-        values.insert(
-            "println".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(1)))),
-        );
-        values.insert(
-            "vec".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(2)))),
-        );
-        values.insert(
-            "typeof".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(3)))),
-        );
-        values.insert(
-            "__concat".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(4)))),
-        );
-        values.insert(
-            "obj".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(5)))),
-        );
-        values.insert(
-            "callcc".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(6)))),
-        );
-
         #[cfg(target_family = "wasm")]
         use crate::print;
 
-        let syscalls = vec![
-            // print
-            Rc::new(
-                |_vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
-                    if let Value::Vec(top) = params {
-                        top.borrow().iter().for_each(|val| print!("{}", val));
-                    }
-                    Ok(())
-                },
-            ) as Syscall,
-            // println
-            Rc::new(
-                |_vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
-                    if let Value::Vec(top) = params {
-                        top.borrow().iter().for_each(|val| print!("{}", val));
-                    }
-                    print!("\n");
-                    Ok(())
-                },
-            ) as Syscall,
-            // vec
-            Rc::new(
-                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
-                    // params have already be packed
-                    Ok(vm.current_frame().push(params))
-                },
-            ) as Syscall,
-            // typeof
-            Rc::new(
-                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
-                    if let Value::Vec(ref top) = params {
-                        if let Some(val) = top.borrow().get(0) {
-                            return Ok(vm
-                                .current_frame()
-                                .push(Value::Str(val.typename().to_string())));
-                        } else {
-                            return Err(SquareError::RuntimeError(format!(
-                                "typeof only accept one parameter, got {}",
-                                params
-                            )));
+        values.insert("true", (Value::Bool(true), None));
+        values.insert("false", (Value::Bool(false), None));
+        values.insert("nil", (Value::Nil, None));
+        values.insert(
+            "print",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("print")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                        if let Value::Vec(top) = params {
+                            top.borrow().iter().for_each(|val| print!("{}", val));
                         }
-                    }
-
-                    unreachable!()
-                },
-            ) as Syscall,
-            // __concat
-            Rc::new(
-                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
-                    if let Value::Vec(ref top) = params {
-                        if top.borrow().len() != 2 {
-                            return Err(SquareError::RuntimeError(format!(
-                                "concat only accept two parameters, got {}",
-                                params
-                            )));
+                        Ok(vm.current_frame().push(Value::Nil))
+                    },
+                ) as Syscall),
+            ),
+        );
+        values.insert(
+            "println",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("println")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                        if let Value::Vec(top) = params {
+                            top.borrow().iter().for_each(|val| print!("{}", val));
                         }
-
-                        match (&top.borrow()[0], &top.borrow()[1]) {
-                            (Value::Str(s1), Value::Str(s2)) => {
-                                return Ok(vm.current_frame().push(Value::Str(s1.to_string() + s2)))
-                            }
-                            (Value::Vec(v1), Value::Vec(v2)) => {
-                                let mut v = vec![];
-                                v.extend(v1.borrow().clone());
-                                v.extend(v2.borrow().clone());
+                        print!("\n");
+                        Ok(vm.current_frame().push(Value::Nil))
+                    },
+                ) as Syscall),
+            ),
+        );
+        values.insert(
+            "vec",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("vec")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                        // params have already be packed
+                        Ok(vm.current_frame().push(params))
+                    },
+                ) as Syscall),
+            ),
+        );
+        values.insert(
+            "typeof",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("typeof")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                        if let Value::Vec(ref top) = params {
+                            if let Some(val) = top.borrow().get(0) {
                                 return Ok(vm
                                     .current_frame()
-                                    .push(Value::Vec(Rc::new(RefCell::new(v)))));
-                            }
-                            (Value::Num(f1), Value::Num(f2)) => {
-                                let n1 = *f1 as i64;
-                                let n2 = *f2 as i64;
-                                return Ok(vm.current_frame().push(Value::Vec(Rc::new(
-                                    RefCell::new((n1..n2).map(|x| Value::Num(x as f64)).collect()),
-                                ))));
-                            }
-                            _ => {
-                                return Err(SquareError::RuntimeError(format!(
-                                    "concat type mismatch, expect str, vec or integer, got {}",
-                                    params
-                                )));
-                            }
-                        }
-                    }
-
-                    unreachable!()
-                },
-            ) as Syscall,
-            // obj
-            Rc::new(
-                |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
-                    if let Value::Vec(ref top) = params {
-                        let mut obj = HashMap::new();
-                        for i in (0..top.borrow().len()).step_by(2) {
-                            if let (Some(Value::Str(key)), Some(val)) =
-                                (top.borrow().get(i), top.borrow().get(i + 1))
-                            {
-                                obj.insert(key.to_string(), val.clone());
+                                    .push(Value::Str(val.typename().to_string())));
                             } else {
                                 return Err(SquareError::RuntimeError(format!(
-                                    "obj only accept key-value pairs, got {}",
+                                    "typeof only accept one parameter, got {}",
                                     params
                                 )));
                             }
                         }
 
-                        return Ok(vm
-                            .current_frame()
-                            .push(Value::Obj(Rc::new(RefCell::new(obj)))));
-                    }
+                        unreachable!()
+                    },
+                ) as Syscall),
+            ),
+        );
+        values.insert(
+            "obj",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("obj")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                        if let Value::Vec(ref top) = params {
+                            let obj = Rc::new(RefCell::new(HashMap::new()));
 
-                    unreachable!()
-                },
-            ) as Syscall,
-            // callcc
-            Rc::new(|vm: &mut VM, params: Value, pc: &mut usize| -> ExecResult {
-                if let Value::Vec(ref top) = params {
-                    if let Some(ref iife) = top.borrow()[0].as_fn() {
-                        let cc = Function::Contiuation(*pc, vm.save_context());
+                            for i in (0..top.borrow().len()).step_by(2) {
+                                if let (Value::Str(key), val) =
+                                    (&top.borrow()[i], &top.borrow()[i + 1])
+                                {
+                                    if let Some(member_fn) = val.as_fn() {
+                                        match *member_fn.borrow_mut() {
+                                            Function::Closure(_, ref mut captures) => {
+                                                captures.insert(
+                                                    "this".to_string(),
+                                                    Value::Obj(obj.clone()),
+                                                );
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    obj.borrow_mut().insert(key.to_string(), val.clone());
+                                } else {
+                                    return Err(SquareError::RuntimeError(format!(
+                                        "obj only accept key-value pairs, got {}",
+                                        params
+                                    )));
+                                }
+                            }
 
-                        *pc = *pc - 2; // callcc is actually another kind of CALL instruction, we reuse the PACK and CALL that call callcc itself to call the parameter lambda provided to callcc
-                        vm.current_frame().push(Value::Function(iife.clone()));
-                        vm.current_frame()
-                            .push(Value::Function(Rc::new(RefCell::new(cc))));
+                            return Ok(vm.current_frame().push(Value::Obj(obj)));
+                        }
 
-                        Ok(())
-                    } else {
-                        Err(SquareError::RuntimeError(format!(
-                            "callcc only accept one function parameter, got {}",
-                            params
-                        )))
-                    }
-                } else {
-                    unreachable!()
-                }
-            }) as Syscall,
-        ];
+                        unreachable!()
+                    },
+                ) as Syscall),
+            ),
+        );
+        values.insert(
+            "callcc",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("callcc")))),
+                Some(
+                    Rc::new(|vm: &mut VM, params: Value, pc: &mut usize| -> ExecResult {
+                        if let Value::Vec(ref top) = params {
+                            if let Some(ref iife) = top.borrow()[0].as_fn() {
+                                let cc = Function::Contiuation(*pc, vm.save_context());
 
-        Self { values, syscalls }
+                                *pc = *pc - 2; // callcc is actually another kind of CALL instruction, we reuse the PACK and CALL that call callcc itself to call the parameter lambda provided to callcc
+                                vm.current_frame().push(Value::Function(iife.clone()));
+                                vm.current_frame()
+                                    .push(Value::Function(Rc::new(RefCell::new(cc))));
+
+                                Ok(())
+                            } else {
+                                Err(SquareError::RuntimeError(format!(
+                                    "callcc only accept one function parameter, got {}",
+                                    params
+                                )))
+                            }
+                        } else {
+                            unreachable!()
+                        }
+                    }) as Syscall,
+                ),
+            ),
+        );
+
+        Self { values }
     }
 
     pub fn is_builtin(&self, name: &str) -> bool {
         return self.values.contains_key(name);
     }
 
-    pub fn resolve_builtin(&self, name: &str) -> Option<&Value> {
-        return self.values.get(name);
+    pub fn resolve_builtin(&self, name: &str) -> Option<Value> {
+        if let Some((value, _)) = self.values.get(name) {
+            Some(value.clone())
+        } else {
+            None
+        }
     }
 
-    pub fn get_syscall(&self, index: usize) -> Syscall {
-        return self.syscalls[index].clone();
+    pub fn get_syscall(&self, name: &str) -> Option<Syscall> {
+        if let Some((_, syscall)) = self.values.get(name) {
+            syscall.clone()
+        } else {
+            None
+        }
     }
 }
