@@ -1,0 +1,8 @@
+[let catch /[body handler]
+  [handler [callcc /[cc] [body cc]]]]
+
+[catch /[throw] 
+          [catch 
+            /[throw] [+ 1 [throw 42]]
+            throw]
+          println]

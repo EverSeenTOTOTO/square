@@ -26,9 +26,9 @@ type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
         match self {
-            Inst::PUSH(value) => Ok(vm.current_frame().push(value.clone())),
+            Inst::PUSH(value) => Ok(vm.current_frame().borrow_mut().push(value.clone())),
             Inst::POP => {
-                vm.current_frame().pop();
+                vm.current_frame().borrow_mut().pop();
                 Ok(())
             }
 
@@ -49,7 +49,8 @@ impl Inst {
             Inst::SHL => self.binop(vm, &|a, b| a << b, pc),
             Inst::SHR => self.binop(vm, &|a, b| a >> b, pc),
             Inst::BITNOT => {
-                let frame = vm.current_frame();
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
                 let result = (!frame.top().unwrap()).map_err(|e| match e {
                     SquareError::RuntimeError(msg) => {
                         SquareError::InstructionError(msg, self.clone(), *pc)
@@ -57,13 +58,15 @@ impl Inst {
                     _ => e,
                 });
 
-                frame.stack[frame.sp - 1] = result?;
+                let sp = frame.sp;
+                frame.stack[sp - 1] = result?;
                 Ok(())
             }
 
             Inst::JMP(value) => self.jump(insts, pc, *value),
             Inst::JNE(value) => {
-                let frame = vm.current_frame();
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
                 let top = frame.pop();
 
                 if !top.as_bool() {
@@ -74,10 +77,12 @@ impl Inst {
             }
 
             Inst::STORE(name) => {
-                let frame = vm.current_frame();
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
 
                 if let Some(val) = frame.top() {
-                    Ok(frame.assign_local(name, val.clone()))
+                    let cloned = val.clone();
+                    Ok(frame.assign_local(name, cloned))
                 } else {
                     Err(SquareError::InstructionError(
                         "bad store, operand stack empty".to_string(),
@@ -89,10 +94,11 @@ impl Inst {
             Inst::LOAD(name) => {
                 if let Some(value) = vm.buildin.resolve_builtin(name) {
                     let cloned = value.clone();
-                    return Ok(vm.current_frame().push(cloned));
+                    return Ok(vm.current_frame().borrow_mut().push(cloned));
                 }
 
-                let frame = vm.current_frame();
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
                 if let Some(value) = frame.resolve_local(name) {
                     let cloned = value.clone();
                     Ok(frame.push(cloned))
@@ -106,26 +112,32 @@ impl Inst {
             }
 
             Inst::CALL => {
-                // call closure
-                let frame = vm.current_frame();
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
 
-                let params = frame.stack[frame.sp - 1].clone();
-                let func = frame.stack[frame.sp - 2].as_fn();
+                // call closure
+                let sp = frame.sp;
+                let params = frame.stack[sp - 1].clone();
+                let func = frame.stack[sp - 2].as_fn();
 
                 if let Some(val) = func {
                     frame.sp -= 2;
                     let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
-                    self.call(vm, val, params, is_tail_call, pc)
+                    self.call(vm, &mut frame, val, params, is_tail_call, pc)
                 } else {
                     Err(SquareError::InstructionError(
-                        format!("bad call, cannot call with {}", frame.stack[frame.sp - 2]),
+                        format!(
+                            "bad call, cannot call with {}",
+                            vm.current_frame().borrow().stack[sp - 2]
+                        ),
                         self.clone(),
                         *pc,
                     ))
                 }
             }
             Inst::RET => {
-                let frame = vm.current_frame();
+                let binding = vm.current_frame();
+                let frame = binding.borrow_mut();
 
                 // jump back
                 *pc = frame.ra;
@@ -135,14 +147,16 @@ impl Inst {
                 vm.pop_frame();
 
                 // always return the top value
-                Ok(vm.current_frame().push(top))
+                Ok(vm.current_frame().borrow_mut().push(top))
             }
             Inst::PUSH_CLOSURE(meta) => {
                 if let Function::ClosureMeta(offset, captures) = meta {
                     // create closure
                     let mut upvalues = HashMap::new();
                     let ip = (*pc as i32) + offset;
-                    let frame = vm.current_frame();
+                    let binding = vm.current_frame();
+                    let mut frame = binding.borrow_mut();
+
                     let varnames = captures.iter().cloned().collect::<Vec<_>>();
 
                     // upgrade value to captured
@@ -171,7 +185,8 @@ impl Inst {
             }
 
             Inst::PACK(len) => {
-                let frame = vm.current_frame();
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
                 let result = frame.stack[frame.sp - len..frame.sp].to_vec().clone();
 
                 frame.sp -= *len;
@@ -201,7 +216,8 @@ impl Inst {
     }
 
     fn binop(&self, vm: &mut VM, op_fn: &OpFn, pc: &mut usize) -> ExecResult {
-        let frame = vm.current_frame();
+        let binding = vm.current_frame();
+        let mut frame = binding.borrow_mut();
         let result =
             op_fn(&frame.stack[frame.sp - 2], &frame.stack[frame.sp - 1]).map_err(|e| match e {
                 SquareError::RuntimeError(msg) => {
@@ -210,7 +226,8 @@ impl Inst {
                 _ => e,
             });
 
-        frame.stack[frame.sp - 2] = result?;
+        let sp = frame.sp;
+        frame.stack[sp - 2] = result?;
         frame.sp -= 1;
         Ok(())
     }
@@ -232,6 +249,7 @@ impl Inst {
     fn call(
         &self,
         vm: &mut VM,
+        frame: &mut CallFrame,
         closure: Rc<RefCell<Function>>,
         params: Value,
         is_tail_call: bool,
@@ -241,7 +259,6 @@ impl Inst {
             Function::ClosureMeta(..) => unreachable!(),
             Function::Closure(ip, ref upvalues) => {
                 if is_tail_call {
-                    let frame = vm.current_frame();
                     // always push params as first operand
                     frame.stack[0] = params;
                     frame.sp = 1;
@@ -249,15 +266,15 @@ impl Inst {
                     // fill up captures
                     frame.extend_locals(upvalues.clone());
                 } else {
-                    let mut frame = CallFrame::new();
-                    frame.ra = *pc;
+                    let mut new_frame = CallFrame::new();
+                    new_frame.ra = *pc;
                     // always push params as first operand
-                    frame.stack[0] = params;
-                    frame.sp = 1;
+                    new_frame.stack[0] = params;
+                    new_frame.sp = 1;
                     // fill up captures
-                    frame.extend_locals(upvalues.clone());
+                    new_frame.extend_locals(upvalues.clone());
 
-                    vm.push_frame(frame);
+                    vm.push_frame(new_frame);
                 }
 
                 // jump to function
@@ -266,7 +283,7 @@ impl Inst {
             }
             Function::Syscall(index) => {
                 let syscall = vm.buildin.get_syscall(index).unwrap();
-                syscall(vm, params, pc)
+                syscall(vm, frame, params, pc)
             }
             Function::Contiuation(ra, ref context) => {
                 if let Value::Vec(ref top) = params {
@@ -275,6 +292,7 @@ impl Inst {
                     vm.restore_context(context.clone());
                     Ok(vm
                         .current_frame()
+                        .borrow_mut()
                         .push(top.borrow().get(0).unwrap_or(&Value::Nil).clone()))
                 } else {
                     Err(SquareError::RuntimeError(format!(
@@ -287,7 +305,8 @@ impl Inst {
     }
 
     fn peek_vec(&self, vm: &mut VM, offset: usize, i: i32, pc: &mut usize) -> ExecResult {
-        let frame = vm.current_frame();
+        let binding = vm.current_frame();
+        let mut frame = binding.borrow_mut();
         let top = frame.stack[frame.sp - 1].as_vec();
 
         if let Some(val) = top {
@@ -335,7 +354,8 @@ impl Inst {
     }
 
     fn peek_obj(&self, vm: &mut VM, key: &str, pc: &mut usize) -> ExecResult {
-        let frame = vm.current_frame();
+        let binding = vm.current_frame();
+        let mut frame = binding.borrow_mut();
         let top = frame.pop();
 
         if let Some(o) = top.as_obj() {
@@ -354,7 +374,8 @@ impl Inst {
     }
 
     fn patch_obj(&self, vm: &mut VM, key: &String, pc: &mut usize) -> ExecResult {
-        let frame = vm.current_frame();
+        let binding = vm.current_frame();
+        let mut frame = binding.borrow_mut();
         let value = frame.stack[frame.sp - 1].clone();
         let target = frame.stack[frame.sp - 2].as_obj();
 
@@ -447,7 +468,7 @@ impl CallFrame {
     }
 
     #[inline]
-    pub fn resolve_local(&mut self, name: &str) -> Option<&Value> {
+    pub fn resolve_local(&self, name: &str) -> Option<&Value> {
         self.locals.get(name)
     }
 
@@ -472,7 +493,7 @@ impl CallFrame {
 }
 
 pub struct VM {
-    pub call_frames: Vec<CallFrame>,
+    pub call_frames: Vec<Rc<RefCell<CallFrame>>>,
 
     buildin: Builtin,
 
@@ -483,7 +504,7 @@ pub struct VM {
 impl VM {
     pub fn new() -> Self {
         Self {
-            call_frames: vec![CallFrame::new()],
+            call_frames: vec![Rc::new(RefCell::new(CallFrame::new()))],
             buildin: Builtin::new(),
 
             #[cfg(test)]
@@ -492,27 +513,27 @@ impl VM {
     }
 
     #[inline]
-    pub fn current_frame(&mut self) -> &mut CallFrame {
-        self.call_frames.last_mut().unwrap()
+    pub fn current_frame(&mut self) -> Rc<RefCell<CallFrame>> {
+        self.call_frames.last().unwrap().clone()
     }
 
     #[inline]
     pub fn push_frame(&mut self, frame: CallFrame) {
-        self.call_frames.push(frame)
+        self.call_frames.push(Rc::new(RefCell::new(frame)))
     }
 
     #[inline]
-    pub fn pop_frame(&mut self) -> Option<CallFrame> {
+    pub fn pop_frame(&mut self) -> Option<Rc<RefCell<CallFrame>>> {
         self.call_frames.pop()
     }
 
     #[inline]
-    pub fn save_context(&self) -> Vec<CallFrame> {
+    pub fn save_context(&self) -> Vec<Rc<RefCell<CallFrame>>> {
         self.call_frames.clone()
     }
 
     #[inline]
-    pub fn restore_context(&mut self, context: Vec<CallFrame>) {
+    pub fn restore_context(&mut self, context: Vec<Rc<RefCell<CallFrame>>>) {
         self.call_frames = context;
     }
 
@@ -538,7 +559,7 @@ impl VM {
         println!(
             "-------- CallFrame {} --------\n{}",
             self.call_frames.len() - 1,
-            self.current_frame()
+            self.current_frame().borrow()
         );
 
         *pc += 1;
@@ -546,7 +567,7 @@ impl VM {
     }
 
     pub fn run(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
-        self.current_frame().ra = insts.len();
+        self.current_frame().borrow_mut().ra = insts.len();
 
         #[cfg(test)]
         self.inst_times.clear();
@@ -607,7 +628,8 @@ fn test_grow_operand_stack() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
 
     assert_eq!(callframe.stack.len() >= 100, true);
     assert_eq!(callframe.sp, 100);
@@ -623,7 +645,8 @@ fn test_exec_token() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
 
     assert_eq!(callframe.top(), Some(&Value::Num(42.0)));
 }
@@ -635,10 +658,13 @@ fn test_exec_load() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().assign_local("x", Value::Num(42.0));
+    vm.current_frame()
+        .borrow_mut()
+        .assign_local("x", Value::Num(42.0));
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
 
     assert_eq!(callframe.top(), Some(&Value::Num(42.0)));
 }
@@ -669,7 +695,8 @@ fn test_exec_define() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -682,7 +709,8 @@ fn test_exec_assign() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -695,7 +723,8 @@ fn test_exec_assign_capture() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -708,7 +737,8 @@ fn test_exec_define_expand() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -721,7 +751,8 @@ fn test_exec_assign_expand() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -734,7 +765,8 @@ fn test_exec_assign_expand_capture() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -747,7 +779,8 @@ fn test_exec_define_expand_dot() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -777,7 +810,8 @@ fn test_exec_define_expand_greed() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -807,7 +841,8 @@ fn test_exec_define_expand_nested() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
 }
 
@@ -820,7 +855,8 @@ fn test_exec_define_chain() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
     assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(42.0));
     assert_eq!(callframe.resolve_local("z").unwrap(), &Value::Num(42.0));
@@ -835,7 +871,8 @@ fn test_exec_op() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(-1.0))
 }
 
@@ -846,10 +883,13 @@ fn test_exec_op_assign() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().assign_local("x", Value::Num(1.0));
+    vm.current_frame()
+        .borrow_mut()
+        .assign_local("x", Value::Num(1.0));
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(3.0));
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(3.0))
 }
@@ -865,7 +905,8 @@ fn test_exec_op_assign_dot() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
 }
 
@@ -882,10 +923,12 @@ fn test_exec_dot() {
     x.insert("y".to_string(), y);
     o.insert("x".to_string(), Value::Obj(Rc::new(RefCell::new(x))));
     vm.current_frame()
+        .borrow_mut()
         .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
 }
 
@@ -902,10 +945,12 @@ fn test_exec_assign_dot() {
     x.insert("y".to_string(), y);
     o.insert("x".to_string(), Value::Obj(Rc::new(RefCell::new(x))));
     vm.current_frame()
+        .borrow_mut()
         .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
 }
 
@@ -931,7 +976,8 @@ o.x
     insts.iter().for_each(|inst| println!("{}", inst));
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(44.0))
 }
 
@@ -944,7 +990,8 @@ fn test_exec_begin() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(3.0))
 }
 
@@ -959,7 +1006,8 @@ fn test_exec_scope() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(1.0));
     assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(2.0));
 }
@@ -973,7 +1021,7 @@ fn test_exec_tail_call() {
     let mut pc = 0;
     let mut max_depth = vm.call_frames.len();
 
-    vm.current_frame().ra = insts.len();
+    vm.current_frame().borrow_mut().ra = insts.len();
 
     while pc < insts.len() {
         vm.step(&insts, &mut pc).unwrap();
@@ -982,7 +1030,8 @@ fn test_exec_tail_call() {
         }
     }
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
     assert_eq!(max_depth, 2);
 }
@@ -996,7 +1045,8 @@ fn test_exec_if_true() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0))
 }
 
@@ -1009,7 +1059,8 @@ fn test_exec_if_false_nil() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Nil)
 }
 
@@ -1022,7 +1073,8 @@ fn test_exec_if_false() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(24.0))
 }
 
@@ -1033,10 +1085,13 @@ fn test_exec_while() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.current_frame().assign_local("x", Value::Num(0.0));
+    vm.current_frame()
+        .borrow_mut()
+        .assign_local("x", Value::Num(0.0));
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(4.0))
 }
 
@@ -1051,7 +1106,8 @@ fn test_exec_match() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0))
 }
 
@@ -1064,7 +1120,8 @@ fn test_exec_fn_call() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
 }
 
@@ -1077,7 +1134,8 @@ fn test_exec_fn_call_with_params() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
 }
 
@@ -1094,7 +1152,8 @@ fn test_exec_fn_overwrite_params() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(24.0))
 }
@@ -1115,7 +1174,8 @@ fn test_exec_fn_capture_assign() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
 
     assert_eq!(callframe.top().unwrap(), &Value::Num(2.0));
     assert_eq!(callframe.stack[callframe.sp - 2], Value::Num(2.0));
@@ -1137,7 +1197,8 @@ fn test_exec_fn_capture_nested() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
 
     assert_eq!(callframe.top().unwrap(), &Value::Num(2.0));
 }
@@ -1155,7 +1216,8 @@ fn test_exec_fn_capture_scope_lift() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
 }
 
@@ -1172,7 +1234,7 @@ fn test_exec_fn_capture_error() {
     let mut vm = VM::new();
 
     vm.run(&insts, &mut 0).unwrap(); // FIXME: should report undefined variable: x
-    assert_eq!(vm.current_frame().top(), Some(&Value::Nil))
+    assert_eq!(vm.current_frame().borrow().top(), Some(&Value::Nil))
 }
 
 #[test]
@@ -1209,8 +1271,9 @@ fn test_exec_fn_capture_lazy() {
     let mut vm = VM::new();
 
     vm.run(&insts, &mut 0).unwrap();
-    let callframe = vm.current_frame();
 
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
 }
 
@@ -1226,7 +1289,8 @@ fn test_exec_fn_capture_self() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
 }
 
@@ -1242,7 +1306,8 @@ fn test_exec_builtin() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(
         callframe.resolve_local("t").unwrap(),
         &Value::Str("fn".to_string())
@@ -1260,7 +1325,8 @@ fn test_callcc_flow() {
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0))
 }
 
@@ -1274,7 +1340,9 @@ fn test_callcc_break() {
     let mut vm = VM::new();
 
     vm.run(&insts, &mut 0).unwrap();
-    let callframe = vm.current_frame();
+
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0))
 }
 
@@ -1293,7 +1361,8 @@ cc
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
 }
 
@@ -1312,7 +1381,8 @@ cc
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
 }
 
@@ -1331,7 +1401,8 @@ cc
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
 }
 
@@ -1350,7 +1421,8 @@ cc
 
     vm.run(&insts, &mut 0).unwrap();
 
-    let callframe = vm.current_frame();
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
     assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
 }
 

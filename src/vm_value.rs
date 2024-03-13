@@ -20,7 +20,7 @@ pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
     Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
     Syscall(&'static str),             // (name)
-    Contiuation(usize, Vec<CallFrame>), // (ra, context)
+    Contiuation(usize, Vec<Rc<RefCell<CallFrame>>>), // (ra, context)
 }
 
 impl fmt::Display for Function {

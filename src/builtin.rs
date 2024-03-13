@@ -6,12 +6,13 @@ use alloc::string::ToString;
 use hashbrown::HashMap;
 
 use crate::errors::SquareError;
+use crate::vm::CallFrame;
 use crate::{
     vm::{ExecResult, VM},
     vm_value::{Function, Value},
 };
 
-pub type Syscall = Rc<dyn Fn(&mut VM, Value, &mut usize) -> ExecResult>;
+pub type Syscall = Rc<dyn Fn(&mut VM, &mut CallFrame, Value, &mut usize) -> ExecResult>;
 
 pub struct Builtin {
     values: HashMap<&'static str, (Value, Option<Syscall>)>,
@@ -32,11 +33,15 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("print")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                    |_vm: &mut VM,
+                     frame: &mut CallFrame,
+                     params: Value,
+                     _pc: &mut usize|
+                     -> ExecResult {
                         if let Value::Vec(top) = params {
                             top.borrow().iter().for_each(|val| print!("{}", val));
                         }
-                        Ok(vm.current_frame().push(Value::Nil))
+                        Ok(frame.push(Value::Nil))
                     },
                 ) as Syscall),
             ),
@@ -46,12 +51,16 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("println")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                    |_vm: &mut VM,
+                     frame: &mut CallFrame,
+                     params: Value,
+                     _pc: &mut usize|
+                     -> ExecResult {
                         if let Value::Vec(top) = params {
                             top.borrow().iter().for_each(|val| print!("{}", val));
                         }
                         print!("\n");
-                        Ok(vm.current_frame().push(Value::Nil))
+                        Ok(frame.push(Value::Nil))
                     },
                 ) as Syscall),
             ),
@@ -61,9 +70,13 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("vec")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                    |_vm: &mut VM,
+                     frame: &mut CallFrame,
+                     params: Value,
+                     _pc: &mut usize|
+                     -> ExecResult {
                         // params have already be packed
-                        Ok(vm.current_frame().push(params))
+                        Ok(frame.push(params))
                     },
                 ) as Syscall),
             ),
@@ -73,12 +86,14 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("typeof")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                    |_vm: &mut VM,
+                     frame: &mut CallFrame,
+                     params: Value,
+                     _pc: &mut usize|
+                     -> ExecResult {
                         if let Value::Vec(ref top) = params {
                             if let Some(val) = top.borrow().get(0) {
-                                return Ok(vm
-                                    .current_frame()
-                                    .push(Value::Str(val.typename().to_string())));
+                                return Ok(frame.push(Value::Str(val.typename().to_string())));
                             } else {
                                 return Err(SquareError::RuntimeError(format!(
                                     "typeof only accept one parameter, got {}",
@@ -97,7 +112,11 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("obj")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Value, _pc: &mut usize| -> ExecResult {
+                    |_vm: &mut VM,
+                     frame: &mut CallFrame,
+                     params: Value,
+                     _pc: &mut usize|
+                     -> ExecResult {
                         if let Value::Vec(ref top) = params {
                             let obj = Rc::new(RefCell::new(HashMap::new()));
 
@@ -125,7 +144,7 @@ impl Builtin {
                                 }
                             }
 
-                            return Ok(vm.current_frame().push(Value::Obj(obj)));
+                            return Ok(frame.push(Value::Obj(obj)));
                         }
 
                         unreachable!()
@@ -137,16 +156,19 @@ impl Builtin {
             "callcc",
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("callcc")))),
-                Some(
-                    Rc::new(|vm: &mut VM, params: Value, pc: &mut usize| -> ExecResult {
+                Some(Rc::new(
+                    |vm: &mut VM,
+                     frame: &mut CallFrame,
+                     params: Value,
+                     pc: &mut usize|
+                     -> ExecResult {
                         if let Value::Vec(ref top) = params {
                             if let Some(ref iife) = top.borrow()[0].as_fn() {
                                 let cc = Function::Contiuation(*pc, vm.save_context());
 
                                 *pc = *pc - 2; // callcc is actually another kind of CALL instruction, we reuse the PACK and CALL that call callcc itself to call the parameter lambda provided to callcc
-                                vm.current_frame().push(Value::Function(iife.clone()));
-                                vm.current_frame()
-                                    .push(Value::Function(Rc::new(RefCell::new(cc))));
+                                frame.push(Value::Function(iife.clone()));
+                                frame.push(Value::Function(Rc::new(RefCell::new(cc))));
 
                                 Ok(())
                             } else {
@@ -158,8 +180,8 @@ impl Builtin {
                         } else {
                             unreachable!()
                         }
-                    }) as Syscall,
-                ),
+                    },
+                ) as Syscall),
             ),
         );
 
