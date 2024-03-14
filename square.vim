@@ -23,6 +23,7 @@ syn match squareNumber "-\=\<\d\+\%(_\d\+\)*\>"
 
 syn match squareBoolean /true/
 syn match squareBoolean /false/
+syn match squareBoolean /nil/
 
 syn match squareComment /;.*$/ contains=@Spell
 
@@ -30,16 +31,12 @@ syn region schemeForm matchgroup=schemeParentheses start="\[" end="\]" contains=
 syn cluster schemeSyntaxCluster contains=schemeFunction,schemeKeyword,schemeSyntax
 
 syn keyword squareSyntax let
-syn keyword squareSyntax and
-syn keyword squareSyntax or
 syn keyword squareSyntax begin
 syn keyword squareSyntax if
-syn keyword squareSyntax else
-syn keyword squareSyntax match
+syn keyword squareSyntax cond
 syn keyword squareSyntax while
-syn keyword squareSyntax sleep
-syn keyword squareSyntax exit
 syn keyword squareSyntax print
+syn keyword squareSyntax println
 syn keyword squareSyntax callcc
 syn keyword squareSyntax vec
 syn keyword squareSyntax obj
@@ -57,7 +54,6 @@ syn keyword squareFunction <=
 syn keyword squareFunction =
 syn keyword squareFunction >
 syn keyword squareFunction >=
-syn keyword squareFunction ..
 syn keyword squareFunction %
 syn keyword squareFunction %=
 syn keyword squareFunction ==

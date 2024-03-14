@@ -1,18 +1,18 @@
 # square
 
-A toy Lisp-like language written in Rust, supports first-class function and continuation, aims to be both fun and expressive.
+A toy Lisp-style language written in Rust, supports first-class function and continuation, aims to be both fun and expressive.
 
 ## Q & A
 
 1.  What's this?
 
-    **Square** is a neat Lisp-inspired language, crafted with Rust. It's all about simplicity and cleanliness, aiming to reduce the reliance on control keys like `<Ctrl>` and `<Shift>`. That's why it uses symbols like `.`, `[]`, `;`, and `/` to structure the code.
+    **Square** is a neat Lisp-inspired language, crafted with Rust. It's all about simplicity and cleanliness, aiming to reduce the reliance on control keys like `<Ctrl>` and `<Shift>`. That's why it only uses symbols like `.`, `[]`, `;`, and `/` to structure the code.
 
-    **Square** is parsed by a recursive descent algorithm, compiled to a custom instruction set, and operates on a stack-based virtual machine. The source code, written with a Rust `no_std` environment and can be compiled to a incredibly lightweight wasm file.
+    **Square** is parsed by a recursive descent algorithm, compiled to a custom (high level) instruction set, and operates on a stack-based virtual machine.
 
 2.  Why called **square**?
 
-    **Square** use `[]` rather than `()` which is adopted in most lisp languages, giving it a truly "square" shape that matches its name.
+    **Square** use `[]` rather than `()` which is adopted in most Scheme dialects, giving it a truly "square" shape that matches its name.
 
 ## Variable
 
@@ -58,9 +58,9 @@ A toy Lisp-like language written in Rust, supports first-class function and cont
 [foo]
 
 ; expansion in parameter
-[let foo /[. z] [print z]]
+[let foo /[[.] z] [print z]]
 
-[foo 'ignored' 0]
+[foo [vec 'ignored'] 0]
 
 [let fib /[n] 
   [if [<= n 2] 
