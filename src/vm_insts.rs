@@ -37,13 +37,11 @@ pub enum Inst {
     RET,
     PUSH_CLOSURE(Function), // create a closure and push on top of the operand stack
 
-    PACK(usize), // pack n elements on top of the operand stack
+    PACK(usize),      // pack n elements on top of the operand stack
+    PEEK(usize, i32), // (offset, index), peek an element within the top pack of the operand stack
 
-    // peek_vec: (offset, index), peek an element within the top pack of the operand stack.
-    // 'offset' is either 0 or the number of elements consumed once greedy placehoder appeared.
-    // peek_obj: (key, nil), peek a member within the top object of the operand stack
-    PEEK((Value, Value)),
-    PATCH(Value),
+    GET(String), // get a field from the top object on the operand stack
+    SET(String), // set a field
 }
 
 impl Inst {
@@ -76,8 +74,10 @@ impl Inst {
             Inst::RET => "RET",
             Inst::PUSH_CLOSURE(_) => "PUSH_CLOSURE",
             Inst::PACK(_) => "PACK",
-            Inst::PEEK(_) => "PEEK",
-            Inst::PATCH(_) => "PATCH",
+            Inst::PEEK(..) => "PEEK",
+
+            Inst::SET(_) => "SET",
+            Inst::GET(_) => "GET",
         }
     }
 }
@@ -122,12 +122,10 @@ impl fmt::Display for Inst {
             ),
 
             Inst::PACK(len) => write!(f, "PACK {}", len),
-            Inst::PEEK(pair) => match pair {
-                (Value::Num(offset), Value::Num(index)) => write!(f, "PEEK {}, {}", offset, index),
-                (Value::Str(key), _) => write!(f, "PEEK {}", key),
-                _ => unreachable!(),
-            },
-            Inst::PATCH(key) => write!(f, "PATCH {}", key),
+            Inst::PEEK(offset, index) => write!(f, "PEEK {}, {}", offset, index),
+
+            Inst::GET(key) => write!(f, "GET {}", key),
+            Inst::SET(key) => write!(f, "SET {}", key),
         }
     }
 }

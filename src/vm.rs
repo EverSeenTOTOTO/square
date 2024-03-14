@@ -193,25 +193,95 @@ impl Inst {
 
                 Ok(frame.push(Value::Vec(Rc::new(RefCell::new(result)))))
             }
-            Inst::PEEK(pair) => match pair {
-                (Value::Num(offset), Value::Num(index)) => {
-                    self.peek_vec(vm, *offset as usize, *index as i32, pc)
+            Inst::PEEK(offset, i) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let top = frame.stack[frame.sp - 1].as_vec();
+
+                if let Some(val) = top {
+                    let pack = val.borrow().clone();
+
+                    if *offset >= pack.len() {
+                        return Err(SquareError::InstructionError(
+                            format!(
+                                "bad peek_vec, offset {} out of range, pack length is {}",
+                                offset,
+                                pack.len()
+                            ),
+                            self.clone(),
+                            *pc,
+                        ));
+                    }
+
+                    let len = (pack.len() - offset) as i32;
+                    let index = if *i > 0 { *i } else { (*i + len) % len } as usize + offset;
+
+                    if index < pack.len() {
+                        // frame.pop();
+                        return Ok(frame.push(pack[index].clone()));
+                    } else {
+                        return Err(SquareError::InstructionError(
+                            format!(
+                                "bad peek_vec, index {} out of range, pack length is {}",
+                                index,
+                                pack.len()
+                            ),
+                            self.clone(),
+                            *pc,
+                        ));
+                    }
                 }
-                (Value::Str(key), _) => self.peek_obj(vm, key, pc),
-                _ => Err(SquareError::InstructionError(
-                    "bad peek, offset and index must be number, key must be string".to_string(),
+
+                Err(SquareError::InstructionError(
+                    format!(
+                        "bad peek_vec, top value is not a vector, got {}",
+                        frame.top().unwrap_or(&Value::Nil).clone()
+                    ),
                     self.clone(),
                     *pc,
-                )),
-            },
-            Inst::PATCH(key) => match key {
-                Value::Str(key) => self.patch_obj(vm, key, pc),
-                _ => Err(SquareError::InstructionError(
-                    format!("bad patch, key {} must be string or number", key),
+                ))
+            }
+
+            Inst::GET(key) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let top = frame.pop();
+
+                if let Some(o) = top.as_obj() {
+                    let cloned = o.borrow().get(key).cloned().unwrap_or(Value::Nil);
+                    return Ok(frame.push(cloned));
+                } else {
+                    return Err(SquareError::InstructionError(
+                        format!(
+                            "bad peek_obj, top value is not an object, got {}",
+                            frame.top().unwrap_or(&Value::Nil).clone()
+                        ),
+                        self.clone(),
+                        *pc,
+                    ));
+                }
+            }
+            Inst::SET(key) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let value = frame.stack[frame.sp - 1].clone();
+                let target = frame.stack[frame.sp - 2].as_obj();
+
+                if let Some(obj) = target {
+                    obj.borrow_mut().insert(key.clone(), value);
+                    frame.pop();
+                    return Ok(());
+                }
+
+                Err(SquareError::InstructionError(
+                    format!(
+                        "bad patch_obj, top value is not an object, got {}",
+                        frame.stack[frame.sp - 2].clone()
+                    ),
                     self.clone(),
                     *pc,
-                )),
-            },
+                ))
+            }
         }
     }
 
@@ -302,97 +372,6 @@ impl Inst {
                 }
             }
         }
-    }
-
-    fn peek_vec(&self, vm: &mut VM, offset: usize, i: i32, pc: &mut usize) -> ExecResult {
-        let binding = vm.current_frame();
-        let mut frame = binding.borrow_mut();
-        let top = frame.stack[frame.sp - 1].as_vec();
-
-        if let Some(val) = top {
-            let pack = val.borrow().clone();
-
-            if offset >= pack.len() {
-                return Err(SquareError::InstructionError(
-                    format!(
-                        "bad peek_vec, offset {} out of range, pack length is {}",
-                        offset,
-                        pack.len()
-                    ),
-                    self.clone(),
-                    *pc,
-                ));
-            }
-
-            let len = (pack.len() - offset) as i32;
-            let index = if i > 0 { i } else { (i + len) % len } as usize + offset;
-
-            if index < pack.len() {
-                // frame.pop();
-                return Ok(frame.push(pack[index].clone()));
-            } else {
-                return Err(SquareError::InstructionError(
-                    format!(
-                        "bad peek_vec, index {} out of range, pack length is {}",
-                        index,
-                        pack.len()
-                    ),
-                    self.clone(),
-                    *pc,
-                ));
-            }
-        }
-
-        Err(SquareError::InstructionError(
-            format!(
-                "bad peek_vec, top value is not a vector, got {}",
-                frame.top().unwrap_or(&Value::Nil).clone()
-            ),
-            self.clone(),
-            *pc,
-        ))
-    }
-
-    fn peek_obj(&self, vm: &mut VM, key: &str, pc: &mut usize) -> ExecResult {
-        let binding = vm.current_frame();
-        let mut frame = binding.borrow_mut();
-        let top = frame.pop();
-
-        if let Some(o) = top.as_obj() {
-            let cloned = o.borrow().get(key).cloned().unwrap_or(Value::Nil);
-            return Ok(frame.push(cloned));
-        } else {
-            return Err(SquareError::InstructionError(
-                format!(
-                    "bad peek_obj, top value is not an object, got {}",
-                    frame.top().unwrap_or(&Value::Nil).clone()
-                ),
-                self.clone(),
-                *pc,
-            ));
-        }
-    }
-
-    fn patch_obj(&self, vm: &mut VM, key: &String, pc: &mut usize) -> ExecResult {
-        let binding = vm.current_frame();
-        let mut frame = binding.borrow_mut();
-        let value = frame.stack[frame.sp - 1].clone();
-        let target = frame.stack[frame.sp - 2].as_obj();
-
-        if let Some(obj) = target {
-            obj.borrow_mut().insert(key.clone(), value);
-            frame.pop();
-            return Ok(());
-        }
-
-        Err(SquareError::InstructionError(
-            format!(
-                "bad patch_obj, top value is not an object, got {}",
-                frame.stack[frame.sp - 2].clone()
-            ),
-            self.clone(),
-            *pc,
-        ))
     }
 }
 
@@ -795,7 +774,7 @@ fn test_exec_define_expand_dot_error() {
         vm.run(&insts, &mut 0),
         Err(SquareError::InstructionError(
             "bad peek_vec, index 1 out of range, pack length is 1".to_string(),
-            Inst::PEEK((Value::Num(0.0), Value::Num(1.0))),
+            Inst::PEEK(0, 1),
             6,
         ))
     );
@@ -826,7 +805,7 @@ fn test_exec_define_expand_greed_error() {
         vm.run(&insts, &mut 0),
         Err(SquareError::InstructionError(
             "bad peek_vec, offset 0 out of range, pack length is 0".to_string(),
-            Inst::PEEK((Value::Num(0.0), Value::Num(-1.0))),
+            Inst::PEEK(0, -1),
             3,
         ))
     );

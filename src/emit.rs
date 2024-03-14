@@ -164,10 +164,10 @@ fn emit_assign(
                         if let Node::Prop(_, Token::Id(_, id)) = prop.as_ref() {
                             if i == properties.len() - 1 {
                                 result.extend(value);
-                                result.push(Inst::PATCH(Value::Str(id.clone())));
+                                result.push(Inst::SET(id.clone()));
                                 break;
                             } else {
-                                result.push(Inst::PEEK((Value::Str(id.clone()), Value::Nil)));
+                                result.push(Inst::GET(id.clone()));
                             }
                         } else {
                             unreachable!()
@@ -237,9 +237,9 @@ fn test_emit_assign_dot() {
         insts,
         vec![
             Inst::LOAD("o".to_string()),
-            Inst::PEEK((Value::Str("x".to_string()), Value::Nil)),
+            Inst::GET("x".to_string()),
             Inst::PUSH(Value::Num(42.0)),
-            Inst::PATCH(Value::Str("y".to_string()))
+            Inst::SET("y".to_string())
         ]
     );
 }
@@ -328,15 +328,15 @@ fn emit_op(
 
                 for (i, prop) in properties.iter().enumerate() {
                     if i == properties.len() - 1 {
-                        patch = Some(Inst::PATCH(Value::Str(prop.to_string())));
+                        patch = Some(Inst::SET(prop.to_string()));
                     } else {
-                        result.push(Inst::PEEK((Value::Str(prop.to_string()), Value::Nil)));
+                        result.push(Inst::GET(prop.to_string()));
                     }
                 }
 
                 result.push(Inst::LOAD(source.clone()));
                 for prop in properties.iter() {
-                    result.push(Inst::PEEK((Value::Str(prop.to_string()), Value::Nil)));
+                    result.push(Inst::GET(prop.to_string()));
                 }
 
                 result.extend(rhs);
@@ -440,13 +440,13 @@ fn test_emit_op_assign_dot() {
         insts,
         vec![
             Inst::LOAD("a".to_string()),
-            Inst::PEEK((Value::Str("b".to_string()), Value::Nil)),
+            Inst::GET("b".to_string()),
             Inst::LOAD("a".to_string()),
-            Inst::PEEK((Value::Str("b".to_string()), Value::Nil)),
-            Inst::PEEK((Value::Str("c".to_string()), Value::Nil)),
+            Inst::GET("b".to_string()),
+            Inst::GET("c".to_string()),
             Inst::LOAD("d".to_string()),
             Inst::ADD,
-            Inst::PATCH(Value::Str("c".to_string())),
+            Inst::SET("c".to_string()),
         ]
     );
 }
@@ -946,7 +946,7 @@ fn test_emit_fn_params() {
         insts,
         vec![
             Inst::JMP(6),
-            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))), // peek param
+            Inst::PEEK(0, 0), // peek param
             Inst::STORE("x".to_string()),
             Inst::POP, // drop param x
             Inst::POP, // drop total param pack
@@ -1043,10 +1043,7 @@ fn emit_expand(
 
         match placeholder.as_ref() {
             Node::Expand(.., nested) => {
-                result.push(Inst::PEEK((
-                    Value::Num(offset as f64),
-                    Value::Num(index as f64),
-                )));
+                result.push(Inst::PEEK(offset, index));
                 result.extend(emit_expand(input, is_define, nested, ctx)?);
             }
             Node::Token(id) => match id {
@@ -1067,19 +1064,13 @@ fn emit_expand(
                         ctx.borrow_mut().mark_if_capture(source);
                     }
 
-                    result.push(Inst::PEEK((
-                        Value::Num(offset as f64),
-                        Value::Num(index as f64),
-                    )));
+                    result.push(Inst::PEEK(offset, index));
                     result.push(Inst::STORE(source.clone()));
                     result.push(Inst::POP);
                 }
                 Token::Op(pos, op) => {
                     if op == "." {
-                        result.push(Inst::PEEK((
-                            Value::Num(offset as f64),
-                            Value::Num(index as f64),
-                        )));
+                        result.push(Inst::PEEK(offset, index));
                         result.push(Inst::POP);
                     } else if op == "..." {
                         if greedy_pos.is_some() {
@@ -1123,10 +1114,10 @@ fn test_emit_expand() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
+            Inst::PEEK(0, 0),
             Inst::STORE("a".to_string()),
             Inst::POP,
-            Inst::PEEK((Value::Num(0.0), Value::Num(1.0))),
+            Inst::PEEK(0, 1),
             Inst::STORE("b".to_string()),
             Inst::POP
         ]
@@ -1143,9 +1134,9 @@ fn test_emit_expand_dot() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
+            Inst::PEEK(0, 0),
             Inst::POP,
-            Inst::PEEK((Value::Num(0.0), Value::Num(1.0))),
+            Inst::PEEK(0, 1),
             Inst::STORE("b".to_string()),
             Inst::POP
         ]
@@ -1162,7 +1153,7 @@ fn test_emit_expand_greed() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK((Value::Num(0.0), Value::Num(-1.0))),
+            Inst::PEEK(0, -1),
             Inst::STORE("b".to_string()),
             Inst::POP
         ]
@@ -1179,11 +1170,11 @@ fn test_emit_expand_greed_offset() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
+            Inst::PEEK(0, 0),
             Inst::POP,
-            Inst::PEEK((Value::Num(1.0), Value::Num(-2.0))),
+            Inst::PEEK(1, -2),
             Inst::POP,
-            Inst::PEEK((Value::Num(2.0), Value::Num(-1.0))),
+            Inst::PEEK(2, -1),
             Inst::STORE("b".to_string()),
             Inst::POP
         ]
@@ -1200,9 +1191,9 @@ fn test_emit_expand_nested() {
         insts,
         vec![
             Inst::LOAD("c".to_string()),
-            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
-            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
-            Inst::PEEK((Value::Num(0.0), Value::Num(0.0))),
+            Inst::PEEK(0, 0),
+            Inst::PEEK(0, 0),
+            Inst::PEEK(0, 0),
             Inst::STORE("b".to_string()),
             Inst::POP,
         ]
@@ -1219,7 +1210,7 @@ fn emit_dot(
 
     for prop in properties.iter() {
         if let Node::Prop(_, Token::Id(_, id)) = prop.as_ref() {
-            result.push(Inst::PEEK((Value::Str(id.clone()), Value::Nil)));
+            result.push(Inst::GET(id.clone()));
         } else {
             unreachable!()
         }
@@ -1238,8 +1229,8 @@ fn test_emit_dot() {
         insts,
         vec![
             Inst::LOAD("o".to_string()),
-            Inst::PEEK((Value::Str("x".to_string()), Value::Nil)),
-            Inst::PEEK((Value::Str("y".to_string()), Value::Nil)),
+            Inst::GET("x".to_string()),
+            Inst::GET("y".to_string()),
         ]
     );
 }
