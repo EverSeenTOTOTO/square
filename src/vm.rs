@@ -24,7 +24,7 @@ pub type ExecResult = Result<(), SquareError>;
 type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 
 impl Inst {
-    fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
+    fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize, mpc: &mut usize) -> ExecResult {
         match self {
             Inst::PUSH(value) => Ok(vm.current_frame().borrow_mut().push(value.clone())),
             Inst::POP => {
@@ -112,18 +112,18 @@ impl Inst {
             }
 
             Inst::CALL => {
-                let binding = vm.current_frame();
-                let mut frame = binding.borrow_mut();
+                // let binding = vm.current_frame();
+                // let mut frame = binding.borrow_mut();
 
                 // call closure
-                let sp = frame.sp;
-                let params = frame.stack[sp - 1].clone();
-                let func = frame.stack[sp - 2].as_fn();
+                let sp = vm.current_frame().borrow().sp;
+                let params = vm.current_frame().borrow().stack[sp - 1].clone();
+                let func = vm.current_frame().borrow().stack[sp - 2].as_fn();
 
                 if let Some(val) = func {
-                    frame.sp -= 2;
+                    vm.current_frame().borrow_mut().sp -= 2;
                     let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
-                    self.call(vm, &mut frame, val, params, is_tail_call, pc)
+                    self.call(vm, val, params, is_tail_call, pc)
                 } else {
                     Err(SquareError::InstructionError(
                         format!(
@@ -282,6 +282,24 @@ impl Inst {
                     *pc,
                 ))
             }
+
+            Inst::DELIMITER(mindex) => {
+                #[cfg(test)]
+                println!("delimiter: {}, {}", mindex, mpc);
+                if mindex < mpc {
+                    for i in *pc..insts.len() {
+                        if let Inst::DELIMITER(index) = insts[i] {
+                            if index == *mpc {
+                                *pc = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                *mpc = *mpc + 1;
+                Ok(())
+            }
         }
     }
 
@@ -319,7 +337,6 @@ impl Inst {
     fn call(
         &self,
         vm: &mut VM,
-        frame: &mut CallFrame,
         closure: Rc<RefCell<Function>>,
         params: Value,
         is_tail_call: bool,
@@ -329,6 +346,9 @@ impl Inst {
             Function::ClosureMeta(..) => unreachable!(),
             Function::Closure(ip, ref upvalues) => {
                 if is_tail_call {
+                    let binding = vm.current_frame();
+                    let mut frame = binding.borrow_mut();
+
                     // always push params as first operand
                     frame.stack[0] = params;
                     frame.sp = 1;
@@ -353,7 +373,7 @@ impl Inst {
             }
             Function::Syscall(index) => {
                 let syscall = vm.buildin.get_syscall(index).unwrap();
-                syscall(vm, frame, params, pc)
+                syscall(vm, params, pc)
             }
             Function::Contiuation(ra, ref context) => {
                 if let Value::Vec(ref top) = params {
@@ -516,7 +536,7 @@ impl VM {
         self.call_frames = context;
     }
 
-    pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
+    pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize, mpc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
         #[cfg(test)]
@@ -525,7 +545,9 @@ impl VM {
         #[cfg(test)]
         let start = Instant::now();
 
-        inst.exec(self, insts, pc)?;
+        inst.exec(self, insts, pc, mpc)?;
+
+        *pc += 1;
 
         #[cfg(test)]
         {
@@ -540,19 +562,19 @@ impl VM {
             self.call_frames.len() - 1,
             self.current_frame().borrow()
         );
-
-        *pc += 1;
         Ok(())
     }
 
-    pub fn run(&mut self, insts: &Vec<Inst>, pc: &mut usize) -> ExecResult {
+    pub fn run(&mut self, insts: &Vec<Inst>) -> ExecResult {
         self.current_frame().borrow_mut().ra = insts.len();
 
         #[cfg(test)]
         self.inst_times.clear();
 
-        while *pc < insts.len() {
-            self.step(insts, pc)?;
+        let mut pc = 0;
+        let mut mpc = 0;
+        while pc < insts.len() {
+            self.step(insts, &mut pc, &mut mpc)?;
         }
 
         Ok(())
@@ -605,7 +627,7 @@ fn test_grow_operand_stack() {
         insts.push(Inst::PUSH(Value::Num(i as f64)))
     }
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -622,7 +644,7 @@ fn test_exec_token() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -640,7 +662,7 @@ fn test_exec_load() {
     vm.current_frame()
         .borrow_mut()
         .assign_local("x", Value::Num(42.0));
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -656,11 +678,11 @@ fn test_exec_load_undefined() {
     let mut vm = VM::new();
 
     assert_eq!(
-        vm.run(&insts, &mut 0),
+        vm.run(&insts),
         Err(SquareError::InstructionError(
             "undefined variable: x".to_string(),
             Inst::LOAD("x".to_string()),
-            0,
+            1,
         ))
     );
 }
@@ -672,7 +694,7 @@ fn test_exec_define() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -686,7 +708,7 @@ fn test_exec_assign() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -700,7 +722,7 @@ fn test_exec_assign_capture() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -714,7 +736,7 @@ fn test_exec_define_expand() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -728,7 +750,7 @@ fn test_exec_assign_expand() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -742,7 +764,7 @@ fn test_exec_assign_expand_capture() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -756,7 +778,7 @@ fn test_exec_define_expand_dot() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -771,11 +793,11 @@ fn test_exec_define_expand_dot_error() {
     let mut vm = VM::new();
 
     assert_eq!(
-        vm.run(&insts, &mut 0),
+        vm.run(&insts),
         Err(SquareError::InstructionError(
             "bad peek_vec, index 1 out of range, pack length is 1".to_string(),
             Inst::PEEK(0, 1),
-            6,
+            7,
         ))
     );
 }
@@ -787,7 +809,7 @@ fn test_exec_define_expand_greed() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -802,11 +824,11 @@ fn test_exec_define_expand_greed_error() {
     let mut vm = VM::new();
 
     assert_eq!(
-        vm.run(&insts, &mut 0),
+        vm.run(&insts),
         Err(SquareError::InstructionError(
             "bad peek_vec, offset 0 out of range, pack length is 0".to_string(),
             Inst::PEEK(0, -1),
-            3,
+            4,
         ))
     );
 }
@@ -818,7 +840,7 @@ fn test_exec_define_expand_nested() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -832,7 +854,7 @@ fn test_exec_define_chain() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -848,7 +870,7 @@ fn test_exec_op() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -865,7 +887,7 @@ fn test_exec_op_assign() {
     vm.current_frame()
         .borrow_mut()
         .assign_local("x", Value::Num(1.0));
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -882,7 +904,7 @@ fn test_exec_op_assign_dot() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -904,7 +926,7 @@ fn test_exec_dot() {
     vm.current_frame()
         .borrow_mut()
         .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -926,7 +948,7 @@ fn test_exec_assign_dot() {
     vm.current_frame()
         .borrow_mut()
         .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -953,7 +975,7 @@ o.x
     let mut vm = VM::new();
 
     insts.iter().for_each(|inst| println!("{}", inst));
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -967,7 +989,7 @@ fn test_exec_begin() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -983,7 +1005,7 @@ fn test_exec_scope() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1003,7 +1025,7 @@ fn test_exec_tail_call() {
     vm.current_frame().borrow_mut().ra = insts.len();
 
     while pc < insts.len() {
-        vm.step(&insts, &mut pc).unwrap();
+        vm.step(&insts, &mut pc, &mut 0).unwrap();
         if vm.call_frames.len() > max_depth {
             max_depth = vm.call_frames.len();
         }
@@ -1022,7 +1044,7 @@ fn test_exec_if_true() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1036,7 +1058,7 @@ fn test_exec_if_false_nil() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1050,7 +1072,7 @@ fn test_exec_if_false() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1067,7 +1089,7 @@ fn test_exec_while() {
     vm.current_frame()
         .borrow_mut()
         .assign_local("x", Value::Num(0.0));
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1083,7 +1105,7 @@ fn test_exec_match() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1097,7 +1119,7 @@ fn test_exec_fn_call() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1111,7 +1133,7 @@ fn test_exec_fn_call_with_params() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1129,7 +1151,7 @@ fn test_exec_fn_overwrite_params() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1151,7 +1173,7 @@ fn test_exec_fn_capture_assign() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1174,7 +1196,7 @@ fn test_exec_fn_capture_nested() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1193,7 +1215,7 @@ fn test_exec_fn_capture_scope_lift() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1212,7 +1234,7 @@ fn test_exec_fn_capture_error() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap(); // FIXME: should report undefined variable: x
+    vm.run(&insts).unwrap(); // FIXME: should report undefined variable: x
     assert_eq!(vm.current_frame().borrow().top(), Some(&Value::Nil))
 }
 
@@ -1228,11 +1250,11 @@ fn test_exec_fn_capture_shadow() {
     let mut vm = VM::new();
 
     assert_eq!(
-        vm.run(&insts, &mut 0),
+        vm.run(&insts),
         Err(SquareError::InstructionError(
             "undefined variable: x".to_string(),
             Inst::LOAD("x".to_string()),
-            3,
+            4,
         )),
     );
 }
@@ -1249,7 +1271,7 @@ fn test_exec_fn_capture_lazy() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1266,7 +1288,7 @@ fn test_exec_fn_capture_self() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1283,7 +1305,7 @@ fn test_exec_builtin() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1302,7 +1324,7 @@ fn test_callcc_flow() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1318,7 +1340,7 @@ fn test_callcc_break() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1338,7 +1360,7 @@ cc
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1358,7 +1380,7 @@ cc
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1378,7 +1400,7 @@ cc
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1398,7 +1420,7 @@ cc
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1419,11 +1441,11 @@ x
     let mut vm = VM::new();
 
     assert_eq!(
-        vm.run(&insts, &mut 0),
+        vm.run(&insts),
         Err(SquareError::InstructionError(
             "undefined variable: x".to_string(),
             Inst::LOAD("x".to_string()),
-            3,
+            26,
         )),
     );
 }
@@ -1442,6 +1464,6 @@ fn test_profile() {
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
 
-    vm.run(&insts, &mut 0).unwrap();
+    vm.run(&insts).unwrap();
     vm.print_times();
 }

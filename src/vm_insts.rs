@@ -42,6 +42,8 @@ pub enum Inst {
 
     GET(String), // get a field from the top object on the operand stack
     SET(String), // set a field
+
+    DELIMITER(usize), // delimiter for top level expressions
 }
 
 impl Inst {
@@ -78,6 +80,8 @@ impl Inst {
 
             Inst::SET(_) => "SET",
             Inst::GET(_) => "GET",
+
+            Inst::DELIMITER(_) => "DELIMITER",
         }
     }
 }
@@ -126,6 +130,8 @@ impl fmt::Display for Inst {
 
             Inst::GET(key) => write!(f, "GET {}", key),
             Inst::SET(key) => write!(f, "SET {}", key),
+
+            Inst::DELIMITER(mindex) => write!(f, "DELIMITER {}", mindex),
         }
     }
 }

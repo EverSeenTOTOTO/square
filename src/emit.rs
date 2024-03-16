@@ -110,7 +110,7 @@ fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitRes
 fn test_emit_token_num() {
     let code = "42";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(insts, vec![Inst::PUSH(Value::Num(42.0))]);
 }
@@ -119,7 +119,7 @@ fn test_emit_token_num() {
 fn test_emit_token_str() {
     let code = "'42'";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(insts, vec![Inst::PUSH(Value::Str("42".to_string()))]);
 }
@@ -128,7 +128,7 @@ fn test_emit_token_str() {
 fn test_emit_token_lit() {
     let code = "nil";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(insts, vec![Inst::LOAD("nil".to_string())]);
 }
@@ -137,7 +137,7 @@ fn test_emit_token_lit() {
 fn test_emit_token_id() {
     let code = "a";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(insts, vec![Inst::LOAD("a".to_string())]);
 }
@@ -219,7 +219,7 @@ fn emit_assign(
 fn test_emit_assign() {
     let code = "[= a 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -231,7 +231,7 @@ fn test_emit_assign() {
 fn test_emit_assign_dot() {
     let code = "[= o.x.y 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -248,7 +248,7 @@ fn test_emit_assign_dot() {
 fn test_emit_define() {
     let code = "[let a 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -262,7 +262,7 @@ fn test_emit_redefine() {
     let ast = parse(code, &mut Position::new()).unwrap();
 
     assert_eq!(
-        emit(code, &ast, &RefCell::new(EmitContext::new())),
+        emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())),
         Err(SquareError::SyntaxError(
             code.to_string(),
             "redefine of variable a".to_string(),
@@ -291,7 +291,7 @@ fn emit_op(
         ));
     }
     let op_action = |action: Inst| {
-        let mut result = emit(input, &expressions[0..2].to_vec(), ctx)?;
+        let mut result = emit_multi_node(input, &expressions[0..2].to_vec(), ctx)?;
         result.push(action);
         return Ok(result);
     };
@@ -346,7 +346,6 @@ fn emit_op(
                 result.extend(rhs);
                 result.push(action);
                 result.push(Inst::STORE(source.clone()));
-                result.push(Inst::LOAD(source.clone()));
             }
 
             return Ok(result);
@@ -400,7 +399,7 @@ fn emit_op(
 fn test_emit_op() {
     let code = "[+ a b]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -416,7 +415,7 @@ fn test_emit_op() {
 fn test_emit_op_assign() {
     let code = "[+= a b]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -425,7 +424,6 @@ fn test_emit_op_assign() {
             Inst::LOAD("b".to_string()),
             Inst::ADD,
             Inst::STORE("a".to_string()),
-            Inst::LOAD("a".to_string()),
         ]
     );
 }
@@ -434,7 +432,7 @@ fn test_emit_op_assign() {
 fn test_emit_op_assign_dot() {
     let code = "[+= a.b.c d]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -521,7 +519,7 @@ fn emit_if(
 fn test_emit_if_true() {
     let code = "[if true 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -544,7 +542,7 @@ fn test_emit_if_true() {
 fn test_emit_if_true_false() {
     let code = "[if true 42 24]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -585,7 +583,7 @@ fn emit_while(
     let body = &expressions[2..].to_vec();
 
     ctx.borrow_mut().push_scope();
-    let body_result = emit(input, body, ctx)?;
+    let body_result = emit_multi_node(input, body, ctx)?;
     let mut captures = ctx.borrow_mut().pop_scope();
     captures.extend(ctx.borrow_mut().pop_scope());
     let body_len = body_result.len() as i32;
@@ -608,7 +606,7 @@ fn emit_while(
 fn test_emit_while() {
     let code = "[while true 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -633,7 +631,7 @@ fn emit_begin(
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
     ctx.borrow_mut().push_scope();
-    let body = emit(input, &expressions[1..].to_vec(), ctx)?;
+    let body = emit_multi_node(input, &expressions[1..].to_vec(), ctx)?;
     let captures = ctx.borrow_mut().pop_scope();
     let offset = body.len() as i32;
     let mut result = vec![Inst::JMP(1 + offset)];
@@ -651,7 +649,7 @@ fn emit_begin(
 fn test_emit_begin() {
     let code = "[begin 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -736,7 +734,7 @@ fn test_emit_cond() {
         [false 24]
         [true 42]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -805,7 +803,7 @@ fn emit_call(
                     // normal function call
                     ctx.borrow_mut().mark_if_capture(name);
                     result.push(Inst::LOAD(name.clone()));
-                    result.extend(emit(input, &expressions[1..].to_vec(), ctx)?); // provided params
+                    result.extend(emit_multi_node(input, &expressions[1..].to_vec(), ctx)?); // provided params
                     result.push(Inst::PACK(expressions.len() - 1));
                     result.push(Inst::CALL);
                 }
@@ -824,7 +822,7 @@ fn emit_call(
         },
         Node::Fn(_, params, body) => {
             result.extend(emit_fn(input, params, body, ctx)?);
-            result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
+            result.extend(emit_multi_node(input, &expressions[1..].to_vec(), ctx)?);
             result.push(Inst::PACK(expressions.len() - 1));
             result.push(Inst::CALL);
         }
@@ -834,13 +832,13 @@ fn emit_call(
         }
         Node::Call(left_bracket, _, exprs) => {
             result.extend(emit_call(input, left_bracket, exprs, ctx)?);
-            result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
+            result.extend(emit_multi_node(input, &expressions[1..].to_vec(), ctx)?);
             result.push(Inst::PACK(expressions.len() - 1));
             result.push(Inst::CALL);
         }
         Node::Dot(obj, props) => {
             result.extend(emit_dot(input, obj, props, ctx)?);
-            result.extend(emit(input, &expressions[1..].to_vec(), ctx)?);
+            result.extend(emit_multi_node(input, &expressions[1..].to_vec(), ctx)?);
             result.push(Inst::PACK(expressions.len() - 1));
             result.push(Inst::CALL);
         }
@@ -864,7 +862,7 @@ fn emit_call(
 fn test_emit_call_no_params() {
     let code = "[foo]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -876,7 +874,7 @@ fn test_emit_call_no_params() {
 fn test_emit_call_with_params() {
     let code = "[foo bar]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -922,7 +920,7 @@ fn emit_fn(
 fn test_emit_fn() {
     let code = "/[] 42";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -940,7 +938,7 @@ fn test_emit_fn() {
 fn test_emit_fn_params() {
     let code = "/[x] 42";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -961,7 +959,7 @@ fn test_emit_fn_params() {
 fn test_emit_fn_capture() {
     let code = "/[] y";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -985,7 +983,7 @@ fn test_emit_fn_capture_nested() {
         [let x 1]
         /[] [+ x y]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -1108,7 +1106,7 @@ fn emit_expand(
 fn test_emit_expand() {
     let code = "[= [a b] c]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -1128,7 +1126,7 @@ fn test_emit_expand() {
 fn test_emit_expand_dot() {
     let code = "[= [. b] c]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -1147,7 +1145,7 @@ fn test_emit_expand_dot() {
 fn test_emit_expand_greed() {
     let code = "[= [... b] c]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -1164,7 +1162,7 @@ fn test_emit_expand_greed() {
 fn test_emit_expand_greed_offset() {
     let code = "[= [. ... . b] c]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -1185,7 +1183,7 @@ fn test_emit_expand_greed_offset() {
 fn test_emit_expand_nested() {
     let code = "[= [[[b]]] c]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -1223,7 +1221,7 @@ fn emit_dot(
 fn test_emit_dot() {
     let code = "o.x.y";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
@@ -1251,7 +1249,7 @@ fn emit_node(input: &str, node: &Box<Node>, ctx: &RefCell<EmitContext>) -> EmitR
     }
 }
 
-pub fn emit(
+fn emit_multi_node(
     input: &str,
     ast: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
@@ -1259,9 +1257,26 @@ pub fn emit(
     let mut insts = vec![];
 
     for node in ast {
-        let result = emit_node(input, node, ctx)?;
-        insts.extend(result);
+        insts.extend(emit_node(input, node, ctx)?);
     }
+
+    return Ok(insts);
+}
+
+pub fn emit(
+    input: &str,
+    ast: &Vec<Box<Node>>,
+    ctx: &RefCell<EmitContext>,
+) -> Result<Vec<Inst>, SquareError> {
+    let mut insts = vec![];
+    let mut mindex = 0;
+
+    for node in ast {
+        insts.push(Inst::DELIMITER(mindex));
+        mindex = mindex + 1;
+        insts.extend(emit_node(input, node, ctx)?);
+    }
+    insts.push(Inst::DELIMITER(mindex));
 
     return Ok(insts);
 }

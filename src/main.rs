@@ -85,7 +85,7 @@ pub extern "C" fn exec(source_addr: *mut u8, source_length: usize) {
         Ok(inst) => inst,
     };
 
-    if let Err(e) = vm.run(&insts, &mut 0) {
+    if let Err(e) = vm.run(&insts) {
         println!("{}", e);
     }
 
