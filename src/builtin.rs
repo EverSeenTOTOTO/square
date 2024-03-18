@@ -170,10 +170,12 @@ impl Builtin {
         Self { values }
     }
 
+    #[inline]
     pub fn is_builtin(&self, name: &str) -> bool {
         return self.values.contains_key(name);
     }
 
+    #[inline]
     pub fn resolve_builtin(&self, name: &str) -> Option<Value> {
         if let Some((value, _)) = self.values.get(name) {
             Some(value.clone())
@@ -182,6 +184,7 @@ impl Builtin {
         }
     }
 
+    #[inline]
     pub fn get_syscall(&self, name: &str) -> Option<Syscall> {
         if let Some((_, syscall)) = self.values.get(name) {
             syscall.clone()

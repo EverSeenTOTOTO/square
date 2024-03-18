@@ -85,10 +85,15 @@ A toy Lisp-style language written in Rust, supports first-class function and con
                 [if iter_k
                     [iter_k]
                     [begin
-                        [let [i k] [callcc /[cc] [g cc]]]
-                        [= iter_k k]
-                        [println i]]]]]
+                        [let value [callcc /[cc] [g cc]]]
+                        [if [== [typeof value] 'vec']
+                          [begin 
+                            [let i nil]
+                            [= [i iter_k] value]
+                            [println i]]
+                          nil]]]]]
 
+[next gen]
 [next gen]
 [next gen]
 [next gen]
@@ -101,12 +106,14 @@ A toy Lisp-style language written in Rust, supports first-class function and con
 ```lisp
 [let o [obj 
         'x' 42
-        'inc' /[] [+= o.x 1]]]
+        'inc' /[] [+= this.x 1]]]
 
 [println o]
+
 [o.inc]
 [= o.o o]
 [o.o.o.o.o.o.inc]
+
 [println o]
 ```
 

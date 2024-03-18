@@ -10,10 +10,15 @@
                 [if iter_k
                     [iter_k]
                     [begin
-                        [let [i k] [callcc /[cc] [g cc]]]
-                        [= iter_k k]
-                        [println i]]]]]
+                        [let value [callcc /[cc] [g cc]]]
+                        [if [== [typeof value] 'vec']
+                          [begin 
+                            [let i nil]
+                            [= [i iter_k] value]
+                            [println i]]
+                          nil]]]]]
 
+[next gen]
 [next gen]
 [next gen]
 [next gen]

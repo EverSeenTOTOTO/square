@@ -32,6 +32,41 @@ impl Inst {
                 Ok(())
             }
 
+            Inst::STORE(name) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+
+                if let Some(val) = frame.top() {
+                    let cloned = val.clone();
+                    Ok(frame.assign_local(name, cloned))
+                } else {
+                    Err(SquareError::InstructionError(
+                        "bad store, operand stack empty".to_string(),
+                        self.clone(),
+                        *pc,
+                    ))
+                }
+            }
+            Inst::LOAD(name) => {
+                if let Some(value) = vm.buildin.resolve_builtin(name) {
+                    let cloned = value.clone();
+                    return Ok(vm.current_frame().borrow_mut().push(cloned));
+                }
+
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                if let Some(value) = frame.resolve_local(name) {
+                    let cloned = value.clone();
+                    Ok(frame.push(cloned))
+                } else {
+                    Err(SquareError::InstructionError(
+                        format!("undefined variable: {}", name),
+                        self.clone(),
+                        *pc,
+                    ))
+                }
+            }
+
             Inst::ADD => self.binop(vm, &|a, b| a + b, pc),
             Inst::SUB => self.binop(vm, &|a, b| a - b, pc),
             Inst::MUL => self.binop(vm, &|a, b| a * b, pc),
@@ -73,41 +108,6 @@ impl Inst {
                     self.jump(insts, pc, *value)
                 } else {
                     Ok(())
-                }
-            }
-
-            Inst::STORE(name) => {
-                let binding = vm.current_frame();
-                let mut frame = binding.borrow_mut();
-
-                if let Some(val) = frame.top() {
-                    let cloned = val.clone();
-                    Ok(frame.assign_local(name, cloned))
-                } else {
-                    Err(SquareError::InstructionError(
-                        "bad store, operand stack empty".to_string(),
-                        self.clone(),
-                        *pc,
-                    ))
-                }
-            }
-            Inst::LOAD(name) => {
-                if let Some(value) = vm.buildin.resolve_builtin(name) {
-                    let cloned = value.clone();
-                    return Ok(vm.current_frame().borrow_mut().push(cloned));
-                }
-
-                let binding = vm.current_frame();
-                let mut frame = binding.borrow_mut();
-                if let Some(value) = frame.resolve_local(name) {
-                    let cloned = value.clone();
-                    Ok(frame.push(cloned))
-                } else {
-                    Err(SquareError::InstructionError(
-                        format!("undefined variable: {}", name),
-                        self.clone(),
-                        *pc,
-                    ))
                 }
             }
 
@@ -187,9 +187,15 @@ impl Inst {
             Inst::PACK(len) => {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
-                let result = frame.stack[frame.sp - len..frame.sp].to_vec().clone();
+                let mut result = vec![];
 
-                frame.sp -= *len;
+                let new_sp = frame.sp - len;
+                for i in 0..*len {
+                    let val = frame.stack[new_sp + i].clone();
+                    result.push(val);
+                }
+
+                frame.sp = new_sp;
 
                 Ok(frame.push(Value::Vec(Rc::new(RefCell::new(result)))))
             }
@@ -201,23 +207,27 @@ impl Inst {
                 if let Some(val) = top {
                     let pack = val.borrow().clone();
 
-                    if *offset >= pack.len() {
-                        return Err(SquareError::InstructionError(
-                            format!(
-                                "bad peek_vec, offset {} out of range, pack length is {}",
-                                offset,
-                                pack.len()
-                            ),
-                            self.clone(),
-                            *pc,
-                        ));
-                    }
+                    let index = if *i > 0 {
+                        *i as usize
+                    } else {
+                        if *offset >= pack.len() {
+                            return Err(SquareError::InstructionError(
+                                format!(
+                                    "bad peek_vec, offset {} out of range, pack length is {}",
+                                    offset,
+                                    pack.len()
+                                ),
+                                self.clone(),
+                                *pc,
+                            ));
+                        }
 
-                    let len = (pack.len() - offset) as i32;
-                    let index = if *i > 0 { *i } else { (*i + len) % len } as usize + offset;
+                        let len = (pack.len() - offset) as i32;
+
+                        ((*i + len) % len) as usize + offset
+                    };
 
                     if index < pack.len() {
-                        // frame.pop();
                         return Ok(frame.push(pack[index].clone()));
                     } else {
                         return Err(SquareError::InstructionError(
@@ -284,9 +294,8 @@ impl Inst {
             }
 
             Inst::DELIMITER(mindex) => {
-                #[cfg(test)]
-                println!("delimiter: {}, {}", mindex, mpc);
                 if mindex < mpc {
+                    // TODO: optimize
                     for i in *pc..insts.len() {
                         if let Inst::DELIMITER(index) = insts[i] {
                             if index == *mpc {
@@ -539,8 +548,8 @@ impl VM {
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize, mpc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
-        #[cfg(test)]
-        println!("{}: {}", *pc, inst);
+        // #[cfg(test)]
+        // println!("{}: {}", *pc, inst);
 
         #[cfg(test)]
         let start = Instant::now();
@@ -556,12 +565,13 @@ impl VM {
             *entry = (entry.0 + duration, entry.1 + 1);
         }
 
-        #[cfg(test)]
-        println!(
-            "-------- CallFrame {} --------\n{}",
-            self.call_frames.len() - 1,
-            self.current_frame().borrow()
-        );
+        // #[cfg(test)]
+        // println!(
+        //     "-------- CallFrame {} --------\n{}",
+        //     self.call_frames.len() - 1,
+        //     self.current_frame().borrow()
+        // );
+
         Ok(())
     }
 
@@ -1453,12 +1463,16 @@ x
 #[test]
 fn test_profile() {
     let code = "
-[let fib /[n] 
-  [if [<= n 2] 
-    1
-    [+ [fib [- n 1]] [fib [- n 2]]]]]
+[let [a b c d e f g] [vec 1 2 3 4 5 6 7]]
 
-[println [fib 20]]
+[begin 
+    [begin 
+        [begin 
+            [begin 
+                [begin 
+                    [begin 
+                        [begin [println a b c d e f g]]]]]]]]
+
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();

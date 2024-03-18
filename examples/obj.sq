@@ -1,6 +1,6 @@
 [let o [obj 
         'x' 42
-        'inc' /[] [+= o.x 1]]]
+        'inc' /[] [+= this.x 1]]]
 
 [println o]
 

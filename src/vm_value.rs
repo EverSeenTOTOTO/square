@@ -58,8 +58,8 @@ impl fmt::Display for Function {
                     )
                 }
             }
-            Function::Syscall(index) => {
-                write!(f, "Syscall({})", index)
+            Function::Syscall(name) => {
+                write!(f, "Syscall({})", name)
             }
             Function::Contiuation(ra, context) => {
                 write!(f, "Continuation({}, {})", ra, context.len() - 1)

@@ -157,7 +157,7 @@ fn emit_assign(
     match target.as_ref() {
         Node::Token(id) => {
             if let Token::Id(_, source) = id {
-                if properties.len() > 0 {
+                if properties.len() > 0 { // = x.y z
                     ctx.borrow_mut().mark_if_capture(source);
                     result.push(Inst::LOAD(source.clone()));
                     for (i, prop) in properties.iter().enumerate() {
@@ -174,7 +174,7 @@ fn emit_assign(
                         }
                     }
                 } else {
-                    if is_define {
+                    if is_define { // let x y
                         ctx.borrow_mut()
                             .add_local(source.clone())
                             .map_err(|e| match e {
@@ -186,7 +186,7 @@ fn emit_assign(
                                 ),
                                 _ => e,
                             })?;
-                    } else {
+                    } else { // = x y
                         ctx.borrow_mut().mark_if_capture(source);
                     }
 
@@ -439,7 +439,7 @@ fn test_emit_op_assign_dot() {
         vec![
             Inst::LOAD("a".to_string()),
             Inst::GET("b".to_string()),
-            Inst::LOAD("a".to_string()),
+            Inst::LOAD("a".to_string()), // will be consumed by GET
             Inst::GET("b".to_string()),
             Inst::GET("c".to_string()),
             Inst::LOAD("d".to_string()),

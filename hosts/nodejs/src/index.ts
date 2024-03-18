@@ -63,27 +63,17 @@ type WasmExports = {
 
   try {
     const code = `
-[let gen /[yield]
-                [begin 
-                    [let i 0]
-                    [while [< i 4]
-                        [callcc /[cc] [yield [vec i cc]]]
-                        [+= i 1]]]]
-[let iter_k nil]
-[let next /[g]
-            [begin 
-                [if iter_k
-                    [iter_k]
-                    [begin
-                        [let [i k] [callcc /[cc] [g cc]]]
-                        [= iter_k k]
-                        [println i]]]]]
+[let o [obj 
+        'x' 42
+        'inc' /[] [+= this.x 1]]]
 
-[next gen]
-[next gen]
-[next gen]
-[next gen]
-[next gen]
+[let p [obj 'x' 24 'inc' o.inc]]
+
+[println p]
+
+[p.inc]
+
+[println p]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);
