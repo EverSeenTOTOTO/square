@@ -112,28 +112,31 @@ impl Inst {
             }
 
             Inst::CALL => {
+                // call() will borrow again, so don't borrow here
                 // let binding = vm.current_frame();
                 // let mut frame = binding.borrow_mut();
 
                 // call closure
                 let sp = vm.current_frame().borrow().sp;
-                let params = vm.current_frame().borrow().stack[sp - 1].clone();
-                let func = vm.current_frame().borrow().stack[sp - 2].as_fn();
+                let params = vm.current_frame().borrow().stack[sp - 1].as_vec();
+                let function = vm.current_frame().borrow().stack[sp - 2].as_fn();
 
-                if let Some(val) = func {
-                    vm.current_frame().borrow_mut().sp -= 2;
-                    let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
-                    self.call(vm, val, params, is_tail_call, pc)
-                } else {
-                    Err(SquareError::InstructionError(
-                        format!(
-                            "bad call, cannot call with {}",
-                            vm.current_frame().borrow().stack[sp - 2]
-                        ),
-                        self.clone(),
-                        *pc,
-                    ))
+                if let Some(func) = function {
+                    if let Some(args) = params {
+                        vm.current_frame().borrow_mut().sp -= 2;
+                        let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
+                        return self.call(vm, func, args, is_tail_call, pc);
+                    }
                 }
+
+                Err(SquareError::InstructionError(
+                    format!(
+                        "bad call, cannot call with {}",
+                        vm.current_frame().borrow().stack[sp - 2]
+                    ),
+                    self.clone(),
+                    *pc,
+                ))
             }
             Inst::RET => {
                 let binding = vm.current_frame();
@@ -202,7 +205,7 @@ impl Inst {
             Inst::PEEK(offset, i) => {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
-                let top = frame.stack[frame.sp - 1].as_vec();
+                let top = Builtin::get_internal_vec(&frame.stack[frame.sp - 1]);
 
                 if let Some(val) = top {
                     let pack = val.borrow().clone();
@@ -347,7 +350,7 @@ impl Inst {
         &self,
         vm: &mut VM,
         closure: Rc<RefCell<Function>>,
-        params: Value,
+        params: Rc<RefCell<Vec<Value>>>,
         is_tail_call: bool,
         pc: &mut usize,
     ) -> ExecResult {
@@ -359,7 +362,7 @@ impl Inst {
                     let mut frame = binding.borrow_mut();
 
                     // always push params as first operand
-                    frame.stack[0] = params;
+                    frame.stack[0] = Value::Vec(params);
                     frame.sp = 1;
                     frame.clear_locals();
                     // fill up captures
@@ -368,7 +371,7 @@ impl Inst {
                     let mut new_frame = CallFrame::new();
                     new_frame.ra = *pc;
                     // always push params as first operand
-                    new_frame.stack[0] = params;
+                    new_frame.stack[0] = Value::Vec(params);
                     new_frame.sp = 1;
                     // fill up captures
                     new_frame.extend_locals(upvalues.clone());
@@ -380,25 +383,18 @@ impl Inst {
                 *pc = ip;
                 Ok(())
             }
-            Function::Syscall(index) => {
-                let syscall = vm.buildin.get_syscall(index).unwrap();
-                syscall(vm, params, pc)
+            Function::Syscall(name, ref this) => {
+                let syscall = vm.buildin.get_syscall(name).unwrap();
+                syscall(vm, this.clone(), params, pc)
             }
             Function::Contiuation(ra, ref context) => {
-                if let Value::Vec(ref top) = params {
-                    *pc = ra;
+                *pc = ra;
+                vm.restore_context(context.clone());
 
-                    vm.restore_context(context.clone());
-                    Ok(vm
-                        .current_frame()
-                        .borrow_mut()
-                        .push(top.borrow().get(0).unwrap_or(&Value::Nil).clone()))
-                } else {
-                    Err(SquareError::RuntimeError(format!(
-                        "cc only accept one parameter, got {}",
-                        params
-                    )))
-                }
+                Ok(vm
+                    .current_frame()
+                    .borrow_mut()
+                    .push(params.borrow().get(0).unwrap_or(&Value::Nil).clone()))
             }
         }
     }

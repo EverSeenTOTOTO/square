@@ -13,13 +13,13 @@ use core::{
 };
 use hashbrown::{HashMap, HashSet};
 
-use crate::{errors::SquareError, vm::CallFrame};
+use crate::{builtin::Builtin, errors::SquareError, vm::CallFrame};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
     Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
-    Syscall(&'static str),             // (name)
+    Syscall(&'static str, Value),      // (name, this)
     Contiuation(usize, Vec<Rc<RefCell<CallFrame>>>), // (ra, context)
 }
 
@@ -58,7 +58,7 @@ impl fmt::Display for Function {
                     )
                 }
             }
-            Function::Syscall(name) => {
+            Function::Syscall(name, _) => {
                 write!(f, "Syscall({})", name)
             }
             Function::Contiuation(ra, context) => {
@@ -116,6 +116,18 @@ impl fmt::Display for Value {
                 )
             }
             Value::Obj(obj) => {
+                if let Some(v) = Builtin::get_internal_vec(self) {
+                    return write!(
+                        f,
+                        "[{}]",
+                        v.borrow()
+                            .iter()
+                            .map(|v| stringify_nested(v))
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    );
+                }
+
                 write!(
                     f,
                     "{{{}}}",
@@ -398,7 +410,10 @@ impl Value {
 
 #[test]
 fn test_upgrade() {
-    let closure = Value::Function(Rc::new(RefCell::new(Function::Syscall("print"))));
+    let closure = Value::Function(Rc::new(RefCell::new(Function::Syscall(
+        "print",
+        Value::Nil,
+    ))));
     let upval = Value::UpValue(Rc::new(RefCell::new(closure)));
 
     assert_eq!(upval, upval.upgrade());

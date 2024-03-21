@@ -63,17 +63,9 @@ type WasmExports = {
 
   try {
     const code = `
-[let o [obj 
-        'x' 42
-        'inc' /[] [+= this.x 1]]]
-
-[let p [obj 'x' 24 'inc' o.inc]]
-
-[println p]
-
-[p.inc]
-
-[println p]
+[let v [vec 1 2 3]]
+[println [v.splice 4 1 [vec 1 2 3]]]
+[println v]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);
