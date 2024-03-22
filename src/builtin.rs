@@ -15,9 +15,8 @@ use crate::{
     vm_value::{Function, Value},
 };
 
-// Fn(vm, this, params, inst, pc)
-pub type Syscall =
-    Rc<dyn Fn(&mut VM, Value, Rc<RefCell<Vec<Value>>>, &Inst, &mut usize) -> ExecResult>;
+// Fn(vm, params, inst, pc)
+pub type Syscall = Rc<dyn Fn(&mut VM, Rc<RefCell<Vec<Value>>>, &Inst, &mut usize) -> ExecResult>;
 
 pub static INTERNAL_KEY: &'static str = "__internal__";
 pub static GETTER_KEY: &'static str = "__get__";
@@ -41,13 +40,9 @@ impl Builtin {
         values.insert(
             "print",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall(
-                    "print",
-                    Value::Nil,
-                )))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("print")))),
                 Some(Rc::new(
                     |_vm: &mut VM,
-                     _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      _inst: &Inst,
                      _pc: &mut usize|
@@ -62,13 +57,9 @@ impl Builtin {
         values.insert(
             "println",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall(
-                    "println",
-                    Value::Nil,
-                )))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("println")))),
                 Some(Rc::new(
                     |_vm: &mut VM,
-                     _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      _inst: &Inst,
                      _pc: &mut usize|
@@ -84,10 +75,9 @@ impl Builtin {
         values.insert(
             "vec",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("vec", Value::Nil)))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("vec")))),
                 Some(Rc::new(
                     |vm: &mut VM,
-                     _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      _inst: &Inst,
                      _pc: &mut usize|
@@ -105,16 +95,17 @@ impl Builtin {
         values.insert(
             "at",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("at", Value::Nil)))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("at")))),
                 Some(Rc::new(
                     |vm: &mut VM,
-                     this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      inst: &Inst,
                      pc: &mut usize|
                      -> ExecResult {
-                        if let Some(internal) = Self::get_internal_vec(&this) {
-                            if let Some(Value::Num(index)) = params.borrow().get(0) {
+                        if let Some(internal) =
+                            Self::get_internal_vec(params.borrow().get(0).unwrap_or(&Value::Nil))
+                        {
+                            if let Some(Value::Num(index)) = params.borrow().get(1) {
                                 Ok(vm.current_frame().borrow_mut().push(
                                     internal
                                         .borrow()
@@ -124,14 +115,14 @@ impl Builtin {
                                 ))
                             } else {
                                 Err(SquareError::InstructionError(
-                                    "at() expect a index parameter".to_string(),
+                                    "at() expect (vector, index) parameter".to_string(),
                                     inst.clone(),
                                     *pc,
                                 ))
                             }
                         } else {
                             Err(SquareError::InstructionError(
-                                "at() method cannot be called directly".to_string(),
+                                "at() expect (vector, index) parameter".to_string(),
                                 inst.clone(),
                                 *pc,
                             ))
@@ -144,23 +135,24 @@ impl Builtin {
         values.insert(
             "splice",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("at", Value::Nil)))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("splice")))),
                 Some(Rc::new(
                     |vm: &mut VM,
-                     this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      inst: &Inst,
                      pc: &mut usize|
                      -> ExecResult {
-                        if let Some(internal) = Self::get_internal_vec(&this) {
+                        if let Some(internal) =
+                            Self::get_internal_vec(params.borrow().get(0).unwrap_or(&Value::Nil))
+                        {
                             if let (
                                 Some(Value::Num(index)),
                                 Some(Value::Num(del_count)),
                                 Some(insert_obj),
                             ) = (
-                                params.borrow().get(0),
                                 params.borrow().get(1),
                                 params.borrow().get(2),
+                                params.borrow().get(3),
                             ) {
                                 let insert = Self::get_internal_vec(insert_obj)
                                     .unwrap_or(Rc::new(RefCell::new(vec![])));
@@ -183,7 +175,7 @@ impl Builtin {
                                     .push(Self::wrap_internal_vec(Rc::new(RefCell::new(deleted)))))
                             } else {
                                 Err(SquareError::InstructionError(
-                                    "splice() expect (index, deleteCount, toInsert) parameter"
+                                    "splice() expect (vector, index, deleteCount, toInsert) parameter"
                                         .to_string(),
                                     inst.clone(),
                                     *pc,
@@ -191,7 +183,8 @@ impl Builtin {
                             }
                         } else {
                             Err(SquareError::InstructionError(
-                                "splice() cannot be called directly".to_string(),
+                                "splice() expect (vector, index, deleteCount, toInsert) parameter"
+                                    .to_string(),
                                 inst.clone(),
                                 *pc,
                             ))
@@ -204,13 +197,9 @@ impl Builtin {
         values.insert(
             "typeof",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall(
-                    "typeof",
-                    Value::Nil,
-                )))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("typeof")))),
                 Some(Rc::new(
                     |vm: &mut VM,
-                     _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      inst: &Inst,
                      pc: &mut usize|
@@ -235,10 +224,9 @@ impl Builtin {
         values.insert(
             "obj",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("obj", Value::Nil)))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("obj")))),
                 Some(Rc::new(
                     |vm: &mut VM,
-                     _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      inst: &Inst,
                      pc: &mut usize|
@@ -269,10 +257,9 @@ impl Builtin {
         values.insert(
             "set",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("set", Value::Nil)))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("set")))),
                 Some(Rc::new(
                     |vm: &mut VM,
-                     _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      inst: &Inst,
                      pc: &mut usize|
@@ -300,10 +287,9 @@ impl Builtin {
         values.insert(
             "get",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("get", Value::Nil)))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("get")))),
                 Some(Rc::new(
                     |vm: &mut VM,
-                     _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      inst: &Inst,
                      pc: &mut usize|
@@ -329,13 +315,9 @@ impl Builtin {
         values.insert(
             "callcc",
             (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall(
-                    "callcc",
-                    Value::Nil,
-                )))),
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("callcc")))),
                 Some(Rc::new(
                     |vm: &mut VM,
-                     _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
                      inst: &Inst,
                      pc: &mut usize|
@@ -370,38 +352,11 @@ impl Builtin {
 
         obj.borrow_mut()
             .insert("this".to_string(), Value::Obj(obj.clone()));
-
         // FIXME
         obj.borrow_mut()
             .insert(INTERNAL_KEY.to_string(), Value::Vec(internal.clone()));
 
-        obj.borrow_mut().insert(
-            "at".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(
-                "at",
-                Value::Obj(obj.clone()),
-            )))),
-        );
-        obj.borrow_mut().insert(
-            "splice".to_string(),
-            Value::Function(Rc::new(RefCell::new(Function::Syscall(
-                "splice",
-                Value::Obj(obj.clone()),
-            )))),
-        );
-
         Value::Obj(obj)
-    }
-
-    fn try_capture_this(val: &Value, obj: &Rc<RefCell<Object>>) {
-        if let Some(member_fn) = val.as_fn() {
-            match *member_fn.borrow_mut() {
-                Function::Closure(_, ref mut captures) => {
-                    captures.insert("this".to_string(), Value::Obj(obj.clone()));
-                }
-                _ => {}
-            }
-        }
     }
 
     pub fn get_internal_vec(val: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
@@ -415,6 +370,17 @@ impl Builtin {
             }
             Value::Vec(v) => Some(v.clone()),
             _ => None,
+        }
+    }
+
+    fn try_capture_this(val: &Value, obj: &Rc<RefCell<Object>>) {
+        if let Some(member_fn) = val.as_fn() {
+            match *member_fn.borrow_mut() {
+                Function::Closure(_, ref mut captures) => {
+                    captures.insert("this".to_string(), Value::Obj(obj.clone()));
+                }
+                _ => {}
+            }
         }
     }
 

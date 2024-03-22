@@ -21,7 +21,7 @@ pub type Object = HashMap<String, Value>;
 pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
     Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
-    Syscall(&'static str, Value),      // (name, this)
+    Syscall(&'static str),             // (name)
     Contiuation(usize, Vec<Rc<RefCell<CallFrame>>>), // (ra, context)
 }
 
@@ -60,7 +60,7 @@ impl fmt::Display for Function {
                     )
                 }
             }
-            Function::Syscall(name, _) => {
+            Function::Syscall(name) => {
                 write!(f, "Syscall({})", name)
             }
             Function::Contiuation(ra, context) => {
@@ -418,10 +418,7 @@ impl Value {
 
 #[test]
 fn test_upgrade() {
-    let closure = Value::Function(Rc::new(RefCell::new(Function::Syscall(
-        "print",
-        Value::Nil,
-    ))));
+    let closure = Value::Function(Rc::new(RefCell::new(Function::Syscall("print"))));
     let upval = Value::UpValue(Rc::new(RefCell::new(closure)));
 
     assert_eq!(upval, upval.upgrade());

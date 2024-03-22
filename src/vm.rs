@@ -279,7 +279,6 @@ impl Inst {
 
                     return get(
                         vm,
-                        Value::Nil,
                         Rc::new(RefCell::new(vec![target, Value::Str(key.to_string())])),
                         self,
                         pc,
@@ -326,7 +325,6 @@ impl Inst {
 
                     return set(
                         vm,
-                        Value::Nil,
                         Rc::new(RefCell::new(vec![
                             target,
                             Value::Str(key.to_string()),
@@ -434,9 +432,9 @@ impl Inst {
                 *pc = ip;
                 Ok(())
             }
-            Function::Syscall(name, ref this) => {
+            Function::Syscall(name) => {
                 let syscall = vm.buildin.get_syscall(name);
-                syscall(vm, this.clone(), params, self, pc)
+                syscall(vm, params, self, pc)
             }
             Function::Contiuation(ra, ref context) => {
                 *pc = ra;
@@ -1370,6 +1368,30 @@ fn test_exec_builtin_value() {
         callframe.resolve_local("t").unwrap(),
         &Value::Str("fn".to_string())
     )
+}
+
+#[test]
+fn test_exec_builtin_vec_methods() {
+    let code = "
+[let v [vec 1 2 3]]
+[= v.at /[index] [at this index]]
+
+[let x [v.at 0]]
+
+[splice v 0 1 [vec 4]]
+
+[let y [at v 0]]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts).unwrap();
+
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(1.0));
+    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(4.0))
 }
 
 #[test]
