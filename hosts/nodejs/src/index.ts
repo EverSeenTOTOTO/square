@@ -63,9 +63,34 @@ type WasmExports = {
 
   try {
     const code = `
-[let v [vec 1 2 3]]
-[println [v.splice 4 1 [vec 1 2 3]]]
-[println v]
+[let foo [obj 'x' 42]]
+
+[let bar [obj]]
+[let baz [obj]]
+
+[= bar.__proto__ foo]
+[= baz.__proto__ bar]
+
+[println baz.x]
+
+[let getByProtoChain /[o k] [begin
+  [let value [get o k]]
+  [if value
+    value
+    [if o.__proto__
+      [getByProtoChain o.__proto__ k]
+      value]]]]
+
+[let createGetter /[] /[k] [getByProtoChain this k]]
+
+[= bar.__get__ [createGetter]]
+[= baz.__get__ [createGetter]]
+
+[println baz.x]
+
+[= foo.y 24]
+
+[println baz.y]
 `;
 
     const { sourceAddr, sourceLength } = writeUtf8String(square, code);

@@ -15,6 +15,8 @@ use hashbrown::{HashMap, HashSet};
 
 use crate::{builtin::Builtin, errors::SquareError, vm::CallFrame};
 
+pub type Object = HashMap<String, Value>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
@@ -74,7 +76,7 @@ pub enum Value {
     Num(f64),
     Str(String),
     Vec(Rc<RefCell<Vec<Value>>>),
-    Obj(Rc<RefCell<HashMap<String, Value>>>),
+    Obj(Rc<RefCell<Object>>),
     Function(Rc<RefCell<Function>>),
     UpValue(Rc<RefCell<Value>>),
     Nil,
@@ -368,7 +370,7 @@ impl Value {
         }
     }
 
-    pub fn as_obj(&self) -> Option<Rc<RefCell<HashMap<String, Value>>>> {
+    pub fn as_obj(&self) -> Option<Rc<RefCell<Object>>> {
         match self {
             Value::Obj(val) => Some(val.clone()),
             Value::UpValue(val) => val.borrow().as_obj(),
@@ -390,7 +392,13 @@ impl Value {
             Value::Num(_) => "num",
             Value::Str(_) => "str",
             Value::Vec(_) => "vec",
-            Value::Obj(_) => "obj",
+            Value::Obj(_) => {
+                if Builtin::get_internal_vec(self).is_some() {
+                    "vec"
+                } else {
+                    "obj"
+                }
+            }
             Value::Function(f) => match *f.borrow() {
                 Function::Contiuation(..) => "cc",
                 _ => "fn",

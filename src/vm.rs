@@ -4,7 +4,7 @@ use core::{cell::RefCell, fmt};
 use hashbrown::HashMap;
 
 use crate::{
-    builtin::Builtin,
+    builtin::{Builtin, GETTER_KEY, SETTER_KEY},
     errors::SquareError,
     vm_insts::Inst,
     vm_value::{CalcResult, Function, Value},
@@ -256,18 +256,43 @@ impl Inst {
             }
 
             Inst::GET(key) => {
-                let binding = vm.current_frame();
-                let mut frame = binding.borrow_mut();
-                let top = frame.pop();
+                let target = vm.current_frame().borrow_mut().pop();
 
-                if let Some(o) = top.as_obj() {
-                    let cloned = o.borrow().get(key).cloned().unwrap_or(Value::Nil);
-                    return Ok(frame.push(cloned));
+                if let Some(obj) = target.as_obj() {
+                    // support proxy method
+                    if let Some(getter) = obj
+                        .borrow_mut()
+                        .get(GETTER_KEY)
+                        .unwrap_or(&Value::Nil)
+                        .as_fn()
+                    {
+                        return self.call(
+                            vm,
+                            getter,
+                            Rc::new(RefCell::new(vec![Value::Str(key.to_string())])),
+                            false,
+                            pc,
+                        );
+                    }
+
+                    let get = vm.buildin.get_syscall("get");
+
+                    return get(
+                        vm,
+                        Value::Nil,
+                        Rc::new(RefCell::new(vec![target, Value::Str(key.to_string())])),
+                        self,
+                        pc,
+                    );
                 } else {
                     return Err(SquareError::InstructionError(
                         format!(
                             "bad peek_obj, top value is not an object, got {}",
-                            frame.top().unwrap_or(&Value::Nil).clone()
+                            vm.current_frame()
+                                .borrow_mut()
+                                .top()
+                                .unwrap_or(&Value::Nil)
+                                .clone()
                         ),
                         self.clone(),
                         *pc,
@@ -275,21 +300,47 @@ impl Inst {
                 }
             }
             Inst::SET(key) => {
-                let binding = vm.current_frame();
-                let mut frame = binding.borrow_mut();
-                let value = frame.stack[frame.sp - 1].clone();
-                let target = frame.stack[frame.sp - 2].as_obj();
+                let sp = vm.current_frame().borrow().sp;
+                let value = vm.current_frame().borrow().stack[sp - 1].clone();
+                let target = vm.current_frame().borrow().stack[sp - 2].clone();
 
-                if let Some(obj) = target {
-                    obj.borrow_mut().insert(key.clone(), value);
-                    frame.pop();
-                    return Ok(());
+                if let Some(obj) = target.as_obj() {
+                    vm.current_frame().borrow_mut().sp -= 2;
+
+                    if let Some(setter) = obj
+                        .borrow_mut()
+                        .get(SETTER_KEY)
+                        .unwrap_or(&Value::Nil)
+                        .as_fn()
+                    {
+                        return self.call(
+                            vm,
+                            setter,
+                            Rc::new(RefCell::new(vec![Value::Str(key.to_string()), value])),
+                            false,
+                            pc,
+                        );
+                    }
+
+                    let set = vm.buildin.get_syscall("set");
+
+                    return set(
+                        vm,
+                        Value::Nil,
+                        Rc::new(RefCell::new(vec![
+                            target,
+                            Value::Str(key.to_string()),
+                            value,
+                        ])),
+                        self,
+                        pc,
+                    );
                 }
 
                 Err(SquareError::InstructionError(
                     format!(
                         "bad patch_obj, top value is not an object, got {}",
-                        frame.stack[frame.sp - 2].clone()
+                        vm.current_frame().borrow_mut().stack[sp - 2].clone()
                     ),
                     self.clone(),
                     *pc,
@@ -346,7 +397,7 @@ impl Inst {
         Ok(())
     }
 
-    fn call(
+    pub fn call(
         &self,
         vm: &mut VM,
         closure: Rc<RefCell<Function>>,
@@ -384,8 +435,8 @@ impl Inst {
                 Ok(())
             }
             Function::Syscall(name, ref this) => {
-                let syscall = vm.buildin.get_syscall(name).unwrap();
-                syscall(vm, this.clone(), params, pc)
+                let syscall = vm.buildin.get_syscall(name);
+                syscall(vm, this.clone(), params, self, pc)
             }
             Function::Contiuation(ra, ref context) => {
                 *pc = ra;
@@ -544,8 +595,8 @@ impl VM {
     pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize, mpc: &mut usize) -> ExecResult {
         let inst = &insts[*pc];
 
-        // #[cfg(test)]
-        // println!("{}: {}", *pc, inst);
+        #[cfg(test)]
+        println!("{}: {}", *pc, inst);
 
         #[cfg(test)]
         let start = Instant::now();
@@ -561,12 +612,12 @@ impl VM {
             *entry = (entry.0 + duration, entry.1 + 1);
         }
 
-        // #[cfg(test)]
-        // println!(
-        //     "-------- CallFrame {} --------\n{}",
-        //     self.call_frames.len() - 1,
-        //     self.current_frame().borrow()
-        // );
+        #[cfg(test)]
+        println!(
+            "-------- CallFrame {} --------\n{}",
+            self.call_frames.len() - 1,
+            self.current_frame().borrow()
+        );
 
         Ok(())
     }
@@ -1302,7 +1353,7 @@ fn test_exec_fn_capture_self() {
 }
 
 #[test]
-fn test_exec_builtin() {
+fn test_exec_builtin_value() {
     let code = "
 [let p println]
 [let t [typeof p]]
@@ -1319,6 +1370,60 @@ fn test_exec_builtin() {
         callframe.resolve_local("t").unwrap(),
         &Value::Str("fn".to_string())
     )
+}
+
+#[test]
+fn test_exec_getter() {
+    let code = format!(
+        "
+[let o [obj]]
+
+[= o.x 0]
+
+[= o.{} /[k] 42]
+
+o.x
+",
+        GETTER_KEY
+    );
+
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let insts = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts).unwrap();
+
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0))
+}
+
+#[test]
+fn test_exec_setter() {
+    let code = format!(
+        "
+[let o [obj]]
+
+[= o.x 0]
+
+[= o.{} /[k v] [set this k [+ 1 v]]]
+
+[= o.x 41]
+
+o.x
+",
+        SETTER_KEY
+    );
+
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let insts = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+
+    vm.run(&insts).unwrap();
+
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0))
 }
 
 #[test]

@@ -2,19 +2,26 @@ use core::cell::RefCell;
 
 use alloc::format;
 use alloc::rc::Rc;
-use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use hashbrown::HashMap;
 
 use crate::errors::SquareError;
+use crate::vm_insts::Inst;
+use crate::vm_value::Object;
 use crate::{
     vm::{ExecResult, VM},
     vm_value::{Function, Value},
 };
 
-pub type Syscall = Rc<dyn Fn(&mut VM, Value, Rc<RefCell<Vec<Value>>>, &mut usize) -> ExecResult>;
+// Fn(vm, this, params, inst, pc)
+pub type Syscall =
+    Rc<dyn Fn(&mut VM, Value, Rc<RefCell<Vec<Value>>>, &Inst, &mut usize) -> ExecResult>;
+
+pub static INTERNAL_KEY: &'static str = "__internal__";
+pub static GETTER_KEY: &'static str = "__get__";
+pub static SETTER_KEY: &'static str = "__set__";
 
 pub struct Builtin {
     values: HashMap<&'static str, (Value, Option<Syscall>)>,
@@ -42,6 +49,7 @@ impl Builtin {
                     |_vm: &mut VM,
                      _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
+                     _inst: &Inst,
                      _pc: &mut usize|
                      -> ExecResult {
                         params.borrow().iter().for_each(|val| print!("{}", val));
@@ -62,6 +70,7 @@ impl Builtin {
                     |_vm: &mut VM,
                      _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
+                     _inst: &Inst,
                      _pc: &mut usize|
                      -> ExecResult {
                         params.borrow().iter().for_each(|val| print!("{}", val));
@@ -80,6 +89,7 @@ impl Builtin {
                     |vm: &mut VM,
                      _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
+                     _inst: &Inst,
                      _pc: &mut usize|
                      -> ExecResult {
                         // params have already be packed
@@ -100,7 +110,8 @@ impl Builtin {
                     |vm: &mut VM,
                      this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
-                     _pc: &mut usize|
+                     inst: &Inst,
+                     pc: &mut usize|
                      -> ExecResult {
                         if let Some(internal) = Self::get_internal_vec(&this) {
                             if let Some(Value::Num(index)) = params.borrow().get(0) {
@@ -112,13 +123,17 @@ impl Builtin {
                                         .clone(),
                                 ))
                             } else {
-                                Err(SquareError::RuntimeError(
+                                Err(SquareError::InstructionError(
                                     "at() expect a index parameter".to_string(),
+                                    inst.clone(),
+                                    *pc,
                                 ))
                             }
                         } else {
-                            Err(SquareError::RuntimeError(
+                            Err(SquareError::InstructionError(
                                 "at() method cannot be called directly".to_string(),
+                                inst.clone(),
+                                *pc,
                             ))
                         }
                     },
@@ -134,7 +149,8 @@ impl Builtin {
                     |vm: &mut VM,
                      this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
-                     _pc: &mut usize|
+                     inst: &Inst,
+                     pc: &mut usize|
                      -> ExecResult {
                         if let Some(internal) = Self::get_internal_vec(&this) {
                             if let (
@@ -166,14 +182,18 @@ impl Builtin {
                                     .borrow_mut()
                                     .push(Self::wrap_internal_vec(Rc::new(RefCell::new(deleted)))))
                             } else {
-                                Err(SquareError::RuntimeError(
+                                Err(SquareError::InstructionError(
                                     "splice() expect (index, deleteCount, toInsert) parameter"
                                         .to_string(),
+                                    inst.clone(),
+                                    *pc,
                                 ))
                             }
                         } else {
-                            Err(SquareError::RuntimeError(
+                            Err(SquareError::InstructionError(
                                 "splice() cannot be called directly".to_string(),
+                                inst.clone(),
+                                *pc,
                             ))
                         }
                     },
@@ -192,7 +212,8 @@ impl Builtin {
                     |vm: &mut VM,
                      _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
-                     _pc: &mut usize|
+                     inst: &Inst,
+                     pc: &mut usize|
                      -> ExecResult {
                         if let Some(val) = params.borrow().get(0) {
                             return Ok(vm
@@ -200,8 +221,10 @@ impl Builtin {
                                 .borrow_mut()
                                 .push(Value::Str(val.typename().to_string())));
                         } else {
-                            return Err(SquareError::RuntimeError(
+                            return Err(SquareError::InstructionError(
                                 "typeof() expect a parameter".to_string(),
+                                inst.clone(),
+                                *pc,
                             ));
                         }
                     },
@@ -217,7 +240,8 @@ impl Builtin {
                     |vm: &mut VM,
                      _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
-                     _pc: &mut usize|
+                     inst: &Inst,
+                     pc: &mut usize|
                      -> ExecResult {
                         let obj = Rc::new(RefCell::new(HashMap::new()));
 
@@ -225,27 +249,78 @@ impl Builtin {
                             if let (Some(key), Some(val)) =
                                 (&params.borrow()[i].as_str(), params.borrow().get(i + 1))
                             {
-                                if let Some(member_fn) = val.as_fn() {
-                                    match *member_fn.borrow_mut() {
-                                        Function::Closure(_, ref mut captures) => {
-                                            captures.insert(
-                                                "this".to_string(),
-                                                Value::Obj(obj.clone()),
-                                            );
-                                        }
-                                        _ => {}
-                                    }
-                                }
+                                Self::try_capture_this(val, &obj);
                                 obj.borrow_mut().insert(key.to_string(), val.clone());
                             } else {
-                                return Err(SquareError::RuntimeError(format!(
-                                    "failed to create object, index out of range {}",
-                                    i
-                                )));
+                                return Err(SquareError::InstructionError(
+                                    format!("failed to create object, index out of range {}", i),
+                                    inst.clone(),
+                                    *pc,
+                                ));
                             }
                         }
 
                         return Ok(vm.current_frame().borrow_mut().push(Value::Obj(obj)));
+                    },
+                ) as Syscall),
+            ),
+        );
+
+        values.insert(
+            "set",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("set", Value::Nil)))),
+                Some(Rc::new(
+                    |vm: &mut VM,
+                     _this: Value,
+                     params: Rc<RefCell<Vec<Value>>>,
+                     inst: &Inst,
+                     pc: &mut usize|
+                     -> ExecResult {
+                        let target = params.borrow().get(0).unwrap_or(&Value::Nil).as_obj();
+                        let key = params.borrow().get(1).unwrap_or(&Value::Nil).as_str();
+                        let value = params.borrow().get(2).unwrap_or(&Value::Nil).clone();
+
+                        if let (Some(o), Some(k)) = (target, key) {
+                            Self::try_capture_this(&value, &o);
+                            o.borrow_mut().insert(k, value);
+                            return Ok(vm.current_frame().borrow_mut().push(Value::Obj(o)));
+                        }
+
+                        Err(SquareError::InstructionError(
+                            "bad arguments provided to set()".to_string(),
+                            inst.clone(),
+                            *pc,
+                        ))
+                    },
+                ) as Syscall),
+            ),
+        );
+
+        values.insert(
+            "get",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("get", Value::Nil)))),
+                Some(Rc::new(
+                    |vm: &mut VM,
+                     _this: Value,
+                     params: Rc<RefCell<Vec<Value>>>,
+                     inst: &Inst,
+                     pc: &mut usize|
+                     -> ExecResult {
+                        let target = params.borrow().get(0).unwrap_or(&Value::Nil).as_obj();
+                        let key = params.borrow().get(1).unwrap_or(&Value::Nil).as_str();
+
+                        if let (Some(o), Some(k)) = (target, key) {
+                            let cloned = o.borrow_mut().get(&k).cloned().unwrap_or(Value::Nil);
+                            return Ok(vm.current_frame().borrow_mut().push(cloned));
+                        }
+
+                        Err(SquareError::InstructionError(
+                            "bad arguments provided to get()".to_string(),
+                            inst.clone(),
+                            *pc,
+                        ))
                     },
                 ) as Syscall),
             ),
@@ -262,20 +337,21 @@ impl Builtin {
                     |vm: &mut VM,
                      _this: Value,
                      params: Rc<RefCell<Vec<Value>>>,
+                     inst: &Inst,
                      pc: &mut usize|
                      -> ExecResult {
                         if let Some(ref iife) = params.borrow()[0].as_fn() {
                             let cc = Function::Contiuation(*pc, vm.save_context());
 
-                            *pc = *pc - 2; // callcc is actually another kind of CALL instruction, we reuse the PACK and CALL that call callcc itself to call the parameter lambda provided to callcc
-
-                            let binding = vm.current_frame();
-                            let mut frame = binding.borrow_mut();
-
-                            frame.push(Value::Function(iife.clone()));
-                            frame.push(Value::Function(Rc::new(RefCell::new(cc))));
-
-                            Ok(())
+                            return inst.call(
+                                vm,
+                                iife.clone(),
+                                Rc::new(RefCell::new(vec![Value::Function(Rc::new(
+                                    RefCell::new(cc),
+                                ))])),
+                                false,
+                                pc,
+                            );
                         } else {
                             Err(SquareError::RuntimeError(
                                 "callcc() expect a function parameter".to_string(),
@@ -289,7 +365,7 @@ impl Builtin {
         Self { values }
     }
 
-    pub fn wrap_internal_vec(internal: Rc<RefCell<Vec<Value>>>) -> Value {
+    fn wrap_internal_vec(internal: Rc<RefCell<Vec<Value>>>) -> Value {
         let obj = Rc::new(RefCell::new(HashMap::new()));
 
         obj.borrow_mut()
@@ -297,7 +373,7 @@ impl Builtin {
 
         // FIXME
         obj.borrow_mut()
-            .insert("__internal__".to_string(), Value::Vec(internal.clone()));
+            .insert(INTERNAL_KEY.to_string(), Value::Vec(internal.clone()));
 
         obj.borrow_mut().insert(
             "at".to_string(),
@@ -317,12 +393,23 @@ impl Builtin {
         Value::Obj(obj)
     }
 
+    fn try_capture_this(val: &Value, obj: &Rc<RefCell<Object>>) {
+        if let Some(member_fn) = val.as_fn() {
+            match *member_fn.borrow_mut() {
+                Function::Closure(_, ref mut captures) => {
+                    captures.insert("this".to_string(), Value::Obj(obj.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub fn get_internal_vec(val: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
         match val {
             Value::Obj(obj) => {
                 return obj
                     .borrow()
-                    .get("__internal__")
+                    .get(INTERNAL_KEY)
                     .unwrap_or(&Value::Nil)
                     .as_vec();
             }
@@ -346,11 +433,8 @@ impl Builtin {
     }
 
     #[inline]
-    pub fn get_syscall(&self, name: &str) -> Option<Syscall> {
-        if let Some((_, syscall)) = self.values.get(name) {
-            syscall.clone()
-        } else {
-            None
-        }
+    pub fn get_syscall(&self, name: &str) -> Syscall {
+        let syscall = self.values.get(name).unwrap().1.clone();
+        syscall.unwrap()
     }
 }
