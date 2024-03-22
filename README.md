@@ -26,7 +26,7 @@ A toy Lisp-style language written in Rust, supports first-class function and con
 ; convenient placehoders in expansion
 [let [. x] [vec 1 2 3]] ; x = 2, `.` is a placehoder that MUST occupy one position
 [let [... x] [1 2 3 4]] ; x = 4, `...` is a placehoder that can occupy zero or as many positions as possible
-[let [. [x] ... y] [vec 1 [vec 2] 3 4 5]] ; x = 2, y  5
+[let [. [x] ... y] [vec 1 [vec 2] 3 4 5]] ; x = 2, y = 5
 ```
 
 ## Control flow

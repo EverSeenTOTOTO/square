@@ -133,6 +133,35 @@ impl Builtin {
         );
 
         values.insert(
+            "len",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("len")))),
+                Some(Rc::new(
+                    |vm: &mut VM,
+                     params: Rc<RefCell<Vec<Value>>>,
+                     inst: &Inst,
+                     pc: &mut usize|
+                     -> ExecResult {
+                        if let Some(internal) =
+                            Self::get_internal_vec(params.borrow().get(0).unwrap_or(&Value::Nil))
+                        {
+                            Ok(vm
+                                .current_frame()
+                                .borrow_mut()
+                                .push(Value::Num(internal.borrow().len() as f64)))
+                        } else {
+                            Err(SquareError::InstructionError(
+                                "at() expect (vector, index) parameter".to_string(),
+                                inst.clone(),
+                                *pc,
+                            ))
+                        }
+                    },
+                ) as Syscall),
+            ),
+        );
+
+        values.insert(
             "splice",
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("splice")))),
@@ -148,13 +177,11 @@ impl Builtin {
                             if let (
                                 Some(Value::Num(index)),
                                 Some(Value::Num(del_count)),
-                                Some(insert_obj),
                             ) = (
                                 params.borrow().get(1),
                                 params.borrow().get(2),
-                                params.borrow().get(3),
                             ) {
-                                let insert = Self::get_internal_vec(insert_obj)
+                                let insert = Self::get_internal_vec(params.borrow().get(3).unwrap_or(&Value::Nil))
                                     .unwrap_or(Rc::new(RefCell::new(vec![])));
                                 let start = *index as usize;
                                 let end_ = (index + del_count) as usize;
@@ -360,17 +387,17 @@ impl Builtin {
     }
 
     pub fn get_internal_vec(val: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
-        match val {
-            Value::Obj(obj) => {
-                return obj
-                    .borrow()
-                    .get(INTERNAL_KEY)
-                    .unwrap_or(&Value::Nil)
-                    .as_vec();
-            }
-            Value::Vec(v) => Some(v.clone()),
-            _ => None,
+        if let Some(obj) = val.as_obj() {
+            return obj
+                .borrow()
+                .get(INTERNAL_KEY)
+                .unwrap_or(&Value::Nil)
+                .as_vec();
+        } else if let Some(v) = val.as_vec() {
+            return Some(v);
         }
+
+        None
     }
 
     fn try_capture_this(val: &Value, obj: &Rc<RefCell<Object>>) {
