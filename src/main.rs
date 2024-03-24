@@ -3,7 +3,11 @@
 #![feature(if_let_guard)]
 
 #[cfg(target_family = "wasm")]
-use crate::externs::memory;
+use alloc::boxed::Box;
+#[cfg(target_family = "wasm")]
+use alloc::vec::Vec;
+#[cfg(target_family = "wasm")]
+use core::cell::RefCell;
 
 extern crate alloc;
 
@@ -55,42 +59,108 @@ pub unsafe extern "C" fn realloc(ptr: *mut u8, old_size: usize, new_size: usize)
 
 #[cfg(target_family = "wasm")]
 #[no_mangle]
-pub extern "C" fn exec(source_addr: *mut u8, source_length: usize) {
-    use code_frame::Position;
-    use core::cell::RefCell;
-    use emit::EmitContext;
-    use vm::VM;
+pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Vec<vm_insts::Inst> {
+    let code = externs::memory::read(source_addr as usize, source_length);
 
-    // println!(
-    //     "Before: {:?}",
-    //     allocator::TALC.lock().get_counters().allocated_bytes
-    // );
-
-    let mut vm = VM::new();
-    let code = memory::read(source_addr as usize, source_length);
-
-    let ast = match parse::parse(code, &mut Position::new()) {
+    let ast = match parse::parse(code, &mut code_frame::Position::new()) {
         Err(e) => {
-            println!("{}", e);
-            return;
+            panic!("{}", e);
         }
         Ok(node) => node,
     };
 
-    let insts = match emit::emit(code, &ast, &mut RefCell::new(EmitContext::new())) {
+    let insts = match emit::emit(code, &ast, &mut RefCell::new(emit::EmitContext::new())) {
         Err(e) => {
-            println!("\n{}", e);
-            return;
+            panic!("{}", e);
         }
         Ok(inst) => inst,
     };
 
-    if let Err(e) = vm.run(&insts) {
-        println!("{}", e);
+    Box::into_raw(Box::new(insts))
+}
+
+#[cfg(target_family = "wasm")]
+#[no_mangle]
+pub extern "C" fn dump_instructions(insts_addr: *const u8) {
+    let insts = unsafe { Box::from_raw(insts_addr as *mut Vec<vm_insts::Inst>) };
+
+    insts.iter().for_each(|inst| {
+        println!("{}", inst);
+    });
+
+    Box::into_raw(insts);
+}
+
+#[cfg(target_family = "wasm")]
+#[no_mangle]
+pub extern "C" fn init() -> *mut vm::VM {
+    Box::into_raw(Box::new(vm::VM::new()))
+}
+
+#[cfg(target_family = "wasm")]
+#[no_mangle]
+pub extern "C" fn step(vm_addr: *mut u8, insts_addrr: *const u8) {
+    let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
+    let insts = unsafe { Box::from_raw(insts_addrr as *mut Vec<vm_insts::Inst>) };
+
+    match vm.step(&insts) {
+        Err(e) => {
+            panic!("{}", e);
+        }
+        Ok(_) => {}
     }
 
-    // println!(
-    //     "After: {:?}",
-    //     allocator::TALC.lock().get_counters().allocated_bytes
-    // );
+    Box::into_raw(vm);
+    Box::into_raw(insts);
+}
+
+#[cfg(target_family = "wasm")]
+#[no_mangle]
+pub extern "C" fn run(vm_addr: *mut u8, insts_addrr: *const u8) {
+    let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
+    let insts = unsafe { Box::from_raw(insts_addrr as *mut Vec<vm_insts::Inst>) };
+
+    match vm.run(&insts) {
+        Err(e) => {
+            panic!("{}", e);
+        }
+        Ok(_) => {}
+    }
+
+    Box::into_raw(vm);
+    Box::into_raw(insts);
+}
+
+#[cfg(target_family = "wasm")]
+#[no_mangle]
+pub extern "C" fn reset(vm_addr: *mut u8) {
+    let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
+
+    vm.reset();
+
+    Box::into_raw(vm);
+}
+
+#[cfg(target_family = "wasm")]
+#[no_mangle]
+pub extern "C" fn dump_pc(vm_addr: *mut u8) -> usize {
+    let vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
+
+    let pc = vm.pc;
+
+    Box::into_raw(vm);
+
+    pc
+}
+
+#[cfg(target_family = "wasm")]
+#[no_mangle]
+pub extern "C" fn dump_callframes(vm_addr: *mut u8) {
+    let vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
+
+    vm.call_frames.iter().for_each(|frame| {
+        println!("{}", frame.borrow());
+    });
+
+    Box::into_raw(vm);
 }

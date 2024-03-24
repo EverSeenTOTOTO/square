@@ -4,13 +4,6 @@ use spin::Mutex;
 pub mod memory {
     use core::fmt;
 
-    #[link(wasm_import_module = "memory")]
-    extern "C" {
-        pub fn get_data_end() -> usize;
-        pub fn get_heap_base() -> usize;
-        pub fn get_memory_size() -> usize;
-    }
-
     mod inner {
         #[link(wasm_import_module = "memory")]
         extern "C" {
