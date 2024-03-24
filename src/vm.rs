@@ -24,7 +24,7 @@ pub type ExecResult = Result<(), SquareError>;
 type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 
 impl Inst {
-    fn exec(&self, vm: &mut VM, insts: &Vec<Inst>, pc: &mut usize, mpc: &mut usize) -> ExecResult {
+    fn exec(&self, vm: &mut VM, insts: &Vec<Inst>) -> ExecResult {
         match self {
             Inst::PUSH(value) => Ok(vm.current_frame().borrow_mut().push(value.clone())),
             Inst::POP => {
@@ -43,7 +43,7 @@ impl Inst {
                     Err(SquareError::InstructionError(
                         "bad store, operand stack empty".to_string(),
                         self.clone(),
-                        *pc,
+                        vm.pc,
                     ))
                 }
             }
@@ -62,33 +62,33 @@ impl Inst {
                     Err(SquareError::InstructionError(
                         format!("undefined variable: {}", name),
                         self.clone(),
-                        *pc,
+                        vm.pc,
                     ))
                 }
             }
 
-            Inst::ADD => self.binop(vm, &|a, b| a + b, pc),
-            Inst::SUB => self.binop(vm, &|a, b| a - b, pc),
-            Inst::MUL => self.binop(vm, &|a, b| a * b, pc),
-            Inst::DIV => self.binop(vm, &|a, b| a / b, pc),
-            Inst::REM => self.binop(vm, &|a, b| a % b, pc),
-            Inst::BITAND => self.binop(vm, &|a, b| a & b, pc),
-            Inst::BITOR => self.binop(vm, &|a, b| a | b, pc),
-            Inst::BITXOR => self.binop(vm, &|a, b| a ^ b, pc),
-            Inst::EQ => self.binop(vm, &|a, b| Ok(Value::Bool(a == b)), pc),
-            Inst::NE => self.binop(vm, &|a, b| Ok(Value::Bool(a != b)), pc),
-            Inst::LT => self.binop(vm, &|a, b| Ok(Value::Bool(a < b)), pc),
-            Inst::LE => self.binop(vm, &|a, b| Ok(Value::Bool(a <= b)), pc),
-            Inst::GT => self.binop(vm, &|a, b| Ok(Value::Bool(a > b)), pc),
-            Inst::GE => self.binop(vm, &|a, b| Ok(Value::Bool(a >= b)), pc),
-            Inst::SHL => self.binop(vm, &|a, b| a << b, pc),
-            Inst::SHR => self.binop(vm, &|a, b| a >> b, pc),
+            Inst::ADD => self.binop(vm, &|a, b| a + b),
+            Inst::SUB => self.binop(vm, &|a, b| a - b),
+            Inst::MUL => self.binop(vm, &|a, b| a * b),
+            Inst::DIV => self.binop(vm, &|a, b| a / b),
+            Inst::REM => self.binop(vm, &|a, b| a % b),
+            Inst::BITAND => self.binop(vm, &|a, b| a & b),
+            Inst::BITOR => self.binop(vm, &|a, b| a | b),
+            Inst::BITXOR => self.binop(vm, &|a, b| a ^ b),
+            Inst::EQ => self.binop(vm, &|a, b| Ok(Value::Bool(a == b))),
+            Inst::NE => self.binop(vm, &|a, b| Ok(Value::Bool(a != b))),
+            Inst::LT => self.binop(vm, &|a, b| Ok(Value::Bool(a < b))),
+            Inst::LE => self.binop(vm, &|a, b| Ok(Value::Bool(a <= b))),
+            Inst::GT => self.binop(vm, &|a, b| Ok(Value::Bool(a > b))),
+            Inst::GE => self.binop(vm, &|a, b| Ok(Value::Bool(a >= b))),
+            Inst::SHL => self.binop(vm, &|a, b| a << b),
+            Inst::SHR => self.binop(vm, &|a, b| a >> b),
             Inst::BITNOT => {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
                 let result = (!frame.top().unwrap()).map_err(|e| match e {
                     SquareError::RuntimeError(msg) => {
-                        SquareError::InstructionError(msg, self.clone(), *pc)
+                        SquareError::InstructionError(msg, self.clone(), vm.pc)
                     }
                     _ => e,
                 });
@@ -98,14 +98,14 @@ impl Inst {
                 Ok(())
             }
 
-            Inst::JMP(value) => self.jump(insts, pc, *value),
+            Inst::JMP(value) => self.jump(insts, &mut vm.pc, *value),
             Inst::JNE(value) => {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
                 let top = frame.pop();
 
                 if !top.as_bool() {
-                    self.jump(insts, pc, *value)
+                    self.jump(insts, &mut vm.pc, *value)
                 } else {
                     Ok(())
                 }
@@ -124,8 +124,8 @@ impl Inst {
                 if let Some(func) = function {
                     if let Some(args) = params {
                         vm.current_frame().borrow_mut().sp -= 2;
-                        let is_tail_call = *pc + 1 < insts.len() && insts[*pc + 1] == Inst::RET;
-                        return self.call(vm, func, args, is_tail_call, pc);
+                        let is_tail_call = vm.pc + 1 < insts.len() && insts[vm.pc + 1] == Inst::RET;
+                        return self.call(vm, func, args, is_tail_call);
                     }
                 }
 
@@ -135,7 +135,7 @@ impl Inst {
                         vm.current_frame().borrow().stack[sp - 2]
                     ),
                     self.clone(),
-                    *pc,
+                    vm.pc,
                 ))
             }
             Inst::RET => {
@@ -143,7 +143,7 @@ impl Inst {
                 let frame = binding.borrow_mut();
 
                 // jump back
-                *pc = frame.ra;
+                vm.pc = frame.ra;
 
                 let top = frame.top().unwrap_or(&Value::Nil).clone();
 
@@ -156,7 +156,7 @@ impl Inst {
                 if let Function::ClosureMeta(offset, captures) = meta {
                     // create closure
                     let mut upvalues = HashMap::new();
-                    let ip = (*pc as i32) + offset;
+                    let ip = (vm.pc as i32) + offset;
                     let binding = vm.current_frame();
                     let mut frame = binding.borrow_mut();
 
@@ -221,7 +221,7 @@ impl Inst {
                                     pack.len()
                                 ),
                                 self.clone(),
-                                *pc,
+                                vm.pc,
                             ));
                         }
 
@@ -240,7 +240,7 @@ impl Inst {
                                 pack.len()
                             ),
                             self.clone(),
-                            *pc,
+                            vm.pc,
                         ));
                     }
                 }
@@ -251,7 +251,7 @@ impl Inst {
                         frame.top().unwrap_or(&Value::Nil).clone()
                     ),
                     self.clone(),
-                    *pc,
+                    vm.pc,
                 ))
             }
 
@@ -271,7 +271,6 @@ impl Inst {
                             getter,
                             Rc::new(RefCell::new(vec![Value::Str(key.to_string())])),
                             false,
-                            pc,
                         );
                     }
 
@@ -281,7 +280,6 @@ impl Inst {
                         vm,
                         Rc::new(RefCell::new(vec![target, Value::Str(key.to_string())])),
                         self,
-                        pc,
                     );
                 } else {
                     return Err(SquareError::InstructionError(
@@ -294,7 +292,7 @@ impl Inst {
                                 .clone()
                         ),
                         self.clone(),
-                        *pc,
+                        vm.pc,
                     ));
                 }
             }
@@ -317,7 +315,6 @@ impl Inst {
                             setter,
                             Rc::new(RefCell::new(vec![Value::Str(key.to_string()), value])),
                             false,
-                            pc,
                         );
                     }
 
@@ -331,7 +328,6 @@ impl Inst {
                             value,
                         ])),
                         self,
-                        pc,
                     );
                 }
 
@@ -341,36 +337,36 @@ impl Inst {
                         vm.current_frame().borrow_mut().stack[sp - 2].clone()
                     ),
                     self.clone(),
-                    *pc,
+                    vm.pc,
                 ))
             }
 
             Inst::DELIMITER(mindex) => {
-                if mindex < mpc {
+                if *mindex < vm.mpc {
                     // TODO: optimize
-                    for i in *pc..insts.len() {
+                    for i in vm.pc..insts.len() {
                         if let Inst::DELIMITER(index) = insts[i] {
-                            if index == *mpc {
-                                *pc = i;
+                            if index == vm.mpc {
+                                vm.pc = i;
                                 break;
                             }
                         }
                     }
                 }
 
-                *mpc = *mpc + 1;
+                vm.mpc = vm.mpc + 1;
                 Ok(())
             }
         }
     }
 
-    fn binop(&self, vm: &mut VM, op_fn: &OpFn, pc: &mut usize) -> ExecResult {
+    fn binop(&self, vm: &mut VM, op_fn: &OpFn) -> ExecResult {
         let binding = vm.current_frame();
         let mut frame = binding.borrow_mut();
         let result =
             op_fn(&frame.stack[frame.sp - 2], &frame.stack[frame.sp - 1]).map_err(|e| match e {
                 SquareError::RuntimeError(msg) => {
-                    SquareError::InstructionError(msg, self.clone(), *pc)
+                    SquareError::InstructionError(msg, self.clone(), vm.pc)
                 }
                 _ => e,
             });
@@ -401,7 +397,6 @@ impl Inst {
         closure: Rc<RefCell<Function>>,
         params: Rc<RefCell<Vec<Value>>>,
         is_tail_call: bool,
-        pc: &mut usize,
     ) -> ExecResult {
         match *closure.borrow() {
             Function::ClosureMeta(..) => unreachable!(),
@@ -418,7 +413,7 @@ impl Inst {
                     frame.extend_locals(upvalues.clone());
                 } else {
                     let mut new_frame = CallFrame::new();
-                    new_frame.ra = *pc;
+                    new_frame.ra = vm.pc;
                     // always push params as first operand
                     new_frame.stack[0] = Value::Vec(params);
                     new_frame.sp = 1;
@@ -429,15 +424,15 @@ impl Inst {
                 }
 
                 // jump to function
-                *pc = ip;
+                vm.pc = ip;
                 Ok(())
             }
             Function::Syscall(name) => {
                 let syscall = vm.buildin.get_syscall(name);
-                syscall(vm, params, self, pc)
+                syscall(vm, params, self)
             }
             Function::Contiuation(ra, ref context) => {
-                *pc = ra;
+                vm.pc = ra;
                 vm.restore_context(context.clone());
 
                 Ok(vm
@@ -463,6 +458,7 @@ pub struct CallFrame {
 
 impl fmt::Display for CallFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "-----------------------------")?;
         writeln!(f, "Return Addr: {}", self.ra)?;
         writeln!(f, "Locals:")?;
         for (key, value) in &self.locals {
@@ -547,6 +543,8 @@ impl CallFrame {
 
 pub struct VM {
     pub call_frames: Vec<Rc<RefCell<CallFrame>>>,
+    pub pc: usize,
+    pub mpc: usize,
 
     buildin: Builtin,
 
@@ -559,10 +557,22 @@ impl VM {
         Self {
             call_frames: vec![Rc::new(RefCell::new(CallFrame::new()))],
             buildin: Builtin::new(),
+            pc: 0,
+            mpc: 0,
 
             #[cfg(test)]
             inst_times: HashMap::new(),
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.pc = 0;
+        self.mpc = 0;
+        self.call_frames
+            .splice(0.., vec![Rc::new(RefCell::new(CallFrame::new()))]);
+
+        #[cfg(test)]
+        self.inst_times.clear();
     }
 
     #[inline]
@@ -590,18 +600,18 @@ impl VM {
         self.call_frames = context;
     }
 
-    pub fn step(&mut self, insts: &Vec<Inst>, pc: &mut usize, mpc: &mut usize) -> ExecResult {
-        let inst = &insts[*pc];
+    pub fn step(&mut self, insts: &Vec<Inst>) -> ExecResult {
+        let inst = &insts[self.pc];
 
         #[cfg(test)]
-        println!("{}: {}", *pc, inst);
+        println!("{}: {}", self.pc, inst);
 
         #[cfg(test)]
         let start = Instant::now();
 
-        inst.exec(self, insts, pc, mpc)?;
+        inst.exec(self, insts)?;
 
-        *pc += 1;
+        self.pc += 1;
 
         #[cfg(test)]
         {
@@ -626,10 +636,8 @@ impl VM {
         #[cfg(test)]
         self.inst_times.clear();
 
-        let mut pc = 0;
-        let mut mpc = 0;
-        while pc < insts.len() {
-            self.step(insts, &mut pc, &mut mpc)?;
+        while self.pc < insts.len() {
+            self.step(insts)?;
         }
 
         Ok(())
@@ -1074,13 +1082,12 @@ fn test_exec_tail_call() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
-    let mut pc = 0;
     let mut max_depth = vm.call_frames.len();
 
     vm.current_frame().borrow_mut().ra = insts.len();
 
-    while pc < insts.len() {
-        vm.step(&insts, &mut pc, &mut 0).unwrap();
+    while vm.pc < insts.len() {
+        vm.step(&insts).unwrap();
         if vm.call_frames.len() > max_depth {
             max_depth = vm.call_frames.len();
         }
