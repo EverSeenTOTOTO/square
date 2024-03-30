@@ -157,7 +157,8 @@ fn emit_assign(
     match target.as_ref() {
         Node::Token(id) => {
             if let Token::Id(_, source) = id {
-                if properties.len() > 0 { // = x.y z
+                if properties.len() > 0 {
+                    // = x.y z
                     ctx.borrow_mut().mark_if_capture(source);
                     result.push(Inst::LOAD(source.clone()));
                     for (i, prop) in properties.iter().enumerate() {
@@ -174,7 +175,8 @@ fn emit_assign(
                         }
                     }
                 } else {
-                    if is_define { // let x y
+                    if is_define {
+                        // let x y
                         ctx.borrow_mut()
                             .add_local(source.clone())
                             .map_err(|e| match e {
@@ -186,7 +188,8 @@ fn emit_assign(
                                 ),
                                 _ => e,
                             })?;
-                    } else { // = x y
+                    } else {
+                        // = x y
                         ctx.borrow_mut().mark_if_capture(source);
                     }
 
@@ -900,13 +903,12 @@ fn emit_fn(
         let captures = ctx.borrow_mut().pop_scope();
         let offset = (params_result.len() + body_result.len()) as i32;
 
-        let mut result = vec![Inst::JMP(offset + 2)];
+        let mut result = vec![Inst::JMP(offset + 1)];
         result.extend(params_result);
-        result.push(Inst::POP); // drop params pack
         result.extend(body_result);
         result.push(Inst::RET);
         result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
-            -(offset + 3),
+            -(offset + 2),
             captures,
         )));
 
@@ -1099,6 +1101,8 @@ fn emit_expand(
         }
     }
 
+    result.push(Inst::POP); // drop pack
+
     return Ok(result);
 }
 
@@ -1117,6 +1121,7 @@ fn test_emit_expand() {
             Inst::POP,
             Inst::PEEK(0, 1),
             Inst::STORE("b".to_string()),
+            Inst::POP,
             Inst::POP
         ]
     );
@@ -1136,7 +1141,8 @@ fn test_emit_expand_dot() {
             Inst::POP,
             Inst::PEEK(0, 1),
             Inst::STORE("b".to_string()),
-            Inst::POP
+            Inst::POP,
+            Inst::POP,
         ]
     );
 }
@@ -1153,6 +1159,7 @@ fn test_emit_expand_greed() {
             Inst::LOAD("c".to_string()),
             Inst::PEEK(0, -1),
             Inst::STORE("b".to_string()),
+            Inst::POP,
             Inst::POP
         ]
     );
@@ -1174,6 +1181,7 @@ fn test_emit_expand_greed_offset() {
             Inst::POP,
             Inst::PEEK(2, -1),
             Inst::STORE("b".to_string()),
+            Inst::POP,
             Inst::POP
         ]
     );
@@ -1193,6 +1201,9 @@ fn test_emit_expand_nested() {
             Inst::PEEK(0, 0),
             Inst::PEEK(0, 0),
             Inst::STORE("b".to_string()),
+            Inst::POP,
+            Inst::POP,
+            Inst::POP,
             Inst::POP,
         ]
     );

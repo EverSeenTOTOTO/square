@@ -2,7 +2,7 @@
 
 A toy Lisp-style language written in Rust, supports first-class function and continuation, aims to be both fun and expressive.
 
-[Playground](https://www.everseenflash.com/CS/Square.html#Playground)
+[Playground](https://www.everseenflash.com/CS/Square.html#playground)
 
 ## Q & A
 

@@ -487,7 +487,7 @@ impl CallFrame {
 
     pub fn push(&mut self, value: Value) {
         if self.sp >= self.stack.len() {
-            self.stack.resize(self.stack.len() * 2, Value::Nil);
+            self.stack.resize(self.stack.len() * 2 + 1, Value::Nil);
         }
 
         self.stack[self.sp] = value;
@@ -898,7 +898,9 @@ fn test_exec_define_expand_greed_error() {
 
 #[test]
 fn test_exec_define_expand_nested() {
-    let code = "[let [. [x]] [vec 1 [vec 42] 3]]";
+    let code = "
+[let [. [x] ... y] [vec 1 [vec 42] 3 4 5]] ; x = 42, y = 5
+";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
@@ -912,7 +914,7 @@ fn test_exec_define_expand_nested() {
 
 #[test]
 fn test_exec_define_chain() {
-    let code = "[let [x] [let [y] [let [z] [vec 42]]]]";
+    let code = "[let x [let y [let z 42]]]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
