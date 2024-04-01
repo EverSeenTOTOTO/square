@@ -1,28 +1,10 @@
-[let foo [obj 'x' 42]]
+[let o [obj]]
 
-[let bar [obj]]
-[let baz [obj]]
+[let observer println]
 
-[= bar.__proto__ foo]
-[= baz.__proto__ bar]
+[= o.__set__ /[k v] [begin
+	[if observer [observer k v]]
+	[set this k v]
+]]
 
-[println baz.x]
-
-[let getByProtoChain /[o k] [begin
-  [let value [get o k]]
-  [if value
-    value
-    [if o.__proto__
-      [getByProtoChain o.__proto__ k]
-      value]]]]
-
-[let createGetter /[] /[k] [getByProtoChain this k]]
-
-[= bar.__get__ [createGetter]]
-[= baz.__get__ [createGetter]]
-
-[println baz.x]
-
-[= foo.y 24]
-
-[println baz.y]
+[= o.x 42] ; print x 42
