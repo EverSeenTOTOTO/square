@@ -104,7 +104,7 @@ impl fmt::Display for Value {
                 write!(f, "{}", val)
             }
             Value::Str(val) => {
-                write!(f, "'{}'", val)
+                write!(f, "{}", val)
             }
             Value::Vec(val) => {
                 write!(

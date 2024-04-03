@@ -79,13 +79,43 @@ impl EmitContext {
     }
 }
 
+fn unescape(s: &str) -> String {
+    let mut unescaped = String::new();
+
+    if s.len() == 0 {
+        return unescaped;
+    }
+
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('\'') => unescaped.push('\''),
+                Some('\\') => unescaped.push('\\'),
+                Some('n') => unescaped.push('\n'),
+                Some('r') => unescaped.push('\r'),
+                Some('t') => unescaped.push('\t'),
+                Some('0') => unescaped.push('\0'),
+                Some(c) => {
+                    unescaped.push('\\');
+                    unescaped.push(c);
+                }
+                None => unescaped.push('\\'),
+            }
+        } else {
+            unescaped.push(ch);
+        }
+    }
+    unescaped
+}
+
 fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitResult {
     match token {
         Token::Num(_, num) => {
             return Ok(vec![Inst::PUSH(Value::Num(num.parse::<f64>().unwrap()))]);
         }
-        Token::Str(_, str) => {
-            let val = Value::Str(str.clone());
+        Token::Str(_, s) => {
+            let val = Value::Str(unescape(s));
             return Ok(vec![Inst::PUSH(val)]);
         }
         Token::Id(_, id) => {
@@ -475,20 +505,15 @@ fn emit_if(
     result.extend(condition_result);
 
     let true_branch = expressions.get(2).unwrap();
-
-    ctx.borrow_mut().push_scope();
     let true_branch_result = emit_node(input, true_branch, ctx)?;
-    let mut captures = ctx.borrow_mut().pop_scope();
     let true_branch_len = true_branch_result.len() as i32;
     // skip true branch, +1 for one extra JMP instcurtion
     result.push(Inst::JNE(true_branch_len + 1));
     result.extend(true_branch_result);
 
     if let Some(false_branch) = expressions.get(3) {
-        ctx.borrow_mut().push_scope();
         let false_branch_result = emit_node(input, false_branch, ctx)?;
-        captures.extend(ctx.borrow_mut().pop_scope());
-        captures.extend(ctx.borrow_mut().pop_scope());
+        let captures = ctx.borrow_mut().pop_scope();
         let false_branch_len = false_branch_result.len() as i32;
         // skip false branch
         result.push(Inst::JMP(false_branch_len));
@@ -503,7 +528,7 @@ fn emit_if(
             captures,
         )));
     } else {
-        captures.extend(ctx.borrow_mut().pop_scope());
+        let captures = ctx.borrow_mut().pop_scope();
 
         result.push(Inst::JMP(1));
         result.push(Inst::PUSH(Value::Nil)); // FIXME: else { nil }
@@ -564,6 +589,30 @@ fn test_emit_if_true_false() {
     );
 }
 
+#[test]
+fn test_emit_if_condition_scope() {
+    let code = "[if [let x 42] x]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::JMP(7),
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::STORE("x".to_string()),
+            Inst::JNE(2),
+            Inst::LOAD("x".to_string()),
+            Inst::JMP(1),
+            Inst::PUSH(Value::Nil),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-8, HashSet::new())),
+            Inst::PACK(0),
+            Inst::CALL
+        ]
+    );
+}
+
 fn emit_while(
     input: &str,
     while_token: &Token,
@@ -585,10 +634,8 @@ fn emit_while(
     let condition_len = condition_result.len() as i32;
     let body = &expressions[2..].to_vec();
 
-    ctx.borrow_mut().push_scope();
     let body_result = emit_multi_node(input, body, ctx)?;
-    let mut captures = ctx.borrow_mut().pop_scope();
-    captures.extend(ctx.borrow_mut().pop_scope());
+    let captures = ctx.borrow_mut().pop_scope();
     let body_len = body_result.len() as i32;
     let offset = condition_len + body_len;
 
@@ -621,6 +668,29 @@ fn test_emit_while() {
             Inst::JMP(-4),
             Inst::RET,
             Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, HashSet::new())),
+            Inst::PACK(0),
+            Inst::CALL
+        ]
+    );
+}
+
+#[test]
+fn test_emit_while_condition_scope() {
+    let code = "[while [let x false] x]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+    assert_eq!(
+        insts,
+        vec![
+            Inst::JMP(6),
+            Inst::LOAD("false".to_string()),
+            Inst::STORE("x".to_string()),
+            Inst::JNE(2),
+            Inst::LOAD("x".to_string()),
+            Inst::JMP(-5),
+            Inst::RET,
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, HashSet::new())),
             Inst::PACK(0),
             Inst::CALL
         ]
@@ -734,26 +804,27 @@ fn emit_cond(
 #[test]
 fn test_emit_cond() {
     let code = "[cond
-        [false 24]
-        [true 42]]";
+        [[let x false] 42]
+        [true x]]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(10),
+            Inst::JMP(11),
             Inst::PUSH(Value::Nil),
             Inst::LOAD("false".to_string()),
+            Inst::STORE("x".to_string()),
             Inst::JNE(2),
-            Inst::PUSH(Value::Num(24.0)),
+            Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(4),
             Inst::LOAD("true".to_string()),
             Inst::JNE(2),
-            Inst::PUSH(Value::Num(42.0)),
+            Inst::LOAD("x".to_string()),
             Inst::JMP(0),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-11, HashSet::new())),
+            Inst::PUSH_CLOSURE(Function::ClosureMeta(-12, HashSet::new())),
             Inst::PACK(0),
             Inst::CALL
         ]

@@ -164,8 +164,7 @@ fn raise_string(input: &str, pos: &mut Position) -> RaiseResult {
                             ));
                         }
                     }
-                    Some('\'') | Some('\\') | Some('b') | Some('f') | Some('n') | Some('r')
-                    | Some('t') | Some('v') => {
+                    Some('\'') | Some('\\') | Some('n') | Some('r') | Some('t') | Some('v') => {
                         chars.next();
                         pos.advance();
                     }
