@@ -146,22 +146,17 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("splice")))),
                 Some(Rc::new(
-                    |vm: &mut VM,
-                     params: Rc<RefCell<Vec<Value>>>,
-                     inst: &Inst |
-                     -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
                         if let Some(internal) =
                             Self::get_internal_vec(params.borrow().get(0).unwrap_or(&Value::Nil))
                         {
-                            if let (
-                                Some(Value::Num(index)),
-                                Some(Value::Num(del_count)),
-                            ) = (
-                                params.borrow().get(1),
-                                params.borrow().get(2),
-                            ) {
-                                let insert = Self::get_internal_vec(params.borrow().get(3).unwrap_or(&Value::Nil))
-                                    .unwrap_or(Rc::new(RefCell::new(vec![])));
+                            if let (Some(Value::Num(index)), Some(Value::Num(del_count))) =
+                                (params.borrow().get(1), params.borrow().get(2))
+                            {
+                                let insert = Self::get_internal_vec(
+                                    params.borrow().get(3).unwrap_or(&Value::Nil),
+                                )
+                                .unwrap_or(Rc::new(RefCell::new(vec![])));
                                 let start = *index as usize;
                                 let end_ = (index + del_count) as usize;
                                 let end = if end_ > internal.borrow().len() {
@@ -175,26 +170,58 @@ impl Builtin {
                                     .splice(start..end, insert.borrow().clone())
                                     .collect();
 
-                                Ok(vm
+                                return Ok(vm
                                     .current_frame()
                                     .borrow_mut()
-                                    .push(Self::wrap_internal_vec(Rc::new(RefCell::new(deleted)))))
-                            } else {
-                                Err(SquareError::InstructionError(
-                                    "splice() expect (vector, index, deleteCount, toInsert) parameter"
-                                        .to_string(),
-                                    inst.clone(),
-                                    vm.pc,
-                                ))
+                                    .push(Self::wrap_internal_vec(Rc::new(RefCell::new(deleted)))));
                             }
-                        } else {
-                            Err(SquareError::InstructionError(
-                                "splice() expect (vector, index, deleteCount, toInsert) parameter"
-                                    .to_string(),
-                                inst.clone(),
-                                vm.pc,
-                            ))
                         }
+
+                        return Err(SquareError::InstructionError(
+                            "splice() expect (vector, index, deleteCount, toInsert) parameter"
+                                .to_string(),
+                            inst.clone(),
+                            vm.pc,
+                        ));
+                    },
+                ) as Syscall),
+            ),
+        );
+
+        values.insert(
+            "slice",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("slice")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                        if let Some(internal) =
+                            Self::get_internal_vec(params.borrow().get(0).unwrap_or(&Value::Nil))
+                        {
+                            if let (Some(Value::Num(start_index)), Some(Value::Num(end_index))) =
+                                (params.borrow().get(1), params.borrow().get(2))
+                            {
+                                let start = *start_index as usize;
+                                let end_ = *end_index as usize;
+                                let end = if end_ > internal.borrow().len() {
+                                    internal.borrow().len()
+                                } else {
+                                    end_
+                                };
+
+                                let slice = internal.borrow_mut()[start..end].to_vec();
+
+                                return Ok(vm
+                                    .current_frame()
+                                    .borrow_mut()
+                                    .push(Self::wrap_internal_vec(Rc::new(RefCell::new(slice)))));
+                            }
+                        }
+
+                        return Err(SquareError::InstructionError(
+                            "slice() expect (vector, start, end) parameter".to_string(),
+                            inst.clone(),
+                            vm.pc,
+                        ));
                     },
                 ) as Syscall),
             ),
