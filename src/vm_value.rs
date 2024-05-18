@@ -112,7 +112,7 @@ impl fmt::Display for Value {
                     "[{}]",
                     val.borrow()
                         .iter()
-                        .map(|v| stringify_nested(v))
+                        .map(stringify_nested)
                         .collect::<Vec<String>>()
                         .join(", ")
                 )
@@ -124,7 +124,7 @@ impl fmt::Display for Value {
                         "[{}]",
                         v.borrow()
                             .iter()
-                            .map(|v| stringify_nested(v))
+                            .map(stringify_nested)
                             .collect::<Vec<String>>()
                             .join(", ")
                     );
@@ -184,12 +184,11 @@ impl PartialOrd for Value {
 
 #[test]
 fn test_partial_cmp() {
-    assert_eq!(
-        Value::Num(core::f64::INFINITY) > Value::Num(core::i64::MAX as f64),
-        true
+    assert!(
+        Value::Num(core::f64::INFINITY) > Value::Num(core::i64::MAX as f64)
     );
-    assert_eq!(Value::Num(0.0) == Value::Num(0 as f64), true);
-    assert_eq!(Value::Nil == Value::Bool(false), false);
+    assert!(Value::Num(0.0) == Value::Num(0 as f64));
+    assert!(Value::Nil != Value::Bool(false));
 }
 
 impl PartialEq for Value {
@@ -297,7 +296,7 @@ fn test_binop_precison() {
     lhs = (&lhs - &Value::Num(0.3)).unwrap();
 
     let mut i = Value::Num(0.0);
-    while &lhs < &Value::Num(1.0) {
+    while lhs < Value::Num(1.0) {
         lhs = (&lhs + &lhs).unwrap();
         i = (&i + &Value::Num(1.0)).unwrap();
         println!("{}", lhs);
@@ -330,7 +329,7 @@ fn test_bitop_not() {
 fn test_reference() {
     let val = Rc::new(RefCell::new(Value::Num(1.0)));
     let upval = Value::UpValue(val.clone());
-    assert_eq!(upval == Value::Num(1.0), true);
+    assert!(upval == Value::Num(1.0));
     assert_eq!(&Value::Num(1.0) + &upval, Ok(Value::Num(2.0)));
     assert_eq!(&upval + &upval, Ok(Value::Num(2.0)));
 }

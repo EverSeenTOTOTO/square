@@ -9,6 +9,12 @@ pub struct Position {
     pub cursor: usize, // char indices, not byte indices
 }
 
+impl Default for Position {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Position {
     pub fn new() -> Self {
         Self {

@@ -26,10 +26,10 @@ pub struct EmitContext {
 
 impl EmitContext {
     pub fn new() -> Self {
-        return Self {
+        Self {
             scopes: vec![(HashSet::new(), HashSet::new())],
             builtin: Builtin::new(),
-        };
+        }
     }
 
     pub fn add_local(&mut self, name: String) -> Result<(), SquareError> {
@@ -56,7 +56,7 @@ impl EmitContext {
     }
 
     pub fn mark_if_capture(&mut self, name: &String) {
-        if self.builtin.is_builtin(&name) {
+        if self.builtin.is_builtin(name) {
             return;
         }
 
@@ -82,7 +82,7 @@ impl EmitContext {
 fn unescape(s: &str) -> String {
     let mut unescaped = String::new();
 
-    if s.len() == 0 {
+    if s.is_empty() {
         return unescaped;
     }
 
@@ -111,23 +111,21 @@ fn unescape(s: &str) -> String {
 
 fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitResult {
     match token {
-        Token::Num(_, num) => {
-            return Ok(vec![Inst::PUSH(Value::Num(num.parse::<f64>().unwrap()))]);
-        }
+        Token::Num(_, num) => Ok(vec![Inst::PUSH(Value::Num(num.parse::<f64>().unwrap()))]),
         Token::Str(_, s) => {
             let val = Value::Str(unescape(s));
-            return Ok(vec![Inst::PUSH(val)]);
+            Ok(vec![Inst::PUSH(val)])
         }
         Token::Id(_, id) => {
             ctx.borrow_mut().mark_if_capture(id);
-            return Ok(vec![Inst::LOAD(id.clone())]);
+            Ok(vec![Inst::LOAD(id.clone())])
         }
         _ => {
             return Err(SquareError::SyntaxError(
                 input.to_string(),
                 format!(
                     "failed to emit_token, expect number, string or identifier name, got {}",
-                    token.to_string()
+                    token
                 ),
                 token.pos().clone(),
                 None,
@@ -187,7 +185,7 @@ fn emit_assign(
     match target.as_ref() {
         Node::Token(id) => {
             if let Token::Id(_, source) = id {
-                if properties.len() > 0 {
+                if !properties.is_empty() {
                     // = x.y z
                     ctx.borrow_mut().mark_if_capture(source);
                     result.push(Inst::LOAD(source.clone()));
@@ -231,7 +229,7 @@ fn emit_assign(
                     input.to_string(),
                     format!(
                         "failed to emit_assign, cannot assign to {}, expect identifier",
-                        id.to_string()
+                        id
                     ),
                     id.pos().clone(),
                     None,
@@ -245,7 +243,7 @@ fn emit_assign(
         _ => unreachable!(),
     }
 
-    return Ok(result);
+    Ok(result)
 }
 
 #[test]
@@ -326,24 +324,24 @@ fn emit_op(
     let op_action = |action: Inst| {
         let mut result = emit_multi_node(input, &expressions[0..2].to_vec(), ctx)?;
         result.push(action);
-        return Ok(result);
+        Ok(result)
     };
     let op_assign_action = |action: Inst| {
         let mut result = vec![];
         let mut properties = vec![];
         let mut rhs = vec![];
 
-        for node in expressions[1..].to_vec().into_iter() {
+        for node in expressions[1..].iter() {
             if let Node::Prop(_, Token::Id(_, id)) = node.as_ref() {
                 properties.push(id.clone());
             } else {
-                let insts = emit_node(input, &node, ctx)?;
+                let insts = emit_node(input, node, ctx)?;
                 rhs.extend(insts);
                 break;
             }
         }
 
-        if rhs.len() == 0 {
+        if rhs.is_empty() {
             return Err(SquareError::SyntaxError(
                 input.to_string(),
                 "failed to emit_op, expect value after property".to_string(),
@@ -356,7 +354,7 @@ fn emit_op(
             ctx.borrow_mut().mark_if_capture(source);
             result.push(Inst::LOAD(source.clone()));
 
-            if properties.len() > 0 {
+            if !properties.is_empty() {
                 let mut patch: Option<Inst> = None;
 
                 for (i, prop) in properties.iter().enumerate() {
@@ -381,7 +379,7 @@ fn emit_op(
                 result.push(Inst::STORE(source.clone()));
             }
 
-            return Ok(result);
+            Ok(result)
         } else {
             unreachable!()
         }
@@ -422,7 +420,7 @@ fn emit_op(
 
     return Err(SquareError::SyntaxError(
         input.to_string(),
-        format!("failed to emit_op, expect operator, got {}", op.to_string()),
+        format!("failed to emit_op, expect operator, got {}", op),
         op.pos().clone(),
         None,
     ));
@@ -540,7 +538,7 @@ fn emit_if(
         )));
     }
 
-    return Ok(result);
+    Ok(result)
 }
 
 #[test]
@@ -649,7 +647,7 @@ fn emit_while(
         -4 - offset,
         captures,
     )));
-    return Ok(result);
+    Ok(result)
 }
 
 #[test]
@@ -715,7 +713,7 @@ fn emit_begin(
         captures,
     )));
 
-    return Ok(result);
+    Ok(result)
 }
 
 #[test]
@@ -743,7 +741,7 @@ fn emit_cond(
     expressions: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    if expressions.len() < 1 {
+    if expressions.is_empty() {
         return Err(SquareError::SyntaxError(
             input.to_string(),
             "failed to emit_cond, expect patterns".to_string(),
@@ -798,7 +796,7 @@ fn emit_cond(
         captures,
     )));
 
-    return Ok(result);
+    Ok(result)
 }
 
 #[test]
@@ -837,7 +835,7 @@ fn emit_call(
     expressions: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    if expressions.len() == 0 {
+    if expressions.is_empty() {
         return Err(SquareError::SyntaxError(
             input.to_string(),
             "failed to emit_call, expect function name".to_string(),
@@ -885,10 +883,7 @@ fn emit_call(
             _ => {
                 return Err(SquareError::SyntaxError(
                     input.to_string(),
-                    format!(
-                        "failed to emit_call, expect function name, got {}",
-                        id.to_string()
-                    ),
+                    format!("failed to emit_call, expect function name, got {}", id),
                     id.pos().clone(),
                     None,
                 ));
@@ -919,17 +914,14 @@ fn emit_call(
         _ => {
             return Err(SquareError::SyntaxError(
                 input.to_string(),
-                format!(
-                    "failed to emit_call, expect function name, got {}",
-                    first.to_string()
-                ),
+                format!("failed to emit_call, expect function name, got {}", first),
                 left_bracket.pos().clone(),
                 None,
             ));
         }
     }
 
-    return Ok(result);
+    Ok(result)
 }
 
 #[test]
@@ -1159,7 +1151,7 @@ fn emit_expand(
                             input.to_string(),
                             format!(
                                 "failed to emit_expand, expect identifier or placeholder, got {}",
-                                id.to_string()
+                                id
                             ),
                             pos.clone(),
                             None,
@@ -1174,7 +1166,7 @@ fn emit_expand(
 
     result.push(Inst::POP); // drop pack
 
-    return Ok(result);
+    Ok(result)
 }
 
 #[test]
@@ -1296,7 +1288,7 @@ fn emit_dot(
         }
     }
 
-    return Ok(result);
+    Ok(result)
 }
 
 #[test]
@@ -1342,7 +1334,7 @@ fn emit_multi_node(
         insts.extend(emit_node(input, node, ctx)?);
     }
 
-    return Ok(insts);
+    Ok(insts)
 }
 
 pub fn emit(
@@ -1355,10 +1347,10 @@ pub fn emit(
 
     for node in ast {
         insts.push(Inst::DELIMITER(mindex));
-        mindex = mindex + 1;
+        mindex += 1;
         insts.extend(emit_node(input, node, ctx)?);
     }
     insts.push(Inst::DELIMITER(mindex));
 
-    return Ok(insts);
+    Ok(insts)
 }

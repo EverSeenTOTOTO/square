@@ -79,13 +79,11 @@ pub fn raise_token(input: &str, pos: &mut Position) -> RaiseResult {
             _ if ch.is_whitespace() => raise_whitespace(input, pos),
             _ => raise_operator(input, pos),
         },
-        None => {
-            return Err(SquareError::UnexpectedToken(
-                input.to_string(),
-                "early eof".to_string(),
-                pos.clone(),
-            ))
-        }
+        None => Err(SquareError::UnexpectedToken(
+            input.to_string(),
+            "early eof".to_string(),
+            pos.clone(),
+        )),
     }
 }
 
@@ -98,13 +96,13 @@ fn eat_n_hex(
         return Some(true);
     }
 
-    return chars
+    chars
         .next()
         .filter(|ch| ch.is_ascii_hexdigit())
         .and_then(|_| {
             pos.advance();
             eat_n_hex(chars, pos, n - 1)
-        });
+        })
 }
 
 fn raise_string(input: &str, pos: &mut Position) -> RaiseResult {
@@ -135,7 +133,7 @@ fn raise_string(input: &str, pos: &mut Position) -> RaiseResult {
                     Some('x') => {
                         chars.next();
                         pos.advance();
-                        if !eat_n_hex(&mut chars, pos, 2).is_some() {
+                        if eat_n_hex(&mut chars, pos, 2).is_none() {
                             return Err(SquareError::UnexpectedToken(
                                 input.to_string(),
                                 format!(
@@ -151,7 +149,7 @@ fn raise_string(input: &str, pos: &mut Position) -> RaiseResult {
                     Some('u') => {
                         chars.next();
                         pos.advance();
-                        if !eat_n_hex(&mut chars, pos, 4).is_some() {
+                        if eat_n_hex(&mut chars, pos, 4).is_none() {
                             return Err(SquareError::UnexpectedToken(
                                 input.to_string(),
                                 format!(
@@ -312,7 +310,7 @@ fn raise_number(input: &str, pos: &mut Position) -> RaiseResult {
             pos.advance();
         }
 
-        return count;
+        count
     };
 
     if eat_digits(&mut chars, pos) < 1 {
@@ -517,13 +515,12 @@ fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
 
         match ch {
             '~' | '[' | ']' => {}
-            '+' | '-' | '*' | '^' | '%' | '&' | '|' | '=' => match chars.peek() {
-                Some('=') => {
+            '+' | '-' | '*' | '^' | '%' | '&' | '|' | '=' => {
+                if let Some('=') = chars.peek() {
                     chars.next();
                     pos.advance();
                 }
-                _ => {}
-            },
+            }
             '/' => match chars.peek() {
                 Some('[') | Some('=') => {
                     chars.next();
@@ -535,12 +532,9 @@ fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
                 Some('>') => {
                     chars.next();
                     pos.advance();
-                    match chars.peek() {
-                        Some('=') => {
-                            chars.next();
-                            pos.advance();
-                        }
-                        _ => {}
+                    if let Some('=') = chars.peek() {
+                        chars.next();
+                        pos.advance();
                     }
                 }
                 Some('=') => {
@@ -553,12 +547,9 @@ fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
                 Some('<') => {
                     chars.next();
                     pos.advance();
-                    match chars.peek() {
-                        Some('=') => {
-                            chars.next();
-                            pos.advance();
-                        }
-                        _ => {}
+                    if let Some('=') = chars.peek() {
+                        chars.next();
+                        pos.advance();
                     }
                 }
                 Some('=') => {
@@ -580,8 +571,8 @@ fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
                     ))
                 }
             },
-            '.' => match chars.peek() {
-                Some('.') => {
+            '.' => {
+                if let Some('.') = chars.peek() {
                     chars.next();
                     pos.advance();
 
@@ -599,8 +590,8 @@ fn raise_operator(input: &str, pos: &mut Position) -> RaiseResult {
                         }
                     }
                 }
-                _ => {}
-            },
+            }
+
             _ => {
                 return Err(SquareError::UnexpectedToken(
                     input.to_string(),
@@ -770,11 +761,8 @@ fn raise_whitespace(input: &str, pos: &mut Position) -> RaiseResult {
 pub fn skip_whitespace(input: &str, pos: &mut Position) -> RaiseResult {
     let mut token = raise_token(input, pos)?;
 
-    loop {
-        match token {
-            Token::Whitespace(..) | Token::Comment(..) => token = raise_token(input, pos)?,
-            _ => break,
-        }
+    while let Token::Whitespace(..) | Token::Comment(..) = token {
+        token = raise_token(input, pos)?;
     }
 
     *pos = token.pos().clone();
@@ -815,7 +803,7 @@ pub fn lookahead(input: &str, pos: &mut Position) -> RaiseResult {
 
     *pos = backup;
 
-    return token;
+    token
 }
 #[test]
 fn test_lookahead() {
@@ -842,7 +830,7 @@ pub fn expect(pred: &TokenFn<(bool, String)>, input: &str, pos: &mut Position) -
 
         return Err(SquareError::UnexpectedToken(
             input.to_string(),
-            format!("{}, got {}", message, token.to_string()),
+            format!("{}, got {}", message, token),
             pos.clone(),
         ));
     }

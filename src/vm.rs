@@ -26,7 +26,10 @@ type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 impl Inst {
     fn exec(&self, vm: &mut VM, insts: &Vec<Inst>) -> ExecResult {
         match self {
-            Inst::PUSH(value) => Ok(vm.current_frame().borrow_mut().push(value.clone())),
+            Inst::PUSH(value) => {
+                vm.current_frame().borrow_mut().push(value.clone());
+                Ok(())
+            }
             Inst::POP => {
                 vm.current_frame().borrow_mut().pop();
                 Ok(())
@@ -38,7 +41,8 @@ impl Inst {
 
                 if let Some(val) = frame.top() {
                     let cloned = val.clone();
-                    Ok(frame.assign_local(name, cloned))
+                    frame.assign_local(name, cloned);
+                    Ok(())
                 } else {
                     Err(SquareError::InstructionError(
                         "bad store, operand stack empty".to_string(),
@@ -50,14 +54,18 @@ impl Inst {
             Inst::LOAD(name) => {
                 if let Some(value) = vm.buildin.resolve_builtin(name) {
                     let cloned = value.clone();
-                    return Ok(vm.current_frame().borrow_mut().push(cloned));
+                    return {
+                        vm.current_frame().borrow_mut().push(cloned);
+                        Ok(())
+                    };
                 }
 
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
                 if let Some(value) = frame.resolve_local(name) {
                     let cloned = value.clone();
-                    Ok(frame.push(cloned))
+                    frame.push(cloned);
+                    Ok(())
                 } else {
                     Err(SquareError::InstructionError(
                         format!("undefined variable: {}", name),
@@ -150,7 +158,8 @@ impl Inst {
                 vm.pop_frame();
 
                 // always return the top value
-                Ok(vm.current_frame().borrow_mut().push(top))
+                vm.current_frame().borrow_mut().push(top);
+                Ok(())
             }
             Inst::PUSH_CLOSURE(meta) => {
                 if let Function::ClosureMeta(offset, captures) = meta {
@@ -179,9 +188,13 @@ impl Inst {
                         }
                     }
 
-                    return Ok(frame.push(Value::Function(Rc::new(RefCell::new(
-                        Function::Closure(ip as usize, upvalues),
-                    )))));
+                    return {
+                        frame.push(Value::Function(Rc::new(RefCell::new(Function::Closure(
+                            ip as usize,
+                            upvalues,
+                        )))));
+                        Ok(())
+                    };
                 }
 
                 unreachable!()
@@ -200,7 +213,8 @@ impl Inst {
 
                 frame.sp = new_sp;
 
-                Ok(frame.push(Value::Vec(Rc::new(RefCell::new(result)))))
+                frame.push(Value::Vec(Rc::new(RefCell::new(result))));
+                Ok(())
             }
             Inst::PEEK(offset, i) => {
                 let binding = vm.current_frame();
@@ -231,7 +245,10 @@ impl Inst {
                     };
 
                     if index < pack.len() {
-                        return Ok(frame.push(pack[index].clone()));
+                        return {
+                            frame.push(pack[index].clone());
+                            Ok(())
+                        };
                     } else {
                         return Err(SquareError::InstructionError(
                             format!(
@@ -276,13 +293,13 @@ impl Inst {
 
                     let get = vm.buildin.get_syscall("get");
 
-                    return get(
+                    get(
                         vm,
                         Rc::new(RefCell::new(vec![target, Value::Str(key.to_string())])),
                         self,
-                    );
+                    )
                 } else {
-                    return Err(SquareError::InstructionError(
+                    Err(SquareError::InstructionError(
                         format!(
                             "bad peek_obj, top value is not an object, got {}",
                             vm.current_frame()
@@ -293,7 +310,7 @@ impl Inst {
                         ),
                         self.clone(),
                         vm.pc,
-                    ));
+                    ))
                 }
             }
             Inst::SET(key) => {
@@ -344,9 +361,9 @@ impl Inst {
             Inst::DELIMITER(mindex) => {
                 if *mindex < vm.mpc {
                     // TODO: optimize
-                    for i in vm.pc..insts.len() {
-                        if let Inst::DELIMITER(index) = insts[i] {
-                            if index == vm.mpc {
+                    for (i, item) in insts.iter().enumerate().skip(vm.pc) {
+                        if let Inst::DELIMITER(index) = item {
+                            if *index == vm.mpc {
                                 vm.pc = i;
                                 break;
                             }
@@ -354,7 +371,7 @@ impl Inst {
                     }
                 }
 
-                vm.mpc = vm.mpc + 1;
+                vm.mpc += 1;
                 Ok(())
             }
         }
@@ -435,10 +452,10 @@ impl Inst {
                 vm.pc = ra;
                 vm.restore_context(context.clone());
 
-                Ok(vm
-                    .current_frame()
+                vm.current_frame()
                     .borrow_mut()
-                    .push(params.borrow().get(0).unwrap_or(&Value::Nil).clone()))
+                    .push(params.borrow().first().unwrap_or(&Value::Nil).clone());
+                Ok(())
             }
         }
     }
@@ -472,6 +489,12 @@ impl fmt::Display for CallFrame {
         }
 
         Ok(())
+    }
+}
+
+impl Default for CallFrame {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -550,6 +573,12 @@ pub struct VM {
 
     #[cfg(test)]
     inst_times: HashMap<&'static str, (u128, usize)>,
+}
+
+impl Default for VM {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VM {
@@ -658,21 +687,21 @@ impl VM {
             })
             .collect();
 
-        println!("");
+        println!();
         // Sort and print by total time
         data.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         for (name, total_time, ..) in &data {
             println!("Total time for {}: {} ns", name, total_time);
         }
 
-        println!("");
+        println!();
         // Sort and print by average time
         data.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
         for (name, _, average_time, _) in &data {
             println!("Average time for {}: {:.2} ns", name, average_time);
         }
 
-        println!("");
+        println!();
         // Sort and print by count
         data.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap());
         for (name, .., count) in &data {
@@ -695,7 +724,7 @@ fn test_grow_operand_stack() {
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
 
-    assert_eq!(callframe.stack.len() >= 100, true);
+    assert!(callframe.stack.len() >= 100);
     assert_eq!(callframe.sp, 100);
     assert_eq!(callframe.top(), Some(&Value::Num(99.0)));
 }

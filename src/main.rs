@@ -1,3 +1,8 @@
+#![allow(
+    clippy::upper_case_acronyms,
+    clippy::enum_variant_names,
+    clippy::disallowed_names
+)]
 #![cfg_attr(target_family = "wasm", no_std)]
 #![cfg_attr(target_family = "wasm", no_main)]
 #![feature(if_let_guard)]
@@ -164,3 +169,5 @@ pub extern "C" fn dump_callframes(vm_addr: *mut u8) {
 
     Box::into_raw(vm);
 }
+
+pub fn main() {}

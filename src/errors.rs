@@ -3,7 +3,7 @@ use crate::{
     vm_insts::Inst,
 };
 
-use alloc::{format, string::String};
+use alloc::{string::String};
 use core::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -26,12 +26,7 @@ impl fmt::Display for SquareError {
                 write!(f, "Syntax error at {:?}, {}:\n{}", start, msg, frame)
             }
             SquareError::InstructionError(msg, inst, pc) => {
-                write!(
-                    f,
-                    "Instruction error, {}:\n{}",
-                    msg,
-                    format!("{:>4}: {}\n", pc, inst)
-                )
+                write!(f, "Instruction error, {}:\n{:>4}: {}\n", msg, pc, inst)
             }
             SquareError::RuntimeError(msg) => {
                 write!(f, "Runtime error: {}", msg)

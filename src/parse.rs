@@ -42,7 +42,7 @@ impl fmt::Display for Node {
         match self {
             Node::Token(token) => write!(f, "Token({})", token),
             Node::Expand(.., placeholders) => {
-                write!(f, "Expand({})", print_nodevec(&placeholders))
+                write!(f, "Expand({})", print_nodevec(placeholders))
             }
             Node::Fn(_, params, body) => {
                 write!(f, "Fn({}, {})", params, body)
@@ -55,18 +55,18 @@ impl fmt::Display for Node {
                     f,
                     "Assign({}.{} {})",
                     expansion,
-                    print_nodevec(&properties),
+                    print_nodevec(properties),
                     expression
                 )
             }
             Node::Op(operator, expressions) => {
-                write!(f, "Op({}, {})", operator, print_nodevec(&expressions))
+                write!(f, "Op({}, {})", operator, print_nodevec(expressions))
             }
             Node::Call(.., expressions) => {
-                write!(f, "Call({})", print_nodevec(&expressions))
+                write!(f, "Call({})", print_nodevec(expressions))
             }
             Node::Dot(instance, properties) => {
-                write!(f, "Dot({} {})", instance, print_nodevec(&properties))
+                write!(f, "Dot({} {})", instance, print_nodevec(properties))
             }
         }
     }
@@ -74,7 +74,7 @@ impl fmt::Display for Node {
 
 // wrap scanner error to parser error
 fn create_wrapper(fn_name: &'static str) -> Box<dyn Fn(RaiseResult) -> RaiseResult> {
-    return Box::new(move |result: RaiseResult| {
+    Box::new(move |result: RaiseResult| {
         if let Err(SquareError::UnexpectedToken(input, message, position)) = result {
             return Err(SquareError::SyntaxError(
                 input,
@@ -85,11 +85,11 @@ fn create_wrapper(fn_name: &'static str) -> Box<dyn Fn(RaiseResult) -> RaiseResu
         }
 
         result
-    });
+    })
 }
 
 fn expect_whitespace(input: &str, pos: &mut Position) -> Result<Token, SquareError> {
-    return expect(
+    expect(
         &|token| {
             if let Token::Whitespace(..) = token {
                 return (true, "".to_string());
@@ -98,7 +98,7 @@ fn expect_whitespace(input: &str, pos: &mut Position) -> Result<Token, SquareErr
         },
         input,
         pos,
-    );
+    )
 }
 
 fn parse_expand(input: &str, pos: &mut Position) -> ParseResult {
@@ -141,7 +141,7 @@ fn parse_expand(input: &str, pos: &mut Position) -> ParseResult {
                         input.to_string(),
                         format!(
                             "faield to parse_expand, expect identifier or placeholders, got {}",
-                            token.to_string()
+                            token
                         ),
                         token.pos().clone(),
                         None,
@@ -431,7 +431,7 @@ fn parse_prop_chain(input: &str, pos: &mut Position) -> Result<Vec<Box<Node>>, S
         nodes.push(parse_prop(input, pos)?);
     }
 
-    return Ok(nodes);
+    Ok(nodes)
 }
 
 #[test]
@@ -481,7 +481,7 @@ fn parse_assign(input: &str, pos: &mut Position) -> ParseResult {
             input.to_string(),
             format!(
                 "faield to parse_assign, expect identifier or expansion, got {}",
-                token.to_string()
+                token
             ),
             token.pos().clone(),
             None,
@@ -601,23 +601,18 @@ fn test_parse_define_prop() {
 }
 
 fn is_binary_op(op: &str) -> bool {
-    match op {
-        "+" | "-" | "*" | "/" | "^" | "%" | "&" | "|" | "==" | "!=" | ">" | "<" | ">=" | "<=" => {
-            true
-        }
-        _ => false,
-    }
+    matches!(
+        op,
+        "+" | "-" | "*" | "/" | "^" | "%" | "&" | "|" | "==" | "!=" | ">" | "<" | ">=" | "<="
+    )
 }
 
 fn is_binary_assign_op(op: &str) -> bool {
-    match op {
-        "+=" | "-=" | "*=" | "/=" | "^=" | "%=" | "&=" | "|=" => true,
-        _ => false,
-    }
+    matches!(op, "+=" | "-=" | "*=" | "/=" | "^=" | "%=" | "&=" | "|=")
 }
 
 fn is_op(op: &str) -> bool {
-    return is_binary_op(op) || is_binary_assign_op(op);
+    is_binary_op(op) || is_binary_assign_op(op)
 }
 
 fn parse_op(input: &str, pos: &mut Position) -> ParseResult {
@@ -782,7 +777,7 @@ fn parse_dot(input: &str, pos: &mut Position) -> ParseResult {
             let call = parse_call(input, pos)?;
             let nodes = parse_prop_chain(input, pos)?;
 
-            if nodes.len() == 0 {
+            if nodes.is_empty() {
                 Ok(call)
             } else {
                 Ok(Box::new(Node::Dot(call, nodes)))
@@ -800,7 +795,7 @@ fn parse_dot(input: &str, pos: &mut Position) -> ParseResult {
             ))?;
             let nodes = parse_prop_chain(input, pos)?;
 
-            if nodes.len() == 0 {
+            if nodes.is_empty() {
                 Ok(Box::new(Node::Token(id)))
             } else {
                 Ok(Box::new(Node::Dot(Box::new(Node::Token(id)), nodes)))
