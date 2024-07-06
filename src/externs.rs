@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use spin::Mutex;
 
-pub mod memory {
+pub mod ext {
     use core::fmt;
 
     mod inner {
@@ -9,6 +9,15 @@ pub mod memory {
         extern "C" {
             pub fn write(str: *const u8, len: usize);
         }
+
+        #[link(wasm_import_module = "js")]
+        extern "C" {
+            pub fn sleep(cost: u32);
+        }
+    }
+
+    pub fn sleep(cost: u32) {
+        unsafe { inner::sleep(cost) };
     }
 
     // write to memory and read by host
@@ -37,7 +46,7 @@ pub mod memory {
 }
 
 lazy_static! {
-    static ref WRITER: Mutex<memory::Writer> = Mutex::new(memory::Writer {});
+    static ref WRITER: Mutex<ext::Writer> = Mutex::new(ext::Writer {});
 }
 
 #[doc(hidden)]

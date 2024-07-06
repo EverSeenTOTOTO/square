@@ -65,7 +65,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut u8, old_size: usize, new_size: usize)
 #[cfg(target_family = "wasm")]
 #[no_mangle]
 pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Vec<vm_insts::Inst> {
-    let code = externs::memory::read(source_addr as usize, source_length);
+    let code = externs::ext::read(source_addr as usize, source_length);
 
     let ast = match parse::parse(code, &mut code_frame::Position::new()) {
         Err(e) => {

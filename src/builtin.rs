@@ -378,6 +378,26 @@ impl Builtin {
             ),
         );
 
+        values.insert(
+            "sleep",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("sleep")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                        if let Some(ref cost) = params.borrow()[0].as_num() {
+                            #[cfg(target_family = "wasm")]
+                            crate::externs::ext::sleep(*cost as u32);
+                            Ok(())
+                        } else {
+                            Err(SquareError::RuntimeError(
+                                "sleep expect a number parameter".to_string(),
+                            ))
+                        }
+                    },
+                ) as Syscall),
+            ),
+        );
+
         Self { values }
     }
 
