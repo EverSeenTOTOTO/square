@@ -236,9 +236,9 @@ fn emit_assign(
                 ));
             }
         }
-        Node::Expand(.., placehoders) => {
+        Node::Expand(.., placeholders) => {
             result.extend(value);
-            result.extend(emit_expand(input, is_define, placehoders, ctx)?);
+            result.extend(emit_expand(input, is_define, placeholders, ctx)?);
         }
         _ => unreachable!(),
     }
@@ -959,9 +959,9 @@ fn emit_fn(
     body: &Box<Node>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    if let Node::Expand(.., placehoders) = params.as_ref() {
+    if let Node::Expand(.., placeholders) = params.as_ref() {
         ctx.borrow_mut().push_scope();
-        let params_result = emit_expand(input, true, placehoders, ctx)?;
+        let params_result = emit_expand(input, true, placeholders, ctx)?;
         let body_result = emit_node(input, body, ctx)?;
         let captures = ctx.borrow_mut().pop_scope();
         let offset = (params_result.len() + body_result.len()) as i32;

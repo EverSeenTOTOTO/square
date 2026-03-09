@@ -140,7 +140,7 @@ fn parse_expand(input: &str, pos: &mut Position) -> ParseResult {
                     return Err(SquareError::SyntaxError(
                         input.to_string(),
                         format!(
-                            "faield to parse_expand, expect identifier or placeholders, got {}",
+                            "failed to parse_expand, expect identifier or placeholders, got {}",
                             token
                         ),
                         token.pos().clone(),
@@ -189,7 +189,7 @@ fn test_parse_expand() {
 }
 
 #[test]
-fn test_parse_expand_placehoders() {
+fn test_parse_expand_placeholders() {
     let input = "[. ... . ... .]";
     let mut pos = Position::new();
     let node = parse_expand(input, &mut pos).unwrap();
@@ -480,7 +480,7 @@ fn parse_assign(input: &str, pos: &mut Position) -> ParseResult {
         return Err(SquareError::SyntaxError(
             input.to_string(),
             format!(
-                "faield to parse_assign, expect identifier or expansion, got {}",
+                "failed to parse_assign, expect identifier or expansion, got {}",
                 token
             ),
             token.pos().clone(),
@@ -641,7 +641,7 @@ fn parse_op(input: &str, pos: &mut Position) -> ParseResult {
             } else {
                 return Err(SquareError::SyntaxError(
                     input.to_string(),
-                    format!("faield to parse_op, expect identifier, got {}", id),
+                    format!("failed to parse_op, expect identifier, got {}", id),
                     id.pos().clone(),
                     None,
                 ));
@@ -658,7 +658,7 @@ fn parse_op(input: &str, pos: &mut Position) -> ParseResult {
             return Err(SquareError::SyntaxError(
                 input.to_string(),
                 format!(
-                    "faield to parse_op, expect operator, got {}",
+                    "failed to parse_op, expect operator, got {}",
                     operator.source()
                 ),
                 operator.pos().clone(),
@@ -695,7 +695,7 @@ fn test_parse_op_binary_assign() {
         parse_op(input, &mut pos),
         Err(SquareError::SyntaxError(
             input.to_string(),
-            "faield to parse_op, expect identifier, got Num(42)".to_string(),
+            "failed to parse_op, expect identifier, got Num(42)".to_string(),
             Position {
                 line: 1,
                 column: 4,

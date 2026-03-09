@@ -459,7 +459,7 @@ impl Inst {
                 let syscall = vm.buildin.get_syscall(name);
                 syscall(vm, params, self)
             }
-            Function::Contiuation(ra, ref context) => {
+            Function::Continuation(ra, ref context) => {
                 vm.pc = ra;
                 vm.restore_context(context.clone());
 

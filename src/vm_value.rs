@@ -22,7 +22,7 @@ pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
     Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
     Syscall(&'static str),             // (name)
-    Contiuation(usize, Vec<Rc<RefCell<CallFrame>>>), // (ra, context)
+    Continuation(usize, Vec<Rc<RefCell<CallFrame>>>), // (ra, context)
 }
 
 impl fmt::Display for Function {
@@ -63,7 +63,7 @@ impl fmt::Display for Function {
             Function::Syscall(name) => {
                 write!(f, "Syscall({})", name)
             }
-            Function::Contiuation(ra, context) => {
+            Function::Continuation(ra, context) => {
                 write!(f, "Continuation({}, {})", ra, context.len() - 1)
             }
         }
@@ -399,7 +399,7 @@ impl Value {
                 }
             }
             Value::Function(f) => match *f.borrow() {
-                Function::Contiuation(..) => "cc",
+                Function::Continuation(..) => "cc",
                 _ => "fn",
             },
             Value::Nil => "nil",

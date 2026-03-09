@@ -389,7 +389,7 @@ impl Builtin {
                 Some(Rc::new(
                     |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
                         if let Some(ref iife) = params.borrow()[0].as_fn() {
-                            let cc = Function::Contiuation(vm.pc, vm.save_context());
+                            let cc = Function::Continuation(vm.pc, vm.save_context());
 
                             inst.call(
                                 vm,
