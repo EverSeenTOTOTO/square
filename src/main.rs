@@ -128,11 +128,9 @@ pub extern "C" fn step(vm_addr: *mut u8, insts_addrr: *const u8) {
     let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
     let insts = unsafe { Box::from_raw(insts_addrr as *mut Vec<vm_insts::Inst>) };
 
-    match vm.step(&insts) {
-        Err(e) => {
-            panic!("{}", e);
-        }
-        Ok(_) => {}
+    runtime::ensure_started(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>);
+    if let Err(e) = runtime::step_one(&mut vm, &insts) {
+        panic!("{}", e);
     }
 
     Box::into_raw(vm);
@@ -142,11 +140,9 @@ pub extern "C" fn step(vm_addr: *mut u8, insts_addrr: *const u8) {
 #[cfg(target_family = "wasm")]
 #[no_mangle]
 pub extern "C" fn run(vm_addr: *mut u8, insts_addrr: *const u8) {
-    // 交给运行时：它会登记 vm/insts 句柄、把主程序续延 spawn 进就绪队列、跑一轮 tick。
-    // 任务若 sleep，控制权交还事件循环；之后宿主的 setTimeout/queueMicrotask 回调
-    // `wake_by_id` 重新进入 wasm 续跑。vm/insts 的所有权随后续留在裸指针里（跨调用栈存活），
-    // 这里不能 `Box::from_raw` 后让其 drop——会释放掉运行时还要用的实例。
-    runtime::start(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>);
+    if let Err(e) = runtime::start(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>) {
+        panic!("{}", e);
+    }
 }
 
 #[cfg(target_family = "wasm")]
@@ -155,6 +151,7 @@ pub extern "C" fn reset(vm_addr: *mut u8) {
     let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
 
     vm.reset();
+    runtime::reset();
 
     Box::into_raw(vm);
 }

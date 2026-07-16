@@ -1,5 +1,5 @@
 use alloc::{format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
-use core::{cell::{Cell, RefCell}, fmt};
+use core::{cell::RefCell, fmt};
 
 use hashbrown::HashMap;
 
@@ -21,21 +21,51 @@ use std::time::Instant;
 
 pub type ExecResult = Result<(), SquareError>;
 
-/// 一段被 unwind 出来的 VM 栈快照：恢复地址 `ra`（下一条要执行的指令）+ 调用栈快照 `context`
-/// （`save_context`）。命名上和 square 语言层的续延值 [`Function::Contiuation`] 区分开——
-/// 那是「暴露给用户程序的一等续延」，而 `UnwindFrame` 是「运行时调度器持有的 task 执行快照」，
-/// 两者碰巧都用 unwind/rewind 技术（捕获 = unwind，恢复 = rewind），恢复逻辑也一致
-/// （`restore_context` + `vm.pc = ra`）。
+/// 被 unwind 出来的 VM 栈快照：`ra`（下一条指令）+ 调用栈 `context`。由 runtime 的
+/// `tick`/`step_tick` rewind 回 VM 继续跑。与语言层续延值 `Function::Continuation` 区分：
+/// 后者是暴露给用户程序的一等续延，`UnwindFrame` 是调度器持有的 task 快照。
 #[derive(Clone)]
 pub struct UnwindFrame {
     pub ra: usize,
     pub context: Vec<Rc<RefCell<CallFrame>>>,
 }
 
+/// 运行时任务。`frame` 存在性即 park 信号：`Some` = 正在 park（续延已存、不在 VM 里活），
+/// `None` = live（状态在 VM 里）。定义在 `vm.rs` 是因为 native 单测也要构造（runtime.rs 整个 `#[cfg(wasm)]`）。
+pub struct Task {
+    pub frame: RefCell<Option<UnwindFrame>>,
+}
+
+/// 运行时上下文，对标 `Future::poll` 的 `cx`：把当前 task 身份顺调用栈（`run→step→exec→syscall`）
+/// 传下去，让 syscall 不读全局就知道「我是谁」。park 能力的 impl 在 `runtime.rs`。
+pub struct RtCx {
+    pub task: Rc<Task>,
+    #[cfg(target_family = "wasm")]
+    pub rt: &'static crate::runtime::Runtime,
+}
+
+impl RtCx {
+    #[cfg(not(target_family = "wasm"))]
+    pub fn new(task: Rc<Task>) -> Self {
+        Self { task }
+    }
+
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self::new(Rc::new(Task {
+            frame: RefCell::new(None),
+        }))
+    }
+
+    pub fn is_parked(&self) -> bool {
+        self.task.frame.borrow().is_some()
+    }
+}
+
 type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 
 impl Inst {
-    fn exec(&self, vm: &mut VM, insts: &Vec<Inst>) -> ExecResult {
+    fn exec(&self, vm: &mut VM, cx: &mut RtCx, insts: &Vec<Inst>) -> ExecResult {
         match self {
             Inst::PUSH(value) => {
                 vm.current_frame().borrow_mut().push(value.clone());
@@ -144,7 +174,7 @@ impl Inst {
                     if let Some(args) = params {
                         vm.current_frame().borrow_mut().sp -= 2;
                         let is_tail_call = vm.pc + 1 < insts.len() && insts[vm.pc + 1] == Inst::RET;
-                        return self.call(vm, func, args, is_tail_call);
+                        return self.call(vm, cx, func, args, is_tail_call);
                     }
                 }
 
@@ -296,6 +326,7 @@ impl Inst {
                     {
                         return self.call(
                             vm,
+                            cx,
                             getter,
                             Rc::new(RefCell::new(vec![Value::Str(key.to_string())])),
                             false,
@@ -307,6 +338,7 @@ impl Inst {
                     get(
                         vm,
                         Rc::new(RefCell::new(vec![target, Value::Str(key.to_string())])),
+                        cx,
                         self,
                     )
                 } else {
@@ -340,6 +372,7 @@ impl Inst {
                     {
                         return self.call(
                             vm,
+                            cx,
                             setter,
                             Rc::new(RefCell::new(vec![Value::Str(key.to_string()), value])),
                             false,
@@ -355,6 +388,7 @@ impl Inst {
                             Value::Str(key.to_string()),
                             value,
                         ])),
+                        cx,
                         self,
                     );
                 }
@@ -422,6 +456,7 @@ impl Inst {
     pub fn call(
         &self,
         vm: &mut VM,
+        cx: &mut RtCx,
         closure: Rc<RefCell<Function>>,
         params: Rc<RefCell<Vec<Value>>>,
         is_tail_call: bool,
@@ -457,7 +492,7 @@ impl Inst {
             }
             Function::Syscall(name) => {
                 let syscall = vm.buildin.get_syscall(name);
-                syscall(vm, params, self)
+                syscall(vm, params, cx, self)
             }
             Function::Continuation(ra, ref context) => {
                 vm.pc = ra;
@@ -582,11 +617,6 @@ pub struct VM {
 
     buildin: Builtin,
 
-    /// 当前正在执行的指令序列指针。`run` 开始时登记，供 syscall 调 [`VM::halt`] 终止本次 tick
-    /// （把 pc 拨到末尾让 `while pc < len` 自然退出）。`'static` 仅是类型上的让步——实际生命周期
-    /// 限于一次 `run` 调用期间，单线程下解引用安全。
-    insts: Cell<*const Vec<Inst>>,
-
     #[cfg(test)]
     inst_times: HashMap<&'static str, (u128, usize)>,
 }
@@ -604,7 +634,6 @@ impl VM {
             buildin: Builtin::new(),
             pc: 0,
             mpc: 0,
-            insts: Cell::new(core::ptr::null()),
 
             #[cfg(test)]
             inst_times: HashMap::new(),
@@ -646,25 +675,6 @@ impl VM {
         self.call_frames = context;
     }
 
-    /// 登记本次 `run` 要执行的指令序列，供 [`halt`](VM::halt) 使用。由 `run` 在开头调用。
-    #[inline]
-    fn set_insts(&self, insts: *const Vec<Inst>) {
-        self.insts.set(insts);
-    }
-
-    /// 终止本次 tick：把 `pc` 拨到指令序列末尾，让 `run` 的 `while pc < len` 循环自然退出。
-    /// 供 `sleep` 这类「捕获外侧续延后必须停住当前执行流」的 syscall 调用——它先把续延存好、
-    /// 通知宿主排定时器，再调 `halt` 终止本次 tick。`step` 随后的 `pc += 1` 只会让 pc 更大，
-    /// 同样满足 `>= len` 退出，不会越界取指（循环是先判 `pc < len` 再取指）。
-    pub fn halt(&mut self) {
-        // SAFETY：insts 由 run 登记为本 tick 的指令序列，单线程下地址有效。
-        let insts = self.insts.get();
-        if !insts.is_null() {
-            let len = unsafe { (*insts).len() };
-            self.pc = len;
-        }
-    }
-
     /// 把当前 VM 状态序列化成一段字节，供宿主调试面板读取（走专用数据通道，与 `println`
     /// 程序输出分离）。布局（全部 little-endian u32 长度前缀 + UTF-8 字节）：
     ///   `[pc][n_frames] ( [ra] [n_locals] ( [k][v] )* [n_stack] ( [v] )* )*`
@@ -699,7 +709,7 @@ impl VM {
         buf
     }
 
-    pub fn step(&mut self, insts: &Vec<Inst>) -> ExecResult {
+    pub fn step(&mut self, insts: &Vec<Inst>, cx: &mut RtCx) -> ExecResult {
         let inst = &insts[self.pc];
 
         #[cfg(test)]
@@ -708,7 +718,7 @@ impl VM {
         #[cfg(test)]
         let start = Instant::now();
 
-        inst.exec(self, insts)?;
+        inst.exec(self, cx, insts)?;
 
         self.pc += 1;
 
@@ -729,16 +739,17 @@ impl VM {
         Ok(())
     }
 
-    pub fn run(&mut self, insts: &Vec<Inst>) -> ExecResult {
+    pub fn run(&mut self, insts: &Vec<Inst>, cx: &mut RtCx) -> ExecResult {
         self.current_frame().borrow_mut().ra = insts.len();
-        // 登记 insts，供 syscall 调 halt 终止本次 tick。
-        self.set_insts(insts as *const Vec<Inst>);
 
         #[cfg(test)]
         self.inst_times.clear();
 
         while self.pc < insts.len() {
-            self.step(insts)?;
+            self.step(insts, cx)?;
+            if cx.is_parked() {
+                break; // sleep park：续延已存回 task.frame，停止本次推进
+            }
         }
 
         Ok(())
@@ -785,13 +796,14 @@ impl VM {
 #[test]
 fn test_grow_operand_stack() {
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
     let mut insts = vec![];
 
     for i in 0..100 {
         insts.push(Inst::PUSH(Value::Num(i as f64)))
     }
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -806,9 +818,10 @@ fn test_grow_operand_stack() {
 #[test]
 fn test_snapshot_roundtrip() {
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
     let insts = vec![Inst::PUSH(Value::Num(42.0)), Inst::POP];
 
-    vm.run(&insts).unwrap(); // 跑完后 pc=2，栈空
+    vm.run(&insts, &mut cx).unwrap(); // 跑完后 pc=2，栈空
 
     let bytes = vm.snapshot();
 
@@ -859,8 +872,9 @@ fn test_exec_token() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -874,11 +888,12 @@ fn test_exec_load() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     vm.current_frame()
         .borrow_mut()
         .assign_local("x", Value::Num(42.0));
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -892,9 +907,10 @@ fn test_exec_load_undefined() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     assert_eq!(
-        vm.run(&insts),
+        vm.run(&insts, &mut cx),
         Err(SquareError::InstructionError(
             "undefined variable: x".to_string(),
             Inst::LOAD("x".to_string()),
@@ -909,8 +925,9 @@ fn test_exec_define() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -923,8 +940,9 @@ fn test_exec_assign() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -937,8 +955,9 @@ fn test_exec_assign_capture() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -951,8 +970,9 @@ fn test_exec_define_expand() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -965,8 +985,9 @@ fn test_exec_assign_expand() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -979,8 +1000,9 @@ fn test_exec_assign_expand_capture() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -993,8 +1015,9 @@ fn test_exec_define_expand_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1007,9 +1030,10 @@ fn test_exec_define_expand_dot_error() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     assert_eq!(
-        vm.run(&insts),
+        vm.run(&insts, &mut cx),
         Err(SquareError::InstructionError(
             "bad peek_vec, index 1 out of range, pack length is 1".to_string(),
             Inst::PEEK(0, 1),
@@ -1024,8 +1048,9 @@ fn test_exec_define_expand_greed() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1038,9 +1063,10 @@ fn test_exec_define_expand_greed_error() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     assert_eq!(
-        vm.run(&insts),
+        vm.run(&insts, &mut cx),
         Err(SquareError::InstructionError(
             "bad peek_vec, offset 0 out of range, pack length is 0".to_string(),
             Inst::PEEK(0, -1),
@@ -1057,8 +1083,9 @@ fn test_exec_define_expand_nested() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1071,8 +1098,9 @@ fn test_exec_define_chain() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1087,8 +1115,9 @@ fn test_exec_op() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1101,11 +1130,12 @@ fn test_exec_op_assign() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     vm.current_frame()
         .borrow_mut()
         .assign_local("x", Value::Num(1.0));
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1121,8 +1151,9 @@ fn test_exec_op_assign_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1135,6 +1166,7 @@ fn test_exec_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     let mut o = HashMap::new();
     let mut x = HashMap::new();
@@ -1144,7 +1176,7 @@ fn test_exec_dot() {
     vm.current_frame()
         .borrow_mut()
         .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1157,6 +1189,7 @@ fn test_exec_assign_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     let mut o = HashMap::new();
     let mut x = HashMap::new();
@@ -1166,7 +1199,7 @@ fn test_exec_assign_dot() {
     vm.current_frame()
         .borrow_mut()
         .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1191,9 +1224,10 @@ o.x
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     insts.iter().for_each(|inst| println!("{}", inst));
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1206,8 +1240,9 @@ fn test_exec_begin() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1222,8 +1257,9 @@ fn test_exec_scope() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1237,12 +1273,13 @@ fn test_exec_tail_call() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
     let mut max_depth = vm.call_frames.len();
 
     vm.current_frame().borrow_mut().ra = insts.len();
 
     while vm.pc < insts.len() {
-        vm.step(&insts).unwrap();
+        vm.step(&insts, &mut cx).unwrap();
         if vm.call_frames.len() > max_depth {
             max_depth = vm.call_frames.len();
         }
@@ -1260,8 +1297,9 @@ fn test_exec_if_true() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1274,8 +1312,9 @@ fn test_exec_if_false_nil() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1288,8 +1327,9 @@ fn test_exec_if_false() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1302,11 +1342,12 @@ fn test_exec_while() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     vm.current_frame()
         .borrow_mut()
         .assign_local("x", Value::Num(0.0));
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1321,8 +1362,9 @@ fn test_exec_match() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1335,8 +1377,9 @@ fn test_exec_fn_call() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1349,8 +1392,9 @@ fn test_exec_fn_call_with_params() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1367,8 +1411,9 @@ fn test_exec_fn_overwrite_params() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1389,8 +1434,9 @@ fn test_exec_fn_capture_assign() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1412,8 +1458,9 @@ fn test_exec_fn_capture_nested() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1431,8 +1478,9 @@ fn test_exec_fn_capture_scope_lift() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1450,8 +1498,9 @@ fn test_exec_fn_capture_error() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap(); // FIXME: should report undefined variable: x
+    vm.run(&insts, &mut cx).unwrap(); // FIXME: should report undefined variable: x
     assert_eq!(vm.current_frame().borrow().top(), Some(&Value::Nil))
 }
 
@@ -1465,9 +1514,10 @@ fn test_exec_fn_capture_shadow() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     assert_eq!(
-        vm.run(&insts),
+        vm.run(&insts, &mut cx),
         Err(SquareError::InstructionError(
             "undefined variable: x".to_string(),
             Inst::LOAD("x".to_string()),
@@ -1487,8 +1537,9 @@ fn test_exec_fn_capture_lazy() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1504,8 +1555,9 @@ fn test_exec_fn_capture_self() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1521,8 +1573,9 @@ fn test_exec_builtin_value() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1547,8 +1600,9 @@ fn test_exec_builtin_vec_methods() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1574,8 +1628,9 @@ o.x
     let ast = parse(&code, &mut Position::new()).unwrap();
     let insts = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1602,8 +1657,9 @@ o.x
     let ast = parse(&code, &mut Position::new()).unwrap();
     let insts = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1618,8 +1674,9 @@ fn test_callcc_flow() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1634,8 +1691,9 @@ fn test_callcc_break() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1654,8 +1712,9 @@ cc
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1674,8 +1733,9 @@ cc
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1694,8 +1754,9 @@ cc
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1714,8 +1775,9 @@ cc
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
@@ -1734,9 +1796,10 @@ x
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
     assert_eq!(
-        vm.run(&insts),
+        vm.run(&insts, &mut cx),
         Err(SquareError::InstructionError(
             "undefined variable: x".to_string(),
             Inst::LOAD("x".to_string()),
@@ -1762,7 +1825,8 @@ fn test_profile() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
+    let mut cx = RtCx::test();
 
-    vm.run(&insts).unwrap();
+    vm.run(&insts, &mut cx).unwrap();
     vm.print_times();
 }

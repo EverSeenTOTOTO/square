@@ -2,7 +2,7 @@ use core::cell::RefCell;
 
 use alloc::format;
 use alloc::rc::Rc;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use hashbrown::HashMap;
@@ -11,44 +11,39 @@ use crate::errors::SquareError;
 use crate::vm_insts::Inst;
 use crate::vm_value::Object;
 use crate::{
-    vm::{CallFrame, ExecResult, UnwindFrame, VM},
+    vm::{ExecResult, RtCx, VM},
     vm_value::{Function, Value},
 };
 
-// Fn(vm, params, inst)
-pub type Syscall = Rc<dyn Fn(&mut VM, Rc<RefCell<Vec<Value>>>, &Inst) -> ExecResult>;
+#[cfg(target_family = "wasm")]
+use crate::vm::{CallFrame, UnwindFrame};
+#[cfg(target_family = "wasm")]
+use alloc::string::String;
+
+// Fn(vm, params, cx, inst)
+pub type Syscall =
+    Rc<dyn Fn(&mut VM, Rc<RefCell<Vec<Value>>>, &mut RtCx, &Inst) -> ExecResult>;
 
 pub static INTERNAL_KEY: &str = "__internal__";
 pub static GETTER_KEY: &str = "__get__";
 pub static SETTER_KEY: &str = "__set__";
 
-/// 把一段闭包（`ip` + `upvalues`）包装成一个 `UnwindFrame`，供 `defer`/`spawn` 使用。
+/// 把闭包（`ip` + `upvalues`）包装成 `UnwindFrame`，供 `defer`/`spawn` 使用。
 ///
-/// 复刻 `VM::call` 对 `Function::Closure` 的初始 CallFrame 约定（`vm.rs`）：闭包体入口前有一条
-/// `JMP`（`PUSH_CLOSURE` 计算出的 `ip` 就指向它），而 `Inst::CALL` 的执行路径是 `call()` 设
-/// `vm.pc = ip`、随后 `step` 做 `pc += 1`——也就是说真正从 **`ip + 1`** 开始执行闭包体。我们
-/// 在 `tick` 里直接 `vm.pc = cont.ra` 后进 `run`，`run` 的第一条指令就是 `insts[ra]`，故这里
-/// `ra` 必须取 `ip + 1` 才与正常调用对齐，否则会先误执行那条 `JMP`。
-///
-/// 另外，闭包体入口（`ip+1`）是 `POP`/参数解包，会弹出调用方压入的参数 vec，所以这里要在
-/// `stack[0]` 预置一个参数 vec、`sp = 1`，否则入口 `POP` 会让空栈下溢。`defer`/`spawn` 的任务
-/// 没有实参，故压一个空 vec。
+/// `ra = ip + 1`：`PUSH_CLOSURE` 的 `ip` 指向闭包体入口前的 `JMP`，正常 `CALL` 靠 `step` 的
+/// `pc += 1` 跳过它；这里 `tick` 直接 `vm.pc = ra` 进 `run`，没有那步 +1，故手动对齐到 `ip + 1`。
+/// `stack[0]` 预置空参数 vec、`sp = 1` 是为了喂饱入口的 `POP`（参数解包）。sentinel frame
+/// 垫底，让闭包末尾 `RET` 的 `pop_frame` + `current_frame().push` 有 frame 可落。
 #[cfg(target_family = "wasm")]
 fn new_closure_unwind(ip: usize, upvalues: &HashMap<String, Value>) -> UnwindFrame {
-    // 预置空参数 vec，对齐闭包体入口 POP 的栈约定。
     let mut frame = CallFrame::new();
     frame.stack[0] = Value::Vec(Rc::new(RefCell::new(vec![])));
     frame.sp = 1;
     frame.extend_locals(upvalues.clone());
-
-    // 再垫一个 sentinel frame：闭包体末尾 `RET` 会 `pop_frame` 弹掉自己的 frame，随后
-    // `current_frame().push(top)`（vm.rs）要求栈上还有 frame——否则 `last().unwrap()` 崩。
-    // sentinel 垫底让 RET 落到它身上不崩；此时 pc 已被 RET 设为闭包 frame 的 ra（`run` 起始
-    // 时会被覆盖成 insts.len()），`run` 循环随即因 `pc >= len` 退出，任务完成。
     let sentinel = CallFrame::new();
 
     UnwindFrame {
-        ra: ip + 1, // 见上方：对齐 CALL 的落地（跳过入口 JMP）
+        ra: ip + 1,
         context: vec![Rc::new(RefCell::new(sentinel)), Rc::new(RefCell::new(frame))],
     }
 }
@@ -75,7 +70,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("print")))),
                 Some(Rc::new(
-                    |_vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _inst: &Inst| -> ExecResult {
+                    |_vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, _inst: &Inst| -> ExecResult {
                         params.borrow().iter().for_each(|val| print!("{}", val));
                         Ok(())
                     },
@@ -88,7 +83,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("println")))),
                 Some(Rc::new(
-                    |_vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _inst: &Inst| -> ExecResult {
+                    |_vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, _inst: &Inst| -> ExecResult {
                         params.borrow().iter().for_each(|val| print!("{}", val));
                         println!();
                         Ok(())
@@ -102,7 +97,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("vec")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, _inst: &Inst| -> ExecResult {
                         // params have already be packed
                         vm.current_frame()
                             .borrow_mut()
@@ -118,7 +113,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("at")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         if let Some(internal) =
                             Self::get_internal_vec(params.borrow().first().unwrap_or(&Value::Nil))
                         {
@@ -155,7 +150,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("len")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         if let Some(internal) =
                             Self::get_internal_vec(params.borrow().first().unwrap_or(&Value::Nil))
                         {
@@ -180,7 +175,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("splice")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         if let Some(internal) =
                             Self::get_internal_vec(params.borrow().first().unwrap_or(&Value::Nil))
                         {
@@ -231,7 +226,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("slice")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         if let Some(internal) =
                             Self::get_internal_vec(params.borrow().first().unwrap_or(&Value::Nil))
                         {
@@ -274,7 +269,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("typeof")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         if let Some(val) = params.borrow().first() {
                             return {
                                 vm.current_frame()
@@ -299,7 +294,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("obj")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         let obj = Rc::new(RefCell::new(HashMap::new()));
 
                         for i in (0..params.borrow().len()).step_by(2) {
@@ -331,7 +326,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("set")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         let target = params.borrow().first().unwrap_or(&Value::Nil).as_obj();
                         let key = params.borrow().get(1).unwrap_or(&Value::Nil).as_str();
                         let value = params.borrow().get(2).unwrap_or(&Value::Nil).clone();
@@ -360,7 +355,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("get")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         let target = params.borrow().first().unwrap_or(&Value::Nil).as_obj();
                         let key = params.borrow().get(1).unwrap_or(&Value::Nil).as_str();
 
@@ -387,12 +382,13 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("callcc")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, inst: &Inst| -> ExecResult {
-                        if let Some(ref iife) = params.borrow()[0].as_fn() {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
+                        if let Some(iife) = params.borrow().first().and_then(Value::as_fn) {
                             let cc = Function::Continuation(vm.pc, vm.save_context());
 
                             inst.call(
                                 vm,
+                                cx,
                                 iife.clone(),
                                 Rc::new(RefCell::new(vec![Value::Function(Rc::new(
                                     RefCell::new(cc),
@@ -414,23 +410,15 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("sleep")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _inst: &Inst| -> ExecResult {
-                        if let Some(ref cost) = params.borrow()[0].as_num() {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, _inst: &Inst| -> ExecResult {
+                        if let Some(cost) = params.borrow().first().and_then(Value::as_num) {
                             #[cfg(target_family = "wasm")]
                             {
-                                // 复用 callcc 的 unwind 套路：捕获外侧续延。`ra = vm.pc + 1`
-                                // （CALL 的下一条）——注意和 callcc 的 `Function::Continuation(vm.pc, ..)`
-                                // 不同：callcc 的续延是通过 `Inst::CALL` 恢复的（`step` 的 `pc += 1`
-                                // 会自动跳过），而我们这里由 `tick` 直接 `vm.pc = frame.ra` 后进 `run`，
-                                // 没有那一步 +1，所以 ra 要手动 +1，否则会重新执行 `[sleep ...]` 这条 CALL。
                                 let frame = UnwindFrame {
                                     ra: vm.pc + 1,
                                     context: vm.save_context(),
                                 };
-                                crate::runtime::schedule_sleep(frame, *cost as u32);
-                                // 终止本次 tick：把 pc 拨到末尾，让 run 循环自然退出（不再执行
-                                // sleep 之后的指令）。续延已存好，等 wake_by_id rewind 恢复。
-                                vm.halt();
+                                cx.park_sleep(frame, cost as u32);
                             }
                             Ok(())
                         } else {
@@ -448,16 +436,12 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("defer")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _inst: &Inst| -> ExecResult {
-                        if let Some(ref func) = params.borrow()[0].as_fn() {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, _inst: &Inst| -> ExecResult {
+                        if let Some(func) = params.borrow().first().and_then(Value::as_fn) {
                             #[cfg(target_family = "wasm")]
                             {
-                                // 把传入的闭包包装成一段独立续延（从其入口 ip+1 恢复），交给运行时
-                                // 做「延迟 spawn」：宿主用 queueMicrotask 在当前同步栈清空后唤醒它。
-                                // 当前任务不停，继续往下跑（和 sleep 的区别）。
                                 if let Function::Closure(ip, ref upvalues) = *func.borrow() {
-                                    let frame = new_closure_unwind(ip, upvalues);
-                                    crate::runtime::schedule_defer(frame);
+                                    cx.defer(new_closure_unwind(ip, upvalues));
                                 }
                             }
                             let _ = vm;
@@ -477,18 +461,15 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("spawn")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _inst: &Inst| -> ExecResult {
-                        if let Some(ref func) = params.borrow()[0].as_fn() {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, _inst: &Inst| -> ExecResult {
+                        if let Some(func) = params.borrow().first().and_then(Value::as_fn) {
                             #[cfg(target_family = "wasm")]
                             {
-                                // 把传入的闭包包装成 `UnwindFrame`（从其入口 ip+1 恢复），直接进就绪队列。
-                                // 栈快照构造细节见 `new_closure_unwind`。
                                 if let Function::Closure(ip, ref upvalues) = *func.borrow() {
-                                    let frame = new_closure_unwind(ip, upvalues);
-                                    crate::runtime::spawn(frame);
+                                    cx.spawn(new_closure_unwind(ip, upvalues));
                                 }
                             }
-                            let _ = vm; // 非 wasm 平台 spawn 无操作
+                            let _ = vm;
                             Ok(())
                         } else {
                             Err(SquareError::RuntimeError(
