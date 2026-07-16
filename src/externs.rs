@@ -9,15 +9,6 @@ pub mod ext {
         extern "C" {
             pub fn write(str: *const u8, len: usize);
         }
-
-        #[link(wasm_import_module = "js")]
-        extern "C" {
-            pub fn sleep(cost: u32);
-        }
-    }
-
-    pub fn sleep(cost: u32) {
-        unsafe { inner::sleep(cost) };
     }
 
     // write to memory and read by host

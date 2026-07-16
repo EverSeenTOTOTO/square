@@ -1,0 +1,10 @@
+; async.sq —— 演示 square 异步运行时：spawn 并发 + sleep + defer
+; 运行：node run.mjs examples/async.sq
+; 预期：三个并发 sleep(800) 总耗时 ≈ 800ms（并发），defer 在主流程之后执行。
+
+[spawn /[] [begin [sleep 800] [println 'task A done']]]
+[spawn /[] [begin [sleep 800] [println 'task B done']]]
+[spawn /[] [begin [sleep 800] [println 'task C done']]]
+
+[println 'main: 3 tasks spawned']
+[defer /[] [println 'deferred: ran after main sync stack']]

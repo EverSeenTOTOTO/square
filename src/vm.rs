@@ -1,5 +1,5 @@
 use alloc::{format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
-use core::{cell::RefCell, fmt};
+use core::{cell::{Cell, RefCell}, fmt};
 
 use hashbrown::HashMap;
 
@@ -20,6 +20,17 @@ use crate::parse::parse;
 use std::time::Instant;
 
 pub type ExecResult = Result<(), SquareError>;
+
+/// 一段被 unwind 出来的 VM 栈快照：恢复地址 `ra`（下一条要执行的指令）+ 调用栈快照 `context`
+/// （`save_context`）。命名上和 square 语言层的续延值 [`Function::Contiuation`] 区分开——
+/// 那是「暴露给用户程序的一等续延」，而 `UnwindFrame` 是「运行时调度器持有的 task 执行快照」，
+/// 两者碰巧都用 unwind/rewind 技术（捕获 = unwind，恢复 = rewind），恢复逻辑也一致
+/// （`restore_context` + `vm.pc = ra`）。
+#[derive(Clone)]
+pub struct UnwindFrame {
+    pub ra: usize,
+    pub context: Vec<Rc<RefCell<CallFrame>>>,
+}
 
 type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 
@@ -571,6 +582,11 @@ pub struct VM {
 
     buildin: Builtin,
 
+    /// 当前正在执行的指令序列指针。`run` 开始时登记，供 syscall 调 [`VM::halt`] 终止本次 tick
+    /// （把 pc 拨到末尾让 `while pc < len` 自然退出）。`'static` 仅是类型上的让步——实际生命周期
+    /// 限于一次 `run` 调用期间，单线程下解引用安全。
+    insts: Cell<*const Vec<Inst>>,
+
     #[cfg(test)]
     inst_times: HashMap<&'static str, (u128, usize)>,
 }
@@ -588,6 +604,7 @@ impl VM {
             buildin: Builtin::new(),
             pc: 0,
             mpc: 0,
+            insts: Cell::new(core::ptr::null()),
 
             #[cfg(test)]
             inst_times: HashMap::new(),
@@ -629,6 +646,25 @@ impl VM {
         self.call_frames = context;
     }
 
+    /// 登记本次 `run` 要执行的指令序列，供 [`halt`](VM::halt) 使用。由 `run` 在开头调用。
+    #[inline]
+    fn set_insts(&self, insts: *const Vec<Inst>) {
+        self.insts.set(insts);
+    }
+
+    /// 终止本次 tick：把 `pc` 拨到指令序列末尾，让 `run` 的 `while pc < len` 循环自然退出。
+    /// 供 `sleep` 这类「捕获外侧续延后必须停住当前执行流」的 syscall 调用——它先把续延存好、
+    /// 通知宿主排定时器，再调 `halt` 终止本次 tick。`step` 随后的 `pc += 1` 只会让 pc 更大，
+    /// 同样满足 `>= len` 退出，不会越界取指（循环是先判 `pc < len` 再取指）。
+    pub fn halt(&mut self) {
+        // SAFETY：insts 由 run 登记为本 tick 的指令序列，单线程下地址有效。
+        let insts = self.insts.get();
+        if !insts.is_null() {
+            let len = unsafe { (*insts).len() };
+            self.pc = len;
+        }
+    }
+
     pub fn step(&mut self, insts: &Vec<Inst>) -> ExecResult {
         let inst = &insts[self.pc];
 
@@ -661,6 +697,8 @@ impl VM {
 
     pub fn run(&mut self, insts: &Vec<Inst>) -> ExecResult {
         self.current_frame().borrow_mut().ra = insts.len();
+        // 登记 insts，供 syscall 调 halt 终止本次 tick。
+        self.set_insts(insts as *const Vec<Inst>);
 
         #[cfg(test)]
         self.inst_times.clear();

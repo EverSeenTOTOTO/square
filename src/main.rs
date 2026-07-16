@@ -5,6 +5,9 @@
 )]
 #![cfg_attr(target_family = "wasm", no_std)]
 #![cfg_attr(target_family = "wasm", no_main)]
+// 单线程 wasm：全局可变状态用 `static mut` 表达，引用它本无并发风险，但编译器会对
+// 「拿 `static mut` 的引用」报警（`static_mut_refs`）。整库放行（与 wasm-demo 一致）。
+#![cfg_attr(target_family = "wasm", allow(static_mut_refs))]
 #![feature(if_let_guard)]
 
 #[cfg(target_family = "wasm")]
@@ -20,6 +23,8 @@ extern crate alloc;
 mod allocator;
 #[cfg(target_family = "wasm")]
 mod externs;
+#[cfg(target_family = "wasm")]
+mod runtime;
 
 mod builtin;
 mod code_frame;
@@ -122,18 +127,11 @@ pub extern "C" fn step(vm_addr: *mut u8, insts_addrr: *const u8) {
 #[cfg(target_family = "wasm")]
 #[no_mangle]
 pub extern "C" fn run(vm_addr: *mut u8, insts_addrr: *const u8) {
-    let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
-    let insts = unsafe { Box::from_raw(insts_addrr as *mut Vec<vm_insts::Inst>) };
-
-    match vm.run(&insts) {
-        Err(e) => {
-            panic!("{}", e);
-        }
-        Ok(_) => {}
-    }
-
-    Box::into_raw(vm);
-    Box::into_raw(insts);
+    // 交给运行时：它会登记 vm/insts 句柄、把主程序续延 spawn 进就绪队列、跑一轮 tick。
+    // 任务若 sleep，控制权交还事件循环；之后宿主的 setTimeout/queueMicrotask 回调
+    // `wake_by_id` 重新进入 wasm 续跑。vm/insts 的所有权随后续留在裸指针里（跨调用栈存活），
+    // 这里不能 `Box::from_raw` 后让其 drop——会释放掉运行时还要用的实例。
+    runtime::start(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>);
 }
 
 #[cfg(target_family = "wasm")]
