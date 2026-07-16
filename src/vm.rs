@@ -665,6 +665,40 @@ impl VM {
         }
     }
 
+    /// 把当前 VM 状态序列化成一段字节，供宿主调试面板读取（走专用数据通道，与 `println`
+    /// 程序输出分离）。布局（全部 little-endian u32 长度前缀 + UTF-8 字节）：
+    ///   `[pc][n_frames] ( [ra] [n_locals] ( [k][v] )* [n_stack] ( [v] )* )*`
+    /// 每个 `Value` 复用其 `Display`——调试面板要的就是一眼能读的字符串，不为它单写序列化器。
+    pub fn snapshot(&self) -> Vec<u8> {
+        fn push_u32(buf: &mut Vec<u8>, v: u32) {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        fn push_str(buf: &mut Vec<u8>, s: &str) {
+            push_u32(buf, s.len() as u32);
+            buf.extend_from_slice(s.as_bytes());
+        }
+
+        let mut buf = Vec::new();
+        push_u32(&mut buf, self.pc as u32);
+        push_u32(&mut buf, self.call_frames.len() as u32);
+
+        for frame in &self.call_frames {
+            let frame = frame.borrow();
+            push_str(&mut buf, &frame.ra.to_string());
+            push_u32(&mut buf, frame.locals.len() as u32);
+            for (key, value) in &frame.locals {
+                push_str(&mut buf, key);
+                push_str(&mut buf, &format!("{}", value));
+            }
+            push_u32(&mut buf, frame.sp as u32);
+            for value in frame.stack.iter().take(frame.sp) {
+                push_str(&mut buf, &format!("{}", value));
+            }
+        }
+
+        buf
+    }
+
     pub fn step(&mut self, insts: &Vec<Inst>) -> ExecResult {
         let inst = &insts[self.pc];
 
@@ -765,6 +799,58 @@ fn test_grow_operand_stack() {
     assert!(callframe.stack.len() >= 100);
     assert_eq!(callframe.sp, 100);
     assert_eq!(callframe.top(), Some(&Value::Num(99.0)));
+}
+
+/// 解码 [`VM::snapshot`] 的字节流，校验同构。镜像宿主 `readSnapshot` 的逻辑（little-endian
+/// u32 长度前缀 + UTF-8）。
+#[test]
+fn test_snapshot_roundtrip() {
+    let mut vm = VM::new();
+    let insts = vec![Inst::PUSH(Value::Num(42.0)), Inst::POP];
+
+    vm.run(&insts).unwrap(); // 跑完后 pc=2，栈空
+
+    let bytes = vm.snapshot();
+
+    let mut o = 0usize;
+    let u32_at = |buf: &[u8], off: &mut usize| -> u32 {
+        let v = u32::from_le_bytes(buf[*off..*off + 4].try_into().unwrap());
+        *off += 4;
+        v
+    };
+    let str_at = |buf: &[u8], off: &mut usize| -> String {
+        let len = u32_at(buf, off) as usize;
+        let s = String::from_utf8(buf[*off..*off + len].to_vec()).unwrap();
+        *off += len;
+        s
+    };
+
+    let pc = u32_at(&bytes, &mut o) as usize;
+    assert_eq!(pc, vm.pc);
+
+    let n_frames = u32_at(&bytes, &mut o) as usize;
+    assert_eq!(n_frames, vm.call_frames.len());
+
+    for frame in &vm.call_frames {
+        let expected = frame.borrow();
+        let ra: usize = str_at(&bytes, &mut o).parse().unwrap();
+        assert_eq!(ra, expected.ra);
+
+        let n_locals = u32_at(&bytes, &mut o) as usize;
+        assert_eq!(n_locals, expected.locals.len());
+        for _ in 0..n_locals {
+            str_at(&bytes, &mut o);
+            str_at(&bytes, &mut o);
+        }
+
+        let n_stack = u32_at(&bytes, &mut o) as usize;
+        assert_eq!(n_stack, expected.sp);
+        for _ in 0..n_stack {
+            str_at(&bytes, &mut o);
+        }
+    }
+
+    assert_eq!(o, bytes.len(), "trailing bytes / over-read mismatch");
 }
 
 #[test]

@@ -11,23 +11,15 @@
 // 不传参时默认跑内置 demo（并发 sleep + microtask）。
 
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const wasmPath = process.argv[3] ?? join(here, "square.wasm");
 const isFileArg = process.argv[2] && process.argv[2].endsWith(".sq");
 const programFile = isFileArg ? process.argv[2] : null;
-
-// 内置 demo：3 个并发 sleep（验证并发 ≈ 1s 而非 3s）+ 一个 defer。
-const DEMO = `[spawn /[] [begin [sleep 800] [println 'A done']]]
-[spawn /[] [begin [sleep 800] [println 'B done']]]
-[spawn /[] [begin [sleep 800] [println 'C done']]]
-[println 'main: spawned 3 tasks, now sleep 800 x3 concurrently']
-[defer /[] [println 'deferred: ran after current sync stack']]`;
-
-const source = programFile ? readFileSync(programFile, "utf8") : DEMO;
+const source = readFileSync(programFile, "utf8");
 
 const bytes = readFileSync(wasmPath);
 const decoder = new TextDecoder();
@@ -63,10 +55,9 @@ const insts = exports.compile(addr, enc.length);
 exports.dealloc(addr, enc.length);
 
 const vm = exports.init();
-console.log("=== run (驱动 tick；任务 sleep 后终止当前 tick，控制权交还事件循环) ===");
 exports.run(vm, insts);
-console.log(`--- run returned @${Math.round(performance.now() - t0)}ms ---`);
+// console.log(`--- run returned @${Math.round(performance.now() - t0)}ms ---`);
 
 // 等待异步回调把剩余任务跑完。并发 sleep 总耗时应 ≈ 单个 sleep 时长。
 await new Promise((r) => setTimeout(r, 1500));
-console.log(`--- done @${Math.round(performance.now() - t0)}ms ---`);
+// console.log(`--- done @${Math.round(performance.now() - t0)}ms ---`);

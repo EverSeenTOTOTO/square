@@ -67,6 +67,17 @@ pub unsafe extern "C" fn realloc(ptr: *mut u8, old_size: usize, new_size: usize)
     )
 }
 
+/// 把一段字节拷进新分配的线性内存，返回 packed 句柄 `(ptr << 32) | len`。
+/// 供 [`snapshot`] / [`snapshot_insts`] 把客机状态传给宿主——宿主 `>>> 32` / `& 0xffffffff`
+/// 切出指针与长度读完后 `dealloc`。wasm32 下 ptr、len 各 32 位，packed u64 远小于 JS
+/// `Number` 精确整数界 2^53，无精度损失。
+#[cfg(target_family = "wasm")]
+fn pack_buffer(bytes: &[u8]) -> u64 {
+    let ptr = alloc(bytes.len());
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
+    ((ptr as u64) << 32) | (bytes.len() as u64)
+}
+
 #[cfg(target_family = "wasm")]
 #[no_mangle]
 pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Vec<vm_insts::Inst> {
@@ -91,14 +102,18 @@ pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Ve
 
 #[cfg(target_family = "wasm")]
 #[no_mangle]
-pub extern "C" fn dump_instructions(insts_addr: *const u8) {
+pub extern "C" fn snapshot_insts(insts_addr: *const u8) -> u64 {
     let insts = unsafe { Box::from_raw(insts_addr as *mut Vec<vm_insts::Inst>) };
 
-    insts.iter().for_each(|inst| {
-        println!("{}", inst);
-    });
+    let joined = insts
+        .iter()
+        .map(|inst| alloc::format!("{}", inst))
+        .collect::<alloc::vec::Vec<_>>()
+        .join("\n");
 
     Box::into_raw(insts);
+
+    pack_buffer(joined.as_bytes())
 }
 
 #[cfg(target_family = "wasm")]
@@ -146,26 +161,14 @@ pub extern "C" fn reset(vm_addr: *mut u8) {
 
 #[cfg(target_family = "wasm")]
 #[no_mangle]
-pub extern "C" fn dump_pc(vm_addr: *mut u8) -> usize {
+pub extern "C" fn snapshot(vm_addr: *mut u8) -> u64 {
     let vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
 
-    let pc = vm.pc;
+    let bytes = vm.snapshot();
 
     Box::into_raw(vm);
 
-    pc
-}
-
-#[cfg(target_family = "wasm")]
-#[no_mangle]
-pub extern "C" fn dump_callframes(vm_addr: *mut u8) {
-    let vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
-
-    vm.call_frames.iter().for_each(|frame| {
-        println!("{}", frame.borrow());
-    });
-
-    Box::into_raw(vm);
+    pack_buffer(&bytes)
 }
 
 pub fn main() {}
