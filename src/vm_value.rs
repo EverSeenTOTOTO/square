@@ -77,6 +77,11 @@ pub enum Value {
     Str(String),
     Vec(Rc<RefCell<Vec<Value>>>),
     Obj(Rc<RefCell<Object>>),
+    Proxy {
+        target: Rc<RefCell<Object>>,
+        get: Option<Rc<RefCell<Function>>>,
+        set: Option<Rc<RefCell<Function>>>,
+    },
     Function(Rc<RefCell<Function>>),
     UpValue(Rc<RefCell<Value>>),
     Nil,
@@ -140,6 +145,7 @@ impl fmt::Display for Value {
                         .join(", ")
                 )
             }
+            Value::Proxy { target, .. } => fmt::Display::fmt(&Value::Obj(target.clone()), f),
             Value::Function(func) => func.borrow().fmt(f),
             Value::UpValue(val) => match *val.borrow() {
                 Value::UpValue(_) => panic!("nested upvalue"),
@@ -201,6 +207,7 @@ impl PartialEq for Value {
             (Value::Vec(lhs), Value::Vec(rhs)) => Rc::ptr_eq(lhs, rhs),
             (Value::Obj(lhs), Value::Obj(rhs)) => Rc::ptr_eq(lhs, rhs),
             (Value::Function(lhs), Value::Function(rhs)) => Rc::ptr_eq(lhs, rhs),
+            (Value::Proxy { target: l, .. }, Value::Proxy { target: r, .. }) => Rc::ptr_eq(l, r),
 
             (Value::UpValue(lhs), Value::UpValue(rhs)) => lhs.borrow().eq(&rhs.borrow()),
             (Value::UpValue(lhs), rhs) => lhs.borrow().eq(rhs),
@@ -398,6 +405,7 @@ impl Value {
                     "obj"
                 }
             }
+            Value::Proxy { .. } => "proxy",
             Value::Function(f) => match *f.borrow() {
                 Function::Continuation(..) => "cc",
                 _ => "fn",

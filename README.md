@@ -105,7 +105,7 @@ A toy Lisp-style language written in Rust, supports first-class function and con
 
 ## Structure
 
-You can customize the behavior of getters and setters by setting the `__get__/__set__` properties,
+You can customize the behavior of getters and setters by using `proxy` syscall,
 unlocking the ability to implement features such as proxies and inheritance.
 
 ```lisp
@@ -113,12 +113,12 @@ unlocking the ability to implement features such as proxies and inheritance.
 
 [let observer println]
 
-[= o.__set__ /[k v] [begin
-	[if observer [observer k v]]
-	[set this k v]
-]]
+[let p [proxy o 'set' /[t k v] [begin
+  [if observer [observer k v]]
+  [set t k v]]]]
 
-[= o.x 42] ; print x 42
+[= p.x 42]  ; print x 42
+[print o.x] ; 42
 ```
 
 ## Async

@@ -1,9 +1,9 @@
 ; --- helpers ---
 
-[let foreach /[coll fn] [begin
+[let foreach /[v fn] [begin
   [let i 0]
-  [while [< i [len coll]]
-    [fn [at coll i]]
+  [while [< i [len v]]
+    [fn [at v i]]
     [= i [+ i 1]]]]]
 
 [let in /[k o] [!= [get o k] nil]]
@@ -11,46 +11,41 @@
 ; --- impl ---
 
 ; create class
-[let class /[member proto] [begin
+[let class /[members proto] [begin
   [let o [obj]]
-  [foreach [keys member] /[k] [set proto k [get member k]]] ; members should be put in proto
+  [foreach [keys members] /[k] [set proto k [get members k]]]
   [= o.prototype proto]
   o]]
 
 ; create instance
 [let new /[clazz] [begin
   [let o [obj]]
-  [let proto clazz.prototype]
-  [= o.__proto__ proto] ; instance's __proto__ = class.prototype
-
-  [= o.__get__ /[k] [begin
-    [if [in k o]
-      [get o k]
-      [if [in '__get__' proto]
-        [[get proto '__get__'] k] ; the chain
-        [get proto k]]]]]
-
-  o]]
+  [= o.__proto__ clazz.prototype]
+  [proxy o
+    'get' /[t k]
+            [if [in k t]
+              [get t k]
+              [get o.__proto__ k]]]]]
 
 ; create derived class
 [let extends /[clazz overrides] [class overrides [new clazz]]]
 
 [let instanceof /[o clazz] [begin
-  [let m o.__proto__]
+  [let proto o.__proto__]
   [let r [callcc /[break]
-    [while m
-      [if [== m clazz.prototype]
+    [while proto
+      [if [== proto clazz.prototype]
         [break true]
-        [= m m.__proto__]]]]]
+        [= proto proto.__proto__]]]]]
   [if [== r true] true false]]]
 
 ; --- usage ---
 
-[let Base [class 
-  [obj 'x' 42
-       'foo' /[] [println this.x]
-       'bar' /[] [println 'bar']]
-  [obj]]]
+[let Base [class [obj
+                  'x' 42
+                  'foo' /[] [println this.x]
+                  'bar' /[] [println 'bar']]
+                  [obj]]]
 
 [let Derived [extends Base [obj 'bar' /[] [println 'override bar']]]]
 

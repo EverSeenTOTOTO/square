@@ -190,22 +190,21 @@ fn emit_assign(
         Node::Token(id) => {
             if let Token::Id(_, source) = id {
                 if !properties.is_empty() {
-                    // = x.y z
-                    ctx.borrow_mut().mark_if_capture(source);
-                    result.push(Inst::LOAD(source.clone()));
-                    for (i, prop) in properties.iter().enumerate() {
-                        if let Node::Prop(_, Token::Id(_, id)) = prop.as_ref() {
-                            if i == properties.len() - 1 {
-                                result.extend(value);
-                                result.push(Inst::SET(id.clone()));
-                                break;
-                            } else {
-                                result.push(Inst::GET(id.clone()));
-                            }
-                        } else {
-                            unreachable!()
-                        }
-                    }
+                    // o.p1…pN = value  →  [set <o.p1…p(N-1)> 'pN value]
+                    let keys: Vec<String> = properties
+                        .iter()
+                        .map(|n| match n.as_ref() {
+                            Node::Prop(_, Token::Id(_, id)) => id.clone(),
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    let (last_key, rest_keys) = keys.split_last().unwrap();
+                    result.push(Inst::LOAD("set".to_string()));
+                    result.extend(emit_get_chain(input, target, rest_keys, ctx)?);
+                    result.push(Inst::PUSH(Value::Str(last_key.clone())));
+                    result.extend(value);
+                    result.push(Inst::PACK(3));
+                    result.push(Inst::CALL);
                 } else {
                     if is_define {
                         // let x y
@@ -268,13 +267,20 @@ fn test_emit_assign_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
+    // [set [get o 'x] 'y 42]
     assert_eq!(
         insts,
         vec![
+            Inst::LOAD("set".to_string()),
+            Inst::LOAD("get".to_string()),
             Inst::LOAD("o".to_string()),
-            Inst::GET("x".to_string()),
+            Inst::PUSH(Value::Str("x".to_string())),
+            Inst::PACK(2),
+            Inst::CALL,
+            Inst::PUSH(Value::Str("y".to_string())),
             Inst::PUSH(Value::Num(42.0)),
-            Inst::SET("y".to_string())
+            Inst::PACK(3),
+            Inst::CALL,
         ]
     );
 }
@@ -355,29 +361,20 @@ fn emit_op(
         }
 
         if let Node::Token(Token::Id(_, source)) = expressions[0].as_ref() {
-            ctx.borrow_mut().mark_if_capture(source);
-            result.push(Inst::LOAD(source.clone()));
-
             if !properties.is_empty() {
-                let mut patch: Option<Inst> = None;
-
-                for (i, prop) in properties.iter().enumerate() {
-                    if i == properties.len() - 1 {
-                        patch = Some(Inst::SET(prop.to_string()));
-                    } else {
-                        result.push(Inst::GET(prop.to_string()));
-                    }
-                }
-
-                result.push(Inst::LOAD(source.clone()));
-                for prop in properties.iter() {
-                    result.push(Inst::GET(prop.to_string()));
-                }
-
+                // o.p1…pN op= rhs  →  [set <o.p1…p(N-1)> 'pN (<o.p1…pN> op rhs)]
+                let (last_key, rest_keys) = properties.split_last().unwrap();
+                result.push(Inst::LOAD("set".to_string()));
+                result.extend(emit_get_chain(input, &expressions[0], rest_keys, ctx)?);
+                result.push(Inst::PUSH(Value::Str(last_key.clone())));
+                result.extend(emit_get_chain(input, &expressions[0], &properties, ctx)?);
                 result.extend(rhs);
                 result.push(action);
-                result.push(patch.unwrap());
+                result.push(Inst::PACK(3));
+                result.push(Inst::CALL);
             } else {
+                ctx.borrow_mut().mark_if_capture(source);
+                result.push(Inst::LOAD(source.clone()));
                 result.extend(rhs);
                 result.push(action);
                 result.push(Inst::STORE(source.clone()));
@@ -469,17 +466,30 @@ fn test_emit_op_assign_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
+    // [set [get a 'b] 'c [+ [get [get a 'b] 'c] d]]
     assert_eq!(
         insts,
         vec![
+            Inst::LOAD("set".to_string()),
+            Inst::LOAD("get".to_string()),
             Inst::LOAD("a".to_string()),
-            Inst::GET("b".to_string()),
-            Inst::LOAD("a".to_string()), // will be consumed by GET
-            Inst::GET("b".to_string()),
-            Inst::GET("c".to_string()),
+            Inst::PUSH(Value::Str("b".to_string())),
+            Inst::PACK(2),
+            Inst::CALL,
+            Inst::PUSH(Value::Str("c".to_string())),
+            Inst::LOAD("get".to_string()),
+            Inst::LOAD("get".to_string()),
+            Inst::LOAD("a".to_string()),
+            Inst::PUSH(Value::Str("b".to_string())),
+            Inst::PACK(2),
+            Inst::CALL,
+            Inst::PUSH(Value::Str("c".to_string())),
+            Inst::PACK(2),
+            Inst::CALL,
             Inst::LOAD("d".to_string()),
             Inst::ADD,
-            Inst::SET("c".to_string()),
+            Inst::PACK(3),
+            Inst::CALL,
         ]
     );
 }
@@ -1276,23 +1286,39 @@ fn test_emit_expand_nested() {
     );
 }
 
+/// Emit `base.k1.k2.…` as nested `[get [get base 'k1] 'k2]…` calls. Nested, not
+/// iterated: the call convention puts the function below its target.
+fn emit_get_chain(
+    input: &str,
+    base: &Box<Node>,
+    keys: &[String],
+    ctx: &RefCell<EmitContext>,
+) -> EmitResult {
+    let Some((last, rest)) = keys.split_last() else {
+        return emit_node(input, base, ctx);
+    };
+    let mut result = vec![Inst::LOAD("get".to_string())];
+    result.extend(emit_get_chain(input, base, rest, ctx)?);
+    result.push(Inst::PUSH(Value::Str(last.clone())));
+    result.push(Inst::PACK(2));
+    result.push(Inst::CALL);
+    Ok(result)
+}
+
 fn emit_dot(
     input: &str,
     obj: &Box<Node>,
-    properties: &Vec<Box<Node>>,
+    properties: &[Box<Node>],
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    let mut result = emit_node(input, obj, ctx)?;
-
-    for prop in properties.iter() {
-        if let Node::Prop(_, Token::Id(_, id)) = prop.as_ref() {
-            result.push(Inst::GET(id.clone()));
-        } else {
-            unreachable!()
-        }
-    }
-
-    Ok(result)
+    let keys: Vec<String> = properties
+        .iter()
+        .map(|n| match n.as_ref() {
+            Node::Prop(_, Token::Id(_, id)) => id.clone(),
+            _ => unreachable!(),
+        })
+        .collect();
+    emit_get_chain(input, obj, &keys, ctx)
 }
 
 #[test]
@@ -1301,12 +1327,19 @@ fn test_emit_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
+    // [get [get o 'x] 'y]
     assert_eq!(
         insts,
         vec![
+            Inst::LOAD("get".to_string()),
+            Inst::LOAD("get".to_string()),
             Inst::LOAD("o".to_string()),
-            Inst::GET("x".to_string()),
-            Inst::GET("y".to_string()),
+            Inst::PUSH(Value::Str("x".to_string())),
+            Inst::PACK(2),
+            Inst::CALL,
+            Inst::PUSH(Value::Str("y".to_string())),
+            Inst::PACK(2),
+            Inst::CALL,
         ]
     );
 }

@@ -25,8 +25,6 @@ pub type Syscall =
     Rc<dyn Fn(&mut VM, Rc<RefCell<Vec<Value>>>, &mut RtCx, &Inst) -> ExecResult>;
 
 pub static INTERNAL_KEY: &str = "__internal__";
-pub static GETTER_KEY: &str = "__get__";
-pub static SETTER_KEY: &str = "__set__";
 
 /// 把闭包（`ip` + `upvalues`）包装成 `UnwindFrame`，供 `defer`/`spawn` 使用。
 ///
@@ -355,25 +353,52 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("set")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
-                        let target = params.borrow().first().unwrap_or(&Value::Nil).as_obj();
-                        let key = params.borrow().get(1).unwrap_or(&Value::Nil).as_str();
-                        let value = params.borrow().get(2).unwrap_or(&Value::Nil).clone();
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
+                        let target = params.borrow().first().cloned().unwrap_or(Value::Nil);
+                        let key = params.borrow().get(1).and_then(|v| v.as_str());
+                        let value = params.borrow().get(2).cloned().unwrap_or(Value::Nil);
 
-                        if let (Some(o), Some(k)) = (target, key) {
-                            Self::try_capture_this(&value, &o);
-                            o.borrow_mut().insert(k, value);
-                            return {
-                                vm.current_frame().borrow_mut().push(Value::Obj(o));
-                                Ok(())
-                            };
+                        match target {
+                            Value::Proxy { target, set: Some(trap), .. } => inst.call(
+                                vm,
+                                cx,
+                                trap,
+                                Rc::new(RefCell::new(vec![
+                                    Value::Obj(target),
+                                    key.map(Value::Str).unwrap_or(Value::Nil),
+                                    value,
+                                ])),
+                                false,
+                            ),
+                            Value::Proxy { target, set: None, .. } => {
+                                if let Some(k) = key {
+                                    Self::try_capture_this(&value, &target);
+                                    target.borrow_mut().insert(k, value);
+                                    vm.current_frame().borrow_mut().push(Value::Obj(target));
+                                    Ok(())
+                                } else {
+                                    Err(SquareError::InstructionError(
+                                        "bad arguments provided to set()".to_string(),
+                                        inst.clone(),
+                                        vm.pc,
+                                    ))
+                                }
+                            }
+                            _ => {
+                                if let (Some(o), Some(k)) = (target.as_obj(), key) {
+                                    Self::try_capture_this(&value, &o);
+                                    o.borrow_mut().insert(k, value);
+                                    vm.current_frame().borrow_mut().push(Value::Obj(o));
+                                    Ok(())
+                                } else {
+                                    Err(SquareError::InstructionError(
+                                        "bad arguments provided to set()".to_string(),
+                                        inst.clone(),
+                                        vm.pc,
+                                    ))
+                                }
+                            }
                         }
-
-                        Err(SquareError::InstructionError(
-                            "bad arguments provided to set()".to_string(),
-                            inst.clone(),
-                            vm.pc,
-                        ))
                     },
                 ) as Syscall),
             ),
@@ -384,23 +409,94 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("get")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
-                        let target = params.borrow().first().unwrap_or(&Value::Nil).as_obj();
-                        let key = params.borrow().get(1).unwrap_or(&Value::Nil).as_str();
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
+                        let target = params.borrow().first().cloned().unwrap_or(Value::Nil);
+                        let key = params.borrow().get(1).and_then(|v| v.as_str());
 
-                        if let (Some(o), Some(k)) = (target, key) {
-                            let cloned = o.borrow_mut().get(&k).cloned().unwrap_or(Value::Nil);
-                            return {
-                                vm.current_frame().borrow_mut().push(cloned);
-                                Ok(())
-                            };
+                        match target {
+                            Value::Proxy { target, get: Some(trap), .. } => inst.call(
+                                vm,
+                                cx,
+                                trap,
+                                Rc::new(RefCell::new(vec![
+                                    Value::Obj(target),
+                                    key.map(Value::Str).unwrap_or(Value::Nil),
+                                ])),
+                                false,
+                            ),
+                            Value::Proxy { target, get: None, .. } => {
+                                if let Some(k) = key {
+                                    let cloned = target.borrow().get(&k).cloned().unwrap_or(Value::Nil);
+                                    vm.current_frame().borrow_mut().push(cloned);
+                                    Ok(())
+                                } else {
+                                    Err(SquareError::InstructionError(
+                                        "bad arguments provided to get()".to_string(),
+                                        inst.clone(),
+                                        vm.pc,
+                                    ))
+                                }
+                            }
+                            _ => {
+                                if let (Some(o), Some(k)) = (target.as_obj(), key) {
+                                    let cloned = o.borrow().get(&k).cloned().unwrap_or(Value::Nil);
+                                    vm.current_frame().borrow_mut().push(cloned);
+                                    Ok(())
+                                } else {
+                                    Err(SquareError::InstructionError(
+                                        "bad arguments provided to get()".to_string(),
+                                        inst.clone(),
+                                        vm.pc,
+                                    ))
+                                }
+                            }
                         }
+                    },
+                ) as Syscall),
+            ),
+        );
 
-                        Err(SquareError::InstructionError(
-                            "bad arguments provided to get()".to_string(),
-                            inst.clone(),
-                            vm.pc,
-                        ))
+        values.insert(
+            "proxy",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("proxy")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
+                        let Some(target) = params.borrow().first().and_then(|v| v.as_obj()) else {
+                            return Err(SquareError::InstructionError(
+                                "proxy() expect an object target".to_string(),
+                                inst.clone(),
+                                vm.pc,
+                            ));
+                        };
+
+                        let mut get = None;
+                        let mut set = None;
+
+                        let p = params.borrow();
+                        let mut i = 1;
+                        while i < p.len() {
+                            let kind = p[i].as_str();
+                            let trap = p.get(i + 1).and_then(|v| v.as_fn());
+                            match (kind.as_deref(), trap) {
+                                (Some("get"), Some(f)) => get = Some(f),
+                                (Some("set"), Some(f)) => set = Some(f),
+                                _ => {
+                                    return Err(SquareError::InstructionError(
+                                        "proxy() expect ('get' | 'set', fn) pairs".to_string(),
+                                        inst.clone(),
+                                        vm.pc,
+                                    ));
+                                }
+                            }
+                            i += 2;
+                        }
+                        drop(p);
+
+                        vm.current_frame()
+                            .borrow_mut()
+                            .push(Value::Proxy { target, get, set });
+                        Ok(())
                     },
                 ) as Syscall),
             ),

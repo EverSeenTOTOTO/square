@@ -4,7 +4,7 @@ use core::{cell::RefCell, fmt};
 use hashbrown::HashMap;
 
 use crate::{
-    builtin::{Builtin, GETTER_KEY, SETTER_KEY},
+    builtin::Builtin,
     errors::SquareError,
     vm_insts::Inst,
     vm_value::{CalcResult, Function, Value},
@@ -313,96 +313,6 @@ impl Inst {
                     format!(
                         "bad peek_vec, top value is not a vector, got {}",
                         frame.top().unwrap_or(&Value::Nil).clone()
-                    ),
-                    self.clone(),
-                    vm.pc,
-                ))
-            }
-
-            Inst::GET(key) => {
-                let target = vm.current_frame().borrow_mut().pop();
-
-                if let Some(obj) = target.as_obj() {
-                    // support proxy method
-                    if let Some(getter) = obj
-                        .borrow_mut()
-                        .get(GETTER_KEY)
-                        .unwrap_or(&Value::Nil)
-                        .as_fn()
-                    {
-                        return self.call(
-                            vm,
-                            cx,
-                            getter,
-                            Rc::new(RefCell::new(vec![Value::Str(key.to_string())])),
-                            false,
-                        );
-                    }
-
-                    let get = vm.buildin.get_syscall("get");
-
-                    get(
-                        vm,
-                        Rc::new(RefCell::new(vec![target, Value::Str(key.to_string())])),
-                        cx,
-                        self,
-                    )
-                } else {
-                    Err(SquareError::InstructionError(
-                        format!(
-                            "bad peek_obj, top value is not an object, got {}",
-                            vm.current_frame()
-                                .borrow_mut()
-                                .top()
-                                .unwrap_or(&Value::Nil)
-                                .clone()
-                        ),
-                        self.clone(),
-                        vm.pc,
-                    ))
-                }
-            }
-            Inst::SET(key) => {
-                let sp = vm.current_frame().borrow().sp;
-                let value = vm.current_frame().borrow().stack[sp - 1].clone();
-                let target = vm.current_frame().borrow().stack[sp - 2].clone();
-
-                if let Some(obj) = target.as_obj() {
-                    vm.current_frame().borrow_mut().sp -= 2;
-
-                    if let Some(setter) = obj
-                        .borrow_mut()
-                        .get(SETTER_KEY)
-                        .unwrap_or(&Value::Nil)
-                        .as_fn()
-                    {
-                        return self.call(
-                            vm,
-                            cx,
-                            setter,
-                            Rc::new(RefCell::new(vec![Value::Str(key.to_string()), value])),
-                            false,
-                        );
-                    }
-
-                    let set = vm.buildin.get_syscall("set");
-
-                    return set(
-                        vm,
-                        Rc::new(RefCell::new(vec![
-                            target,
-                            Value::Str(key.to_string()),
-                            value,
-                        ])),
-                        cx,
-                        self,
-                    );
-                }
-
-                Err(SquareError::InstructionError(
-                    format!(
-                        "bad patch_obj, top value is not an object, got {}",
-                        vm.current_frame().borrow_mut().stack[sp - 2].clone()
                     ),
                     self.clone(),
                     vm.pc,
@@ -1617,21 +1527,18 @@ fn test_exec_builtin_vec_methods() {
 
 #[test]
 fn test_exec_getter() {
-    let code = format!(
-        "
+    let code = "
 [let o [obj]]
 
 [= o.x 0]
 
-[= o.{} /[k] 42]
+[let p [proxy o 'get' /[t k] 42]]
 
-o.x
-",
-        GETTER_KEY
-    );
+p.x
+";
 
-    let ast = parse(&code, &mut Position::new()).unwrap();
-    let insts = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1644,23 +1551,20 @@ o.x
 
 #[test]
 fn test_exec_setter() {
-    let code = format!(
-        "
+    let code = "
 [let o [obj]]
 
 [= o.x 0]
 
-[= o.{} /[k v] [set this k [+ 1 v]]]
+[let p [proxy o 'set' /[t k v] [set t k [+ 1 v]]]]
 
-[= o.x 41]
+[= p.x 41]
 
-o.x
-",
-        SETTER_KEY
-    );
+p.x
+";
 
-    let ast = parse(&code, &mut Position::new()).unwrap();
-    let insts = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 

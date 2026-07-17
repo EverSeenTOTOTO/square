@@ -2,9 +2,9 @@
 
 [let observer println]
 
-[= o.__set__ /[k v] [begin
-	[if observer [observer k v]]
-	[set this k v]
-]]
+[let p [proxy o 'set' /[t k v] [begin
+  [if observer [observer k v]]
+  [set t k v]]]]
 
-[= o.x 42] ; print x 42
+[= p.x 42]  ; print x 42
+[print o.x] ; 42
