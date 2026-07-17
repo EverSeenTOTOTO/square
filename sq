@@ -13,12 +13,13 @@ const here = dirname(realpathSync(__filename));
 
 (async () => {
   const { readFileSync } = await import("node:fs");
-  const { loadSquare, flush } = await import(join(here, "host.mjs"));
+  const { loadSquare } = await import(join(here, "host.mjs"));
 
   async function runSource(src) {
     const sq = await loadSquare({ onWrite: (s) => process.stdout.write(s) });
+    // run() 同步 tick 掉就绪队列后返回；异步任务（sleep 的 setTimeout / defer 的
+    // microtask）挂在 Node 事件循环上，进程有待执行任务时不退出，全部完成后自然退出。
     sq.program(src).run();
-    await flush(1500);
   }
 
   function readStdin() {
