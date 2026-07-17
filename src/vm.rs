@@ -104,8 +104,14 @@ impl Inst {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
                 if let Some(value) = frame.resolve_local(name) {
-                    let cloned = value.clone();
-                    frame.push(cloned);
+                    // 解包 UpValue：捕获变量以 UpValue(Rc<RefCell<Value>>) 存储，
+                    // LOAD 时需取出内部值，否则 syscall 的类型匹配（如 at 匹配 Num）会失败。
+                    let resolved = if let Value::UpValue(ref u) = value {
+                        u.borrow().clone()
+                    } else {
+                        value.clone()
+                    };
+                    frame.push(resolved);
                     Ok(())
                 } else {
                     Err(SquareError::InstructionError(

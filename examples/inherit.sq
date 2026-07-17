@@ -1,0 +1,74 @@
+; --- helpers ---
+
+[let foreach /[coll fn] [begin
+  [let i 0]
+  [while [< i [len coll]]
+    [fn [at coll i]]
+    [= i [+ i 1]]]]]
+
+[let in /[k o] [!= [get o k] nil]]
+
+; --- impl ---
+
+; create class
+[let class /[member proto] [begin
+  [let o [obj]]
+  [foreach [keys member] /[k] [set proto k [get member k]]] ; members should be put in proto
+  [= o.prototype proto]
+  o]]
+
+; create instance
+[let new /[clazz] [begin
+  [let o [obj]]
+  [let proto clazz.prototype]
+  [= o.__proto__ proto] ; instance's __proto__ = class.prototype
+
+  [= o.__get__ /[k] [begin
+    [if [in k o]
+      [get o k]
+      [if [in '__get__' proto]
+        [[get proto '__get__'] k] ; the chain
+        [get proto k]]]]]
+
+  o]]
+
+; create derived class
+[let extends /[clazz overrides] [class overrides [new clazz]]]
+
+[let instanceof /[o clazz] [begin
+  [let m o.__proto__]
+  [let r [callcc /[break]
+    [while m
+      [if [== m clazz.prototype]
+        [break true]
+        [= m m.__proto__]]]]]
+  [if [== r true] true false]]]
+
+; --- usage ---
+
+[let Base [class 
+  [obj 'x' 42
+       'foo' /[] [println this.x]
+       'bar' /[] [println 'bar']]
+  [obj]]]
+
+[let Derived [extends Base [obj 'bar' /[] [println 'override bar']]]]
+
+[let a [new Base]]
+[let b [new Derived]]
+
+[a.foo] ; 42
+[a.bar] ; bar
+
+[b.foo] ; 42
+[b.bar] ; override bar
+
+[= Base.prototype.foo /[] [println -this.x]]
+
+[a.foo] ; -42
+[b.foo] ; -42
+
+[println [instanceof a Base]]     ; true
+[println [instanceof b Base]]     ; true
+[println [instanceof a Derived]]  ; false
+[println [instanceof b Derived]]  ; true

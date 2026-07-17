@@ -289,6 +289,36 @@ impl Builtin {
         );
 
         values.insert(
+            "keys",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("keys")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
+                        if let Some(obj) =
+                            params.borrow().first().and_then(|v| v.as_obj())
+                        {
+                            let keys: Vec<Value> = obj
+                                .borrow()
+                                .keys()
+                                .map(|k| Value::Str(k.clone()))
+                                .collect();
+                            vm.current_frame().borrow_mut().push(
+                                Self::wrap_internal_vec(Rc::new(RefCell::new(keys))),
+                            );
+                            Ok(())
+                        } else {
+                            Err(SquareError::InstructionError(
+                                "keys() expect an object parameter".to_string(),
+                                inst.clone(),
+                                vm.pc,
+                            ))
+                        }
+                    },
+                ) as Syscall),
+            ),
+        );
+
+        values.insert(
             "obj",
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("obj")))),
