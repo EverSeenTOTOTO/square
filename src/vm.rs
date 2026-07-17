@@ -30,14 +30,14 @@ pub struct UnwindFrame {
     pub context: Vec<Rc<RefCell<CallFrame>>>,
 }
 
-/// 运行时任务。`frame` 存在性即 park 信号：`Some` = 正在 park（续延已存、不在 VM 里活），
+/// 运行时任务。`frame` 存在性可当作 park 信号：`Some` = 正在 park（延续已存、不在 VM 里活），
 /// `None` = live（状态在 VM 里）。定义在 `vm.rs` 是因为 native 单测也要构造（runtime.rs 整个 `#[cfg(wasm)]`）。
 pub struct Task {
     pub frame: RefCell<Option<UnwindFrame>>,
 }
 
-/// 运行时上下文，对标 `Future::poll` 的 `cx`：把当前 task 身份顺调用栈（`run→step→exec→syscall`）
-/// 传下去，让 syscall 不读全局就知道「我是谁」。park 能力的 impl 在 `runtime.rs`。
+/// 运行时上下文，对标 `Future::poll` 的 `cx`：把当前 task 顺调用栈（`run→step→exec→syscall`）
+/// 传下去，让 syscall 知道「当前任务是谁」
 pub struct RtCx {
     pub task: Rc<Task>,
     #[cfg(target_family = "wasm")]
@@ -678,7 +678,6 @@ impl VM {
     /// 把当前 VM 状态序列化成一段字节，供宿主调试面板读取（走专用数据通道，与 `println`
     /// 程序输出分离）。布局（全部 little-endian u32 长度前缀 + UTF-8 字节）：
     ///   `[pc][n_frames] ( [ra] [n_locals] ( [k][v] )* [n_stack] ( [v] )* )*`
-    /// 每个 `Value` 复用其 `Display`——调试面板要的就是一眼能读的字符串，不为它单写序列化器。
     pub fn snapshot(&self) -> Vec<u8> {
         fn push_u32(buf: &mut Vec<u8>, v: u32) {
             buf.extend_from_slice(&v.to_le_bytes());
@@ -748,7 +747,8 @@ impl VM {
         while self.pc < insts.len() {
             self.step(insts, cx)?;
             if cx.is_parked() {
-                break; // sleep park：续延已存回 task.frame，停止本次推进
+                break; // sleep park：续延已存回 task.frame，停止本次推进。
+                       // sleep 内设置 pc = #insts 也可实现中止，但是需要透传指令集总长
             }
         }
 
@@ -813,8 +813,7 @@ fn test_grow_operand_stack() {
     assert_eq!(callframe.top(), Some(&Value::Num(99.0)));
 }
 
-/// 解码 [`VM::snapshot`] 的字节流，校验同构。镜像宿主 `readSnapshot` 的逻辑（little-endian
-/// u32 长度前缀 + UTF-8）。
+/// 解码 [`VM::snapshot`] 的字节流，校验同构
 #[test]
 fn test_snapshot_roundtrip() {
     let mut vm = VM::new();

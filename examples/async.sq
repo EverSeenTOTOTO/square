@@ -1,14 +1,13 @@
-; async.sq —— 演示 square 异步运行时：spawn 并发 + sleep + defer
 ; 运行：./sq examples/async.sq
 
 [spawn /[] [begin [sleep 400] [println 'task A done']]]
-[spawn /[] [begin [sleep 600] [println 'task B done']]]
+[spawn /[] [begin [sleep 600] [defer /[] [println 'task B done']]]] ; defer is microtask
 [spawn /[] [begin [sleep 800] [println 'task C done']]]
-
-[defer /[] [println 'deferred: ran after main sync stack']]
 
 [defer /[] [begin
   [defer /[] [begin
     [println 'later']
     [defer /[] [println 'latest']]]]
   [println 'first']]]
+
+[println 'sync']

@@ -1,11 +1,4 @@
 // 宿主（Node）侧的 square.wasm 驱动，抽出来供 run.mjs 和单测共用。
-//
-// 与 docs/.vitepress/components/page-only/square/useSquare.ts 是同一套导入契约的 Node 版：
-//   - memory.write(ptr,len)：客机 println 时从线性内存读字节解码。
-//   - host.js_sleep(id,ms) / host.js_queue_microtask(id)：客机 park 时调用，
-//     我们排 setTimeout/queueMicrotask，到点回调导出的 wake_by_id(id)——
-//     即「JS 事件 → 唤醒 Rust task → 续跑」这条链的入口。
-
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

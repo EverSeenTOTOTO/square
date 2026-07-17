@@ -121,6 +121,20 @@ unlocking the ability to implement features such as proxies and inheritance.
 [= o.x 42] ; print x 42
 ```
 
+## Async
+
+```lisp
+; sync await, based on setTimeout
+[sleep 1000]
+
+; defer execution, based on queueMicrotask
+[defer /[] [println 42]]
+
+; schedule
+[spawn /[] [begin [sleep 400] [println 'A done']]]
+[spawn /[] [begin [sleep 600] [println 'B done']]]
+```
+
 ## Comment
 
 ```lisp

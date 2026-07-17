@@ -32,8 +32,7 @@ pub static SETTER_KEY: &str = "__set__";
 ///
 /// `ra = ip + 1`：`PUSH_CLOSURE` 的 `ip` 指向闭包体入口前的 `JMP`，正常 `CALL` 靠 `step` 的
 /// `pc += 1` 跳过它；这里 `tick` 直接 `vm.pc = ra` 进 `run`，没有那步 +1，故手动对齐到 `ip + 1`。
-/// `stack[0]` 预置空参数 vec、`sp = 1` 是为了喂饱入口的 `POP`（参数解包）。sentinel frame
-/// 垫底，让闭包末尾 `RET` 的 `pop_frame` + `current_frame().push` 有 frame 可落。
+/// `stack[0]` 预置空参数 vec、`sp = 1` 对应入口的 `POP`（参数解包）。
 #[cfg(target_family = "wasm")]
 fn new_closure_unwind(ip: usize, upvalues: &HashMap<String, Value>) -> UnwindFrame {
     let mut frame = CallFrame::new();

@@ -40,6 +40,9 @@ syn keyword squareSyntax println
 syn keyword squareSyntax callcc
 syn keyword squareSyntax vec
 syn keyword squareSyntax obj
+syn keyword squareSyntax sleep
+syn keyword squareSyntax defer
+syn keyword squareSyntax spawn
 
 syn keyword squareFunction +
 syn keyword squareFunction -

@@ -1,5 +1,4 @@
-//! 由宿主事件循环（`setTimeout`/`queueMicrotask`）驱动的异步运行时。设计见
-//! `docs/CS/Snippets/Rust-Wasm-Async.md`。没有 Rust `Future`——任务就是一段被 unwind
+//! 由宿主事件循环驱动的异步运行时。没有 Rust `Future`——任务就是一段被 unwind
 //! 出来的 VM 栈快照（`crate::vm::UnwindFrame`），由 `tick`（run）/`step_tick`（step）
 //! rewind 回 VM 继续跑。
 
@@ -30,8 +29,7 @@ enum Mode {
     Step,
 }
 
-/// 一个挂起项：到期时把 `task` 重新塞回就绪队列即可。没有 Rust `Future`/`Waker`——
-/// 「唤醒」在我们的模型里就是「入队」。
+/// 待唤醒入队的任务
 struct Entry {
     task: Rc<Task>,
 }
@@ -85,11 +83,11 @@ fn tick(vm: &mut VM, insts: &Vec<crate::vm_insts::Inst>) -> ExecResult {
         vm.restore_context(frame.context);
         vm.pc = frame.ra;
         let mut cx = RtCx { task: task.clone(), rt };
-        vm.run(insts, &mut cx)?; // 出错即向上抛（run 导出会 panic），不再吞掉
+        vm.run(insts, &mut cx)?; // 出错即向上抛（run 导出会 panic）
     }
 }
 
-/// step 驱动器：推进队头 task 一条指令。task 状态两次 step 之间存在 `task.frame` 里。
+/// step 驱动器：推进队头 task 一条指令，然后构造“执行下一条指令”的延续
 fn step_tick(vm: &mut VM, insts: &Vec<crate::vm_insts::Inst>) -> ExecResult {
     let rt = rt();
     let Some(front) = rt.queue.borrow().front().cloned() else {
@@ -105,8 +103,7 @@ fn step_tick(vm: &mut VM, insts: &Vec<crate::vm_insts::Inst>) -> ExecResult {
     } else {
         Ok(())
     };
-    // 出错 / park / 完成 都出队。park 判定与 run 一致——`cx.is_parked()`（sleep 把续延塞回
-    // task.frame）。出错时 VM 状态已不可靠，丢弃避免留个 frame=None 残骸导致下次 step 撞 `.expect`。
+
     if result.is_err() || cx.is_parked() || vm.pc >= insts.len() {
         rt.queue.borrow_mut().pop_front();
     } else {
@@ -126,7 +123,7 @@ fn rt() -> &'static Runtime {
 }
 
 impl RtCx {
-    /// sleep：登记外侧续延到等待表、排 setTimeout、把续延塞回 task.frame 置 park。
+    /// sleep：登记外侧延续到等待表、排 setTimeout、把延续存入 task.frame 并 park。
     pub fn park_sleep(&mut self, frame: UnwindFrame, ms: u32) {
         let id = self.rt.alloc_id();
         *self.task.frame.borrow_mut() = Some(frame);
@@ -142,7 +139,7 @@ impl RtCx {
         self.rt.spawn_frame(frame);
     }
 
-    /// defer：闭包续延挂到等待表，microtask 回调 wake_by_id 时才进就绪队列，不停当前任务。
+    /// defer：闭包续延挂到等待表，microtask 回调 wake_by_id 时才进就绪队列，不停当前任务（主延续）
     pub fn defer(&mut self, frame: UnwindFrame) {
         let id = self.rt.alloc_id();
         let task = Rc::new(Task {
@@ -153,7 +150,7 @@ impl RtCx {
     }
 }
 
-/// 宿主 `setTimeout`/`queueMicrotask` 到点时回调：摘 id → 入队 → 按 mode 推进。
+/// 宿主 `setTimeout`/`queueMicrotask` 到点时回调：按 id 入队 → 按 mode 推进。
 #[no_mangle]
 pub extern "C" fn wake_by_id(id: u32) {
     let Some(e) = rt().registry.borrow_mut().remove(&id) else {
@@ -196,7 +193,6 @@ pub fn start(vm: *mut VM, insts: *const Vec<crate::vm_insts::Inst>) -> ExecResul
 }
 
 /// step 导出首次调用（幂等）：登记句柄、置 Step 模式、主程序续延 spawn 进队列。
-/// run/step 共用同一个队列，无独立 step 状态。
 pub fn ensure_started(vm: *mut VM, insts: *const Vec<crate::vm_insts::Inst>) {
     set_run_targets(vm, insts);
     if rt().mode.get() == Mode::Step {

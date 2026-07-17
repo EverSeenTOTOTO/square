@@ -3,9 +3,18 @@
   "version": "0.1.0",
   "description": "square language — a Lisp-like bytecode VM compiled to wasm, with an async runtime driven by the host event loop",
   "license": "MIT",
-  "bin": { "sq": "sq" },
-  "files": ["sq", "host.mjs", "square.wasm", "examples"],
-  "engines": { "node": ">=18" },
+  "bin": {
+    "sq": "sq"
+  },
+  "files": [
+    "sq",
+    "host.mjs",
+    "square.wasm",
+    "examples"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "node --test",
     "prepublishOnly": "make build"
