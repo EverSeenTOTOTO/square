@@ -100,6 +100,8 @@ pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Ve
     Box::into_raw(Box::new(insts))
 }
 
+
+
 #[cfg(target_family = "wasm")]
 #[no_mangle]
 pub extern "C" fn snapshot_insts(insts_addr: *const u8) -> u64 {

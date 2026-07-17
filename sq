@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+// sq —— square 语言 CLI（驱动 wasm 执行）。
+//   sq prog.sq        读文件，编译 + 跑 wasm
+//   sq < prog.sq      从 stdin 读（pipe / heredoc）
+//   echo '[println 1]' | sq
+//
+// 顶层用 async IIFE + 动态 import，这样无 package.json 也能加载 ESM 的 host.mjs。
+// realpath 解析真实目录，兼容通过 symlink / npm 全局安装（host.mjs / square.wasm 在它旁边）。
+
+const { realpathSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const here = dirname(realpathSync(__filename));
+
+(async () => {
+  const { readFileSync } = await import("node:fs");
+  const { loadSquare, flush } = await import(join(here, "host.mjs"));
+
+  async function runSource(src) {
+    const sq = await loadSquare({ onWrite: (s) => process.stdout.write(s) });
+    sq.program(src).run();
+    await flush(1500);
+  }
+
+  function readStdin() {
+    return new Promise((resolve) => {
+      let data = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (c) => (data += c));
+      process.stdin.on("end", () => resolve(data));
+    });
+  }
+
+  const arg = process.argv[2];
+  if (arg) {
+    await runSource(readFileSync(arg, "utf8"));
+  } else if (!process.stdin.isTTY) {
+    await runSource(await readStdin());
+  } else {
+    console.error("usage: sq <file.sq>   or   sq < file.sq");
+    process.exit(1);
+  }
+})();

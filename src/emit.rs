@@ -22,6 +22,9 @@ pub type EmitResult = Result<Vec<Inst>, SquareError>;
 pub struct EmitContext {
     scopes: Vec<(HashSet<String>, HashSet<String>)>, // (locals, captures)
     builtin: Builtin,
+    /// DELIMITER 起始段落号。REPL 把每条语句拼进同一份 session insts 时，用递增的 base
+    /// 保证各语句的 DELIMITER 编号全局唯一（与 VM 的 mpc 同步）。默认 0（整程序编译）。
+    pub base_mindex: usize,
 }
 
 impl EmitContext {
@@ -29,6 +32,7 @@ impl EmitContext {
         Self {
             scopes: vec![(HashSet::new(), HashSet::new())],
             builtin: Builtin::new(),
+            base_mindex: 0,
         }
     }
 
@@ -1343,7 +1347,7 @@ pub fn emit(
     ctx: &RefCell<EmitContext>,
 ) -> Result<Vec<Inst>, SquareError> {
     let mut insts = vec![];
-    let mut mindex = 0;
+    let mut mindex = ctx.borrow().base_mindex;
 
     for node in ast {
         insts.push(Inst::DELIMITER(mindex));
