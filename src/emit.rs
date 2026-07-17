@@ -2,6 +2,7 @@ use core::cell::RefCell;
 
 use crate::{
     builtin::Builtin,
+    code_frame::{Position, SourceMap},
     errors::SquareError,
     parse::Node,
     scan::Token,
@@ -9,8 +10,6 @@ use crate::{
     vm_value::{Function, Value},
 };
 
-#[cfg(test)]
-use crate::code_frame::Position;
 #[cfg(test)]
 use crate::parse::parse;
 
@@ -1344,6 +1343,20 @@ fn test_emit_dot() {
     );
 }
 
+/// 节点在源码中的代表位置，供 source map 记录。
+fn node_position(node: &Node) -> Option<Position> {
+    Some(match node {
+        Node::Token(t) => t.pos().clone(),
+        Node::Expand(lb, _, _) => lb.pos().clone(),
+        Node::Fn(slash, _, _) => slash.pos().clone(),
+        Node::Prop(dot, _) => dot.pos().clone(),
+        Node::Assign(eq, _, _, _) => eq.pos().clone(),
+        Node::Op(op, _) => op.pos().clone(),
+        Node::Call(lb, _, _) => lb.pos().clone(),
+        Node::Dot(obj, _) => node_position(obj)?,
+    })
+}
+
 fn emit_node(input: &str, node: &Box<Node>, ctx: &RefCell<EmitContext>) -> EmitResult {
     match node.as_ref() {
         Node::Token(token) => emit_token(input, token, ctx),
@@ -1378,16 +1391,20 @@ pub fn emit(
     input: &str,
     ast: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,
-) -> Result<Vec<Inst>, SquareError> {
+) -> Result<(Vec<Inst>, SourceMap), SquareError> {
     let mut insts = vec![];
+    let mut source_map = SourceMap::new();
     let mut mindex = ctx.borrow().base_mindex;
 
     for node in ast {
+        if let Some(pos) = node_position(node) {
+            source_map.push(insts.len(), pos);
+        }
         insts.push(Inst::DELIMITER(mindex));
         mindex += 1;
         insts.extend(emit_node(input, node, ctx)?);
     }
     insts.push(Inst::DELIMITER(mindex));
 
-    Ok(insts)
+    Ok((insts, source_map))
 }

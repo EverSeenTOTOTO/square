@@ -521,8 +521,10 @@ impl Builtin {
                                 false,
                             )
                         } else {
-                            Err(SquareError::RuntimeError(
+                            Err(SquareError::InstructionError(
                                 "callcc() expect a function parameter".to_string(),
+                                inst.clone(),
+                                vm.pc,
                             ))
                         }
                     },
@@ -535,7 +537,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("sleep")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, _inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         if let Some(cost) = params.borrow().first().and_then(Value::as_num) {
                             #[cfg(target_family = "wasm")]
                             {
@@ -547,8 +549,10 @@ impl Builtin {
                             }
                             Ok(())
                         } else {
-                            Err(SquareError::RuntimeError(
+                            Err(SquareError::InstructionError(
                                 "sleep expect a number parameter".to_string(),
+                                inst.clone(),
+                                vm.pc,
                             ))
                         }
                     },
@@ -561,7 +565,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("defer")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, _inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         if let Some(func) = params.borrow().first().and_then(Value::as_fn) {
                             #[cfg(target_family = "wasm")]
                             {
@@ -572,8 +576,10 @@ impl Builtin {
                             let _ = vm;
                             Ok(())
                         } else {
-                            Err(SquareError::RuntimeError(
+                            Err(SquareError::InstructionError(
                                 "defer expect a function parameter".to_string(),
+                                inst.clone(),
+                                vm.pc,
                             ))
                         }
                     },
@@ -586,7 +592,7 @@ impl Builtin {
             (
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("spawn")))),
                 Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, _inst: &Inst| -> ExecResult {
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
                         if let Some(func) = params.borrow().first().and_then(Value::as_fn) {
                             #[cfg(target_family = "wasm")]
                             {
@@ -597,8 +603,10 @@ impl Builtin {
                             let _ = vm;
                             Ok(())
                         } else {
-                            Err(SquareError::RuntimeError(
+                            Err(SquareError::InstructionError(
                                 "spawn expect a function parameter".to_string(),
+                                inst.clone(),
+                                vm.pc,
                             ))
                         }
                     },

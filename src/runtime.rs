@@ -9,10 +9,13 @@ extern crate alloc;
 use alloc::{
     collections::{BTreeMap, VecDeque},
     rc::Rc,
+    string::String,
     vec::Vec,
 };
 use core::cell::{Cell, RefCell};
 
+use crate::code_frame::SourceMap;
+use crate::errors::SquareError;
 use crate::vm::{ExecResult, RtCx, Task, UnwindFrame, VM};
 
 mod host {
@@ -41,6 +44,7 @@ pub struct Runtime {
     vm_ptr: *mut VM,
     insts_ptr: *const Vec<crate::vm_insts::Inst>,
     mode: Cell<Mode>,
+    source_map: RefCell<SourceMap>,
 }
 
 impl Runtime {
@@ -52,6 +56,7 @@ impl Runtime {
             vm_ptr: core::ptr::null_mut(),
             insts_ptr: core::ptr::null(),
             mode: Cell::new(Mode::Run),
+            source_map: RefCell::new(SourceMap::new()),
         }
     }
 
@@ -164,7 +169,7 @@ pub extern "C" fn wake_by_id(id: u32) {
         tick(vm, insts)
     };
     if let Err(err) = result {
-        panic!("{}", err);
+        panic!("{}", format_error(&err));
     }
 }
 
@@ -173,6 +178,17 @@ fn set_run_targets(vm: *mut VM, insts: *const Vec<crate::vm_insts::Inst>) {
         RUNTIME.vm_ptr = vm;
         RUNTIME.insts_ptr = insts;
     }
+}
+
+/// compile 时存入当前程序的 source map，供错误定位反查。
+pub fn set_source_map(sm: SourceMap) {
+    *rt().source_map.borrow_mut() = sm;
+}
+
+/// 用当前 source map 把错误的 pc 反查为源码位置后格式化。
+pub fn format_error(e: &SquareError) -> String {
+    let sm = rt().source_map.borrow();
+    e.enrich(Some(&sm))
 }
 
 /// run 导出：主程序续延 spawn 进队列、置 Run 模式、tick 到所有任务结束。

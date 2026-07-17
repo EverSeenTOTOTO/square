@@ -1,4 +1,4 @@
-use alloc::{format, string::String};
+use alloc::{format, string::String, vec::Vec};
 
 use core::{cmp, fmt};
 
@@ -43,6 +43,30 @@ impl fmt::Display for Position {
             "line {}, column {}, cursor {}",
             self.line, self.column, self.cursor
         )
+    }
+}
+
+/// 指令地址 → 源码位置的反查表。emit 时按"每条顶层语句的首条指令"稀疏记录，
+/// 条目按 pc 升序；`lookup(pc)` 返回包含该 pc 的源码段位置（即 `pc` 所在的顶层语句）。
+#[derive(Debug, Clone, Default)]
+pub struct SourceMap(Vec<(usize, Position)>);
+
+impl SourceMap {
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn push(&mut self, pc: usize, pos: Position) {
+        self.0.push((pc, pos));
+    }
+
+    pub fn lookup(&self, pc: usize) -> Option<&Position> {
+        let i = self.0.partition_point(|(p, _)| *p <= pc);
+        if i == 0 {
+            None
+        } else {
+            Some(&self.0[i - 1].1)
+        }
     }
 }
 

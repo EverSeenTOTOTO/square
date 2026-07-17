@@ -90,12 +90,13 @@ pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Ve
         Ok(node) => node,
     };
 
-    let insts = match emit::emit(code, &ast, &mut RefCell::new(emit::EmitContext::new())) {
+    let (insts, source_map) = match emit::emit(code, &ast, &mut RefCell::new(emit::EmitContext::new())) {
         Err(e) => {
             panic!("{}", e);
         }
-        Ok(inst) => inst,
+        Ok(pair) => pair,
     };
+    runtime::set_source_map(source_map);
 
     Box::into_raw(Box::new(insts))
 }
@@ -132,7 +133,7 @@ pub extern "C" fn step(vm_addr: *mut u8, insts_addrr: *const u8) {
 
     runtime::ensure_started(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>);
     if let Err(e) = runtime::step_one(&mut vm, &insts) {
-        panic!("{}", e);
+        panic!("{}", runtime::format_error(&e));
     }
 
     Box::into_raw(vm);
@@ -143,7 +144,7 @@ pub extern "C" fn step(vm_addr: *mut u8, insts_addrr: *const u8) {
 #[no_mangle]
 pub extern "C" fn run(vm_addr: *mut u8, insts_addrr: *const u8) {
     if let Err(e) = runtime::start(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>) {
-        panic!("{}", e);
+        panic!("{}", runtime::format_error(&e));
     }
 }
 

@@ -785,7 +785,7 @@ fn test_snapshot_roundtrip() {
 fn test_exec_token() {
     let code = "42";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -801,7 +801,7 @@ fn test_exec_token() {
 fn test_exec_load() {
     let code = "x";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -820,7 +820,7 @@ fn test_exec_load() {
 fn test_exec_load_undefined() {
     let code = "x";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -838,7 +838,7 @@ fn test_exec_load_undefined() {
 fn test_exec_define() {
     let code = "[let x 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -853,7 +853,7 @@ fn test_exec_define() {
 fn test_exec_assign() {
     let code = "[let x nil] [= x 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -868,7 +868,7 @@ fn test_exec_assign() {
 fn test_exec_assign_capture() {
     let code = "[let x nil] [begin [= x 42]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -883,7 +883,7 @@ fn test_exec_assign_capture() {
 fn test_exec_define_expand() {
     let code = "[let [x] [vec 42]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -898,7 +898,7 @@ fn test_exec_define_expand() {
 fn test_exec_assign_expand() {
     let code = "[let x nil] [= [x] [vec 42]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -913,7 +913,7 @@ fn test_exec_assign_expand() {
 fn test_exec_assign_expand_capture() {
     let code = "[let x nil] [begin [= [x] [vec 42]]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -928,7 +928,7 @@ fn test_exec_assign_expand_capture() {
 fn test_exec_define_expand_dot() {
     let code = "[let [. x] [vec 1 42 3]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -943,7 +943,7 @@ fn test_exec_define_expand_dot() {
 fn test_exec_define_expand_dot_error() {
     let code = "[let [. x] [vec 42]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -961,7 +961,7 @@ fn test_exec_define_expand_dot_error() {
 fn test_exec_define_expand_greed() {
     let code = "[let [... x] [vec 1 2 42]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -976,7 +976,7 @@ fn test_exec_define_expand_greed() {
 fn test_exec_define_expand_greed_error() {
     let code = "[let [... x] [vec]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -996,7 +996,7 @@ fn test_exec_define_expand_nested() {
 [let [. [x] ... y] [vec 1 [vec 42] 3 4 5]] ; x = 42, y = 5
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1011,7 +1011,7 @@ fn test_exec_define_expand_nested() {
 fn test_exec_define_chain() {
     let code = "[let x [let y [let z 42]]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1028,7 +1028,7 @@ fn test_exec_define_chain() {
 fn test_exec_op() {
     let code = "[- 1 2]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1043,7 +1043,7 @@ fn test_exec_op() {
 fn test_exec_op_assign() {
     let code = "[+= x 2]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1064,7 +1064,7 @@ fn test_exec_op_assign_dot() {
         [+= x.y.z 42]
         x.y.z";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1079,7 +1079,7 @@ fn test_exec_op_assign_dot() {
 fn test_exec_dot() {
     let code = "o.x.y";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1102,7 +1102,7 @@ fn test_exec_dot() {
 fn test_exec_assign_dot() {
     let code = "[= o.x.y 42] o.x.y";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1137,7 +1137,7 @@ fn test_exec_obj() {
 o.x
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1153,7 +1153,7 @@ o.x
 fn test_exec_begin() {
     let code = "[begin 1 2 3]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1170,7 +1170,7 @@ fn test_exec_scope() {
         [let x 1]
         [let y [begin [let x 2] x]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1186,7 +1186,7 @@ fn test_exec_scope() {
 fn test_exec_tail_call() {
     let code = "[begin [begin [begin 42]]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
     let mut max_depth = vm.call_frames.len();
@@ -1210,7 +1210,7 @@ fn test_exec_tail_call() {
 fn test_exec_if_true() {
     let code = "[if true 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1225,7 +1225,7 @@ fn test_exec_if_true() {
 fn test_exec_if_false_nil() {
     let code = "[if false 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1240,7 +1240,7 @@ fn test_exec_if_false_nil() {
 fn test_exec_if_false() {
     let code = "[if false 42 24]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1255,7 +1255,7 @@ fn test_exec_if_false() {
 fn test_exec_while() {
     let code = "[while [< x 4] [begin [+= x 1]]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1275,7 +1275,7 @@ fn test_exec_match() {
         [false 24]
         [true 42]]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1290,7 +1290,7 @@ fn test_exec_match() {
 fn test_exec_fn_call() {
     let code = "[/[] 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1305,7 +1305,7 @@ fn test_exec_fn_call() {
 fn test_exec_fn_call_with_params() {
     let code = "[/[x] x 42]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1324,7 +1324,7 @@ fn test_exec_fn_overwrite_params() {
             [= x 42]
             x] x]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1347,7 +1347,7 @@ fn test_exec_fn_capture_assign() {
     [f]
     [g]";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1371,7 +1371,7 @@ fn test_exec_fn_capture_nested() {
 [[[foo]]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1391,7 +1391,7 @@ fn test_exec_fn_capture_scope_lift() {
 [fn]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1411,7 +1411,7 @@ fn test_exec_fn_capture_error() {
     [fn]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1427,7 +1427,7 @@ fn test_exec_fn_capture_shadow() {
 [fn]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1450,7 +1450,7 @@ fn test_exec_fn_capture_lazy() {
 [bar]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1468,7 +1468,7 @@ fn test_exec_fn_capture_self() {
 [foo 0]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1486,7 +1486,7 @@ fn test_exec_builtin_value() {
 [let t [typeof p]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1513,7 +1513,7 @@ fn test_exec_builtin_vec_methods() {
 [let y [at v 0]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1538,7 +1538,7 @@ p.x
 ";
 
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1564,7 +1564,7 @@ p.x
 ";
 
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1581,7 +1581,7 @@ fn test_callcc_flow() {
 [let x [callcc /[cc] 42]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1598,7 +1598,7 @@ fn test_callcc_break() {
 [let x [callcc /[cc] [begin [cc 42] 24]]]
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1619,7 +1619,7 @@ fn test_callcc_cc1() {
 cc
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1640,7 +1640,7 @@ fn test_callcc_cc2() {
 cc
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1661,7 +1661,7 @@ fn test_callcc_cc3() {
 cc
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1682,7 +1682,7 @@ fn test_callcc_cc4() {
 cc
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1703,7 +1703,7 @@ fn test_callcc_abort() {
 x
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1732,7 +1732,7 @@ fn test_profile() {
 
 ";
     let ast = parse(code, &mut Position::new()).unwrap();
-    let insts = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 

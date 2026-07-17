@@ -1,9 +1,9 @@
 use crate::{
-    code_frame::{code_frame, Position},
+    code_frame::{code_frame, Position, SourceMap},
     vm_insts::Inst,
 };
 
-use alloc::{string::String};
+use alloc::{format, string::String};
 use core::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -31,6 +31,22 @@ impl fmt::Display for SquareError {
             SquareError::RuntimeError(msg) => {
                 write!(f, "Runtime error: {}", msg)
             }
+        }
+    }
+}
+
+impl SquareError {
+    /// 像 `Display` 一样格式化，但若提供了 source map，把 `InstructionError` 的 pc
+    /// 反查为源码位置（`line:column`）。无映射时退化为 `pc N`。
+    pub fn enrich(&self, sm: Option<&SourceMap>) -> String {
+        match self {
+            SquareError::InstructionError(msg, _inst, pc) => match sm.and_then(|m| m.lookup(*pc)) {
+                Some(pos) => {
+                    format!("Instruction error at line {}:{}: {}", pos.line, pos.column, msg)
+                }
+                None => format!("Instruction error at pc {}: {}", pc, msg),
+            },
+            other => format!("{}", other),
         }
     }
 }
