@@ -36,7 +36,7 @@ fn new_closure_unwind(ip: usize, upvalues: &HashMap<String, Value>) -> UnwindFra
     let mut frame = CallFrame::new();
     frame.stack[0] = Value::Vec(Rc::new(RefCell::new(vec![])));
     frame.sp = 1;
-    frame.extend_locals(upvalues.clone());
+    frame.extend_locals(upvalues);
     let sentinel = CallFrame::new();
 
     UnwindFrame {

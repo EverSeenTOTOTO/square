@@ -210,38 +210,40 @@ impl Inst {
             }
             Inst::PUSH_CLOSURE(meta) => {
                 if let Function::ClosureMeta(offset, captures) = meta {
-                    // create closure
-                    let mut upvalues = HashMap::new();
                     let ip = (vm.pc as i32) + offset;
-                    let binding = vm.current_frame();
-                    let mut frame = binding.borrow_mut();
 
-                    let varnames = captures.iter().cloned().collect::<Vec<_>>();
+                    // 无捕获：直接造空 upvalues 的闭包，跳过 frame 借用与捕获循环。
+                    let upvalues = if captures.is_empty() {
+                        HashMap::new()
+                    } else {
+                        let mut upvalues = HashMap::new();
+                        let binding = vm.current_frame();
+                        let mut frame = binding.borrow_mut();
 
-                    // upgrade value to captured
-                    for name in varnames {
-                        if let Some(value) = frame.resolve_local(&name) {
-                            let upvalue = value.upgrade();
+                        // upgrade value to captured
+                        for name in captures.iter().cloned().collect::<Vec<_>>() {
+                            if let Some(value) = frame.resolve_local(&name) {
+                                let upvalue = value.upgrade();
 
-                            upvalues.insert(name.clone(), upvalue.clone());
-                            frame.insert_local(&name, upvalue);
-                        } else {
-                            // else undefined yet, if later be defined in same scope,
-                            // the value will be assigned
-                            let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
+                                upvalues.insert(name.clone(), upvalue.clone());
+                                frame.insert_local(&name, upvalue);
+                            } else {
+                                // else undefined yet, if later be defined in same scope,
+                                // the value will be assigned
+                                let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
 
-                            upvalues.insert(name.clone(), upvalue.clone());
-                            frame.insert_local(&name, upvalue);
+                                upvalues.insert(name.clone(), upvalue.clone());
+                                frame.insert_local(&name, upvalue);
+                            }
                         }
-                    }
 
-                    return {
-                        frame.push(Value::Function(Rc::new(RefCell::new(Function::Closure(
-                            ip as usize,
-                            upvalues,
-                        )))));
-                        Ok(())
+                        upvalues
                     };
+
+                    vm.current_frame().borrow_mut().push(Value::Function(Rc::new(
+                        RefCell::new(Function::Closure(ip as usize, upvalues)),
+                    )));
+                    return Ok(());
                 }
 
                 unreachable!()
@@ -389,7 +391,7 @@ impl Inst {
                     frame.sp = 1;
                     frame.clear_locals();
                     // fill up captures
-                    frame.extend_locals(upvalues.clone());
+                    frame.extend_locals(upvalues);
                 } else {
                     let mut new_frame = CallFrame::new();
                     new_frame.ra = vm.pc;
@@ -397,7 +399,7 @@ impl Inst {
                     new_frame.stack[0] = Value::Vec(params);
                     new_frame.sp = 1;
                     // fill up captures
-                    new_frame.extend_locals(upvalues.clone());
+                    new_frame.extend_locals(upvalues);
 
                     vm.push_frame(new_frame);
                 }
@@ -497,8 +499,10 @@ impl CallFrame {
     }
 
     #[inline]
-    pub fn extend_locals(&mut self, upvalues: HashMap<String, Value>) {
-        self.locals.extend(upvalues);
+    pub fn extend_locals(&mut self, upvalues: &HashMap<String, Value>) {
+        for (k, v) in upvalues {
+            self.locals.insert(k.clone(), v.clone());
+        }
     }
 
     #[inline]
