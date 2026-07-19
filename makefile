@@ -30,3 +30,8 @@ endif
 .PHONY: test-js
 test-js:
 	node --test
+
+# fib 基准：square 字节码 VM vs 原生 JS（需先 make build 产出 square.wasm）。
+.PHONY: bench
+bench:
+	node bench/fib.mjs
