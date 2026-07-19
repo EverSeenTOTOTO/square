@@ -32,7 +32,7 @@ pub static INTERNAL_KEY: &str = "__internal__";
 /// `pc += 1` 跳过它；这里 `tick` 直接 `vm.pc = ra` 进 `run`，没有那步 +1，故手动对齐到 `ip + 1`。
 /// `stack[0]` 预置空参数 vec、`sp = 1` 对应入口的 `POP`（参数解包）。
 #[cfg(target_family = "wasm")]
-fn new_closure_unwind(ip: usize, upvalues: &HashMap<String, Value>) -> UnwindFrame {
+fn new_closure_unwind(ip: usize, upvalues: &[(String, Value)]) -> UnwindFrame {
     let mut frame = CallFrame::new();
     frame.stack[0] = Value::Vec(Rc::new(RefCell::new(vec![])));
     frame.sp = 1;
@@ -646,7 +646,11 @@ impl Builtin {
     fn try_capture_this(val: &Value, obj: &Rc<RefCell<Object>>) {
         if let Some(member_fn) = val.as_fn() {
             if let Function::Closure(_, ref mut captures) = *member_fn.borrow_mut() {
-                captures.insert("this".to_string(), Value::Obj(obj.clone()));
+                if let Some(slot) = captures.iter_mut().find(|(n, _)| n.as_str() == "this") {
+                    slot.1 = Value::Obj(obj.clone());
+                } else {
+                    captures.push(("this".to_string(), Value::Obj(obj.clone())));
+                }
             }
         }
     }

@@ -1,6 +1,7 @@
 use alloc::{format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
 use core::{cell::RefCell, fmt};
 
+#[cfg(test)]
 use hashbrown::HashMap;
 
 use crate::{
@@ -214,9 +215,9 @@ impl Inst {
 
                     // 无捕获：直接造空 upvalues 的闭包，跳过 frame 借用与捕获循环。
                     let upvalues = if captures.is_empty() {
-                        HashMap::new()
+                        Vec::new()
                     } else {
-                        let mut upvalues = HashMap::new();
+                        let mut upvalues: Vec<(String, Value)> = Vec::new();
                         let binding = vm.current_frame();
                         let mut frame = binding.borrow_mut();
 
@@ -225,14 +226,14 @@ impl Inst {
                             if let Some(value) = frame.resolve_local(&name) {
                                 let upvalue = value.upgrade();
 
-                                upvalues.insert(name.clone(), upvalue.clone());
+                                upvalues.push((name.clone(), upvalue.clone()));
                                 frame.insert_local(&name, upvalue);
                             } else {
                                 // else undefined yet, if later be defined in same scope,
                                 // the value will be assigned
                                 let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
 
-                                upvalues.insert(name.clone(), upvalue.clone());
+                                upvalues.push((name.clone(), upvalue.clone()));
                                 frame.insert_local(&name, upvalue);
                             }
                         }
@@ -427,7 +428,7 @@ impl Inst {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallFrame {
-    pub locals: HashMap<String, Value>,
+    pub locals: Vec<(String, Value)>,
 
     // operand stack
     pub stack: Vec<Value>,
@@ -465,7 +466,7 @@ impl Default for CallFrame {
 impl CallFrame {
     pub fn new() -> Self {
         Self {
-            locals: HashMap::new(),
+            locals: Vec::new(),
             stack: vec![Value::Nil; 8],
             sp: 0,
             ra: 0,
@@ -493,21 +494,33 @@ impl CallFrame {
         self.stack.get(self.sp - 1)
     }
 
-    #[inline]
-    pub fn insert_local(&mut self, name: &str, value: Value) {
-        self.locals.insert(name.to_string(), value);
+    /// 按名更新或追加（保持一名一项，等价 HashMap 语义）。
+    fn upsert_local(&mut self, name: &str, value: Value) {
+        if let Some(slot) = self.locals.iter_mut().find(|(n, _)| n.as_str() == name) {
+            slot.1 = value;
+        } else {
+            self.locals.push((name.to_string(), value));
+        }
     }
 
     #[inline]
-    pub fn extend_locals(&mut self, upvalues: &HashMap<String, Value>) {
+    pub fn insert_local(&mut self, name: &str, value: Value) {
+        self.upsert_local(name, value);
+    }
+
+    #[inline]
+    pub fn extend_locals(&mut self, upvalues: &[(String, Value)]) {
         for (k, v) in upvalues {
-            self.locals.insert(k.clone(), v.clone());
+            self.upsert_local(k, v.clone());
         }
     }
 
     #[inline]
     pub fn resolve_local(&self, name: &str) -> Option<&Value> {
-        self.locals.get(name)
+        self.locals
+            .iter()
+            .find(|(n, _)| n.as_str() == name)
+            .map(|(_, v)| v)
     }
 
     #[inline]
@@ -522,10 +535,14 @@ impl CallFrame {
             value
         };
 
-        if let Some(Value::UpValue(old)) = self.locals.get(name) {
-            *old.borrow_mut() = new;
+        if let Some(slot) = self.locals.iter_mut().find(|(n, _)| n.as_str() == name) {
+            if let Value::UpValue(old) = &slot.1 {
+                *old.borrow_mut() = new; // 写穿共享单元，保持捕获的可变性
+            } else {
+                slot.1 = new;
+            }
         } else {
-            self.insert_local(name, new);
+            self.locals.push((name.to_string(), new));
         }
     }
 }

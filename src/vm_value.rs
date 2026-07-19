@@ -20,7 +20,7 @@ pub type Object = HashMap<String, Value>;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Function {
     ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
-    Closure(usize, HashMap<String, Value>), // runtime, (ip, upvalues)
+    Closure(usize, Vec<(String, Value)>), // runtime, (ip, upvalues)
     Syscall(&'static str),             // (name)
     Continuation(usize, Vec<Rc<RefCell<CallFrame>>>), // (ra, context)
 }
