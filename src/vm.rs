@@ -195,18 +195,21 @@ impl Inst {
                 ))
             }
             Inst::RET => {
-                let binding = vm.current_frame();
-                let frame = binding.borrow_mut();
+                // 借而不克隆 Rc：取 ra 与返回值后立即释放借用，使 pop 出的帧 Rc 唯一、可回池。
+                let (ra, top) = {
+                    let frame = vm.call_frames.last().unwrap().borrow();
+                    (frame.ra, frame.top().unwrap_or(&Value::Nil).clone())
+                };
 
                 // jump back
-                vm.pc = frame.ra;
+                vm.pc = ra;
 
-                let top = frame.top().unwrap_or(&Value::Nil).clone();
-
-                vm.pop_frame();
+                if let Some(rc) = vm.pop_frame() {
+                    vm.recycle_frame(rc);
+                }
 
                 // always return the top value
-                vm.current_frame().borrow_mut().push(top);
+                vm.call_frames.last().unwrap().borrow_mut().push(top);
                 Ok(())
             }
             Inst::PUSH_CLOSURE(meta) => {
@@ -394,7 +397,7 @@ impl Inst {
                     // fill up captures
                     frame.extend_locals(upvalues);
                 } else {
-                    let mut new_frame = CallFrame::new();
+                    let mut new_frame = vm.take_frame();
                     new_frame.ra = vm.pc;
                     // always push params as first operand
                     new_frame.stack[0] = Value::Vec(params);
@@ -554,6 +557,10 @@ pub struct VM {
 
     buildin: Builtin,
 
+    /// 回收的调用帧：CALL 复用而非重新分配（含 `vec![Nil; 8]` 操作数栈）。
+    /// 仅在 `Rc` 唯一（无 callcc 续延共享）时回收，见 [`recycle_frame`]。
+    frame_pool: Vec<CallFrame>,
+
     #[cfg(test)]
     inst_times: HashMap<&'static str, (u128, usize)>,
 }
@@ -571,6 +578,7 @@ impl VM {
             buildin: Builtin::new(),
             pc: 0,
             mpc: 0,
+            frame_pool: Vec::new(),
 
             #[cfg(test)]
             inst_times: HashMap::new(),
@@ -600,6 +608,29 @@ impl VM {
     #[inline]
     pub fn pop_frame(&mut self) -> Option<Rc<RefCell<CallFrame>>> {
         self.call_frames.pop()
+    }
+
+    /// 取一个调用帧供新 CALL 使用：优先复用池中帧（清空 locals、复位 sp，保留操作数栈
+    /// 容量），池空才新建。避免每次 CALL 的 `vec![Nil; 8]` 栈分配。
+    fn take_frame(&mut self) -> CallFrame {
+        if let Some(mut frame) = self.frame_pool.pop() {
+            frame.locals.clear();
+            frame.sp = 0;
+            frame
+        } else {
+            CallFrame::new()
+        }
+    }
+
+    /// RET 退栈时回收帧。仅当 `Rc` 唯一（无 callcc 续延共享该帧）时入池；否则丢弃，
+    /// 由其最后一个引用释放。池设上限，避免极端递归深度下无限增长。
+    fn recycle_frame(&mut self, rc: Rc<RefCell<CallFrame>>) {
+        const POOL_CAP: usize = 256;
+        if self.frame_pool.len() < POOL_CAP {
+            if let Ok(cell) = Rc::try_unwrap(rc) {
+                self.frame_pool.push(cell.into_inner());
+            }
+        }
     }
 
     #[inline]
