@@ -11,24 +11,29 @@
 ; --- impl ---
 
 ; create class
-[let class /[members proto] [begin
-  [let o [obj]]
+[let class /[members templates proto] [begin
+  [let clz [obj]]
   [foreach [keys members] /[k] [set proto k [get members k]]]
-  [= o.prototype proto]
-  o]]
 
-; create instance
-[let new /[clazz] [begin
-  [let o [obj]]
-  [= o.__proto__ clazz.prototype]
-  [proxy o
-    'get' /[t k]
-            [if [in k t]
-              [get t k]
-              [get o.__proto__ k]]]]]
+  [= clz.prototype proto]
+
+  ; create instance
+  [= clz.new /[] [begin
+    [let instance [obj]]
+    [= instance.__proto__ clz.prototype]
+
+    [foreach [keys templates] /[k] [set instance k [get templates k]]]
+
+    ; search across chain
+    [proxy instance
+      'get' /[t k]
+              [if [in k t]
+                [get t k]
+                [get instance.__proto__ k]]]]]
+  clz]]
 
 ; create derived class
-[let extends /[clazz overrides] [class overrides [new clazz]]]
+[let extends /[clazz overrides templates] [class overrides templates [clazz.new]]]
 
 [let instanceof /[o clazz] [begin
   [let proto o.__proto__]
@@ -41,16 +46,20 @@
 
 ; --- usage ---
 
-[let Base [class [obj
-                  'x' 42
-                  'foo' /[] [println this.x]
-                  'bar' /[] [println 'bar']]
-                  [obj]]]
+[let Base [class  
+            [obj
+              'x' [obj 'value' 42]
+              'foo' /[] [println this.x.value]
+              'bar' /[] [println 'bar']]
 
-[let Derived [extends Base [obj 'bar' /[] [println 'override bar']]]]
+            [obj 'y' 'hello']
 
-[let a [new Base]]
-[let b [new Derived]]
+            [obj]]]
+
+[let Derived [extends Base [obj 'bar' /[] [println 'override bar']] [obj]]]
+
+[let a [Base.new]]
+[let b [Derived.new]]
 
 [a.foo] ; 42
 [a.bar] ; bar
@@ -58,10 +67,19 @@
 [b.foo] ; 42
 [b.bar] ; override bar
 
-[= Base.prototype.foo /[] [println -this.x]]
+[println b.x] ; [42]
+[println b.y] ; hello
+
+[= Base.prototype.foo /[] [println -this.x.value]]
 
 [a.foo] ; -42
 [b.foo] ; -42
+
+[= b.x.value 24]
+[= b.y 'world']
+
+[println a.x] ; [24]
+[println a.y] ; hello
 
 [println [instanceof a Base]]     ; true
 [println [instanceof b Base]]     ; true

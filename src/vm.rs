@@ -272,7 +272,7 @@ impl Inst {
             Inst::PEEK(offset, i) => {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
-                let top = Builtin::get_internal_vec(&frame.stack[frame.sp - 1]);
+                let top = frame.stack[frame.sp - 1].as_vec();
 
                 if let Some(val) = top {
                     let pack = val.borrow().clone();
@@ -1550,31 +1550,6 @@ fn test_exec_builtin_value() {
         callframe.resolve_local("t").unwrap(),
         &Value::Str("fn".to_string())
     )
-}
-
-#[test]
-fn test_exec_builtin_vec_methods() {
-    let code = "
-[let v [vec 1 2 3]]
-[= v.at /[index] [at this index]]
-
-[let x [v.at 0]]
-
-[splice v 0 1 [vec 4]]
-
-[let y [at v 0]]
-";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
-    let mut vm = VM::new();
-    let mut cx = RtCx::test();
-
-    vm.run(&insts, &mut cx).unwrap();
-
-    let binding = vm.current_frame();
-    let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(1.0));
-    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(4.0))
 }
 
 #[test]

@@ -123,18 +123,6 @@ impl fmt::Display for Value {
                 )
             }
             Value::Obj(obj) => {
-                if let Some(v) = Builtin::get_internal_vec(self) {
-                    return write!(
-                        f,
-                        "[{}]",
-                        v.borrow()
-                            .iter()
-                            .map(stringify_nested)
-                            .collect::<Vec<String>>()
-                            .join(", ")
-                    );
-                }
-
                 write!(
                     f,
                     "{{{}}}",
@@ -398,13 +386,7 @@ impl Value {
             Value::Num(_) => "num",
             Value::Str(_) => "str",
             Value::Vec(_) => "vec",
-            Value::Obj(_) => {
-                if Builtin::get_internal_vec(self).is_some() {
-                    "vec"
-                } else {
-                    "obj"
-                }
-            }
+            Value::Obj(_) => "obj",
             Value::Proxy { .. } => "proxy",
             Value::Function(f) => match *f.borrow() {
                 Function::Continuation(..) => "cc",
