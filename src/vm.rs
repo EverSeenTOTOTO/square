@@ -707,7 +707,10 @@ impl VM {
     }
 
     pub fn run(&mut self, insts: &Vec<Inst>, cx: &mut RtCx) -> ExecResult {
-        self.current_frame().borrow_mut().ra = insts.len();
+        // 仅根帧（ra==0，含 defer/spawn 的 [sentinel,closure]）把 RET 目标设为末尾，避免覆盖 CALL 写入的真实返回地址。
+        if self.current_frame().borrow().ra == 0 {
+            self.current_frame().borrow_mut().ra = insts.len();
+        }
 
         #[cfg(test)]
         self.inst_times.clear();

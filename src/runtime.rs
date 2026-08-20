@@ -101,7 +101,10 @@ fn step_tick(vm: &mut VM, insts: &Vec<crate::vm_insts::Inst>) -> ExecResult {
     let frame = front.frame.borrow_mut().take().expect("ready task has frame");
     vm.restore_context(frame.context);
     vm.pc = frame.ra;
-    vm.current_frame().borrow_mut().ra = insts.len();
+    // 仅根帧（ra==0，含 defer/spawn 的 [sentinel,closure]）把 RET 目标设为末尾，避免覆盖 CALL 写入的真实返回地址导致提前退出。
+    if vm.current_frame().borrow().ra == 0 {
+        vm.current_frame().borrow_mut().ra = insts.len();
+    }
     let mut cx = RtCx { task: front.clone(), rt };
     let result = if vm.pc < insts.len() {
         vm.step(insts, &mut cx)
