@@ -34,10 +34,14 @@ pub type Syscall =
 /// step 循环的 `pc += 1` 跳过它；这里 `tick` 直接 `vm.pc = ra` 进 `run`，没有那步 +1，
 /// 故手动对齐。零参任务：空参数绑定（重置槽位布局），upvalue 单元直接装帧。
 #[cfg(target_family = "wasm")]
-fn new_closure_unwind(info: &Rc<ClosureInfo>, ip: usize, ups: &[Rc<RefCell<Value>>]) -> UnwindFrame {
+fn new_closure_unwind(
+    info: &Rc<ClosureInfo>,
+    ip: usize,
+    ups: &Rc<Vec<Rc<RefCell<Value>>>>,
+) -> UnwindFrame {
     let mut frame = CallFrame::new();
     crate::vm::bind_params(&mut frame, info, &[]);
-    frame.ups = ups.to_vec();
+    frame.ups = ups.clone();
     let sentinel = CallFrame::new();
 
     UnwindFrame {

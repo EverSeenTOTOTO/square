@@ -238,7 +238,7 @@ impl Inst {
 
                 // 先把被调者数据克隆出来（Rc 自增），避免函数体 RefCell 借用跨 VM 操作
                 enum Callee {
-                    Closure(Rc<ClosureInfo>, usize, Vec<Rc<RefCell<Value>>>),
+                    Closure(Rc<ClosureInfo>, usize, Rc<Vec<Rc<RefCell<Value>>>>),
                     Syscall(&'static str),
                     Continuation(usize, Vec<Rc<RefCell<CallFrame>>>),
                 }
@@ -355,25 +355,27 @@ impl Inst {
                 };
                 let ip = info.abs_ip(vm.pc);
 
-                // 无捕获：直接造空 upvalues 的闭包，跳过 frame 借用与捕获循环
+                // 无捕获：共享 VM 级空表，零分配
                 let ups = if info.captures.is_empty() {
-                    Vec::new()
+                    vm.empty_ups.clone()
                 } else {
                     let binding = vm.current_frame();
                     let mut frame = binding.borrow_mut();
-                    info.captures
-                        .iter()
-                        .map(|src| match src {
-                            CaptureSrc::Local(i) => frame.slot_cell(*i),
-                            CaptureSrc::Upvalue(j) => frame
-                                .ups
-                                .get(*j as usize)
-                                .cloned()
-                                .unwrap_or_else(|| Rc::new(RefCell::new(Value::Nil))),
-                            // 每个闭包实例独立的 this 单元，存入 obj 时回填
-                            CaptureSrc::This => Rc::new(RefCell::new(Value::Nil)),
-                        })
-                        .collect()
+                    Rc::new(
+                        info.captures
+                            .iter()
+                            .map(|src| match src {
+                                CaptureSrc::Local(i) => frame.slot_cell(*i),
+                                CaptureSrc::Upvalue(j) => frame
+                                    .ups
+                                    .get(*j as usize)
+                                    .cloned()
+                                    .unwrap_or_else(|| Rc::new(RefCell::new(Value::Nil))),
+                                // 每个闭包实例独立的 this 单元，存入 obj 时回填
+                                CaptureSrc::This => Rc::new(RefCell::new(Value::Nil)),
+                            })
+                            .collect(),
+                    )
                 };
 
                 vm.current_frame().borrow_mut().push(Value::Function(Rc::new(
@@ -481,7 +483,15 @@ impl Inst {
 
                 if let Some(obj) = target.as_obj() {
                     Builtin::try_capture_this(&value, &obj);
-                    obj.borrow_mut().insert(key.to_string(), value);
+                    {
+                        // 热路径：键已存在则原地覆写，免去每次 insert 的 String 分配
+                        let mut map = obj.borrow_mut();
+                        if let Some(slot) = map.get_mut(key) {
+                            *slot = value;
+                        } else {
+                            map.insert(key.to_string(), value);
+                        }
+                    }
                     vm.current_frame().borrow_mut().push(Value::Obj(obj));
                     Ok(())
                 } else {
@@ -627,8 +637,8 @@ pub struct CallFrame {
     /// 槽位化局部变量（编译期静态布局）。被捕获的槽位以 Value::UpValue 共享单元存储，
     /// 读写自动解包/写穿。
     pub slots: Vec<Value>,
-    /// 本帧对应闭包的 upvalue 单元，CALL 时由闭包拷入（LOAD_UP/STORE_UP 直访）
-    pub ups: Vec<Rc<RefCell<Value>>>,
+    /// 本帧对应闭包的 upvalue 单元表（与闭包共享 Rc，CALL 只做引用自增）
+    pub ups: Rc<Vec<Rc<RefCell<Value>>>>,
     /// 槽位名表（快照/调试用），与 ClosureInfo 共享同一 Rc
     pub names: Rc<Vec<String>>,
 
@@ -670,7 +680,7 @@ impl CallFrame {
     pub fn new() -> Self {
         Self {
             slots: Vec::new(),
-            ups: Vec::new(),
+            ups: Rc::new(Vec::new()),
             names: Rc::new(Vec::new()),
             stack: vec![Value::Nil; 8],
             sp: 0,
@@ -762,6 +772,12 @@ pub struct VM {
     /// `= x v` 动态定义的全局（编译期无法归属槽位的名字）
     pub globals: HashMap<String, Value>,
 
+    /// 捕获空闭包/帧共享的空 upvalue 表
+    empty_ups: Rc<Vec<Rc<RefCell<Value>>>>,
+
+    /// 当前帧缓存：与 call_frames 栈顶同步，current_frame() 免去 Vec::last + Rc clone
+    cur: Rc<RefCell<CallFrame>>,
+
     /// 回收的调用帧：CALL 复用而非重新分配（含 `vec![Nil; 8]` 操作数栈）。
     /// 仅在 `Rc` 唯一（无 callcc 续延共享）时回收，见 [`recycle_frame`]。
     frame_pool: Vec<CallFrame>,
@@ -769,6 +785,7 @@ pub struct VM {
     #[cfg(test)]
     inst_times: HashMap<&'static str, (u128, usize)>,
 }
+
 
 impl Default for VM {
     fn default() -> Self {
@@ -778,10 +795,13 @@ impl Default for VM {
 
 impl VM {
     pub fn new() -> Self {
+        let root = Rc::new(RefCell::new(CallFrame::new()));
         Self {
-            call_frames: vec![Rc::new(RefCell::new(CallFrame::new()))],
+            call_frames: vec![root.clone()],
             buildin: Builtin::new(),
             globals: HashMap::new(),
+            empty_ups: Rc::new(Vec::new()),
+            cur: root.clone(),
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
@@ -795,8 +815,9 @@ impl VM {
         self.pc = 0;
         self.mpc = 0;
         self.globals.clear();
-        self.call_frames
-            .splice(0.., vec![Rc::new(RefCell::new(CallFrame::new()))]);
+        let root = Rc::new(RefCell::new(CallFrame::new()));
+        self.cur = root.clone();
+        self.call_frames.splice(0.., vec![root]);
 
         #[cfg(test)]
         self.inst_times.clear();
@@ -804,17 +825,23 @@ impl VM {
 
     #[inline]
     pub fn current_frame(&mut self) -> Rc<RefCell<CallFrame>> {
-        self.call_frames.last().unwrap().clone()
+        self.cur.clone()
     }
 
     #[inline]
     pub fn push_frame(&mut self, frame: CallFrame) {
-        self.call_frames.push(Rc::new(RefCell::new(frame)))
+        let rc = Rc::new(RefCell::new(frame));
+        self.cur = rc.clone();
+        self.call_frames.push(rc)
     }
 
     #[inline]
     pub fn pop_frame(&mut self) -> Option<Rc<RefCell<CallFrame>>> {
-        self.call_frames.pop()
+        let popped = self.call_frames.pop();
+        if let Some(last) = self.call_frames.last() {
+            self.cur = last.clone();
+        }
+        popped
     }
 
     /// 取一个调用帧供新 CALL 使用：优先复用池中帧（清空 locals、复位 sp，保留操作数栈
@@ -822,7 +849,6 @@ impl VM {
     fn take_frame(&mut self) -> CallFrame {
         if let Some(mut frame) = self.frame_pool.pop() {
             frame.slots.clear();
-            frame.ups.clear();
             frame.sp = 0;
             frame
         } else {
@@ -849,6 +875,9 @@ impl VM {
     #[inline]
     pub fn restore_context(&mut self, context: Vec<Rc<RefCell<CallFrame>>>) {
         self.call_frames = context;
+        if let Some(last) = self.call_frames.last() {
+            self.cur = last.clone();
+        }
     }
 
     /// 把当前 VM 状态序列化成一段字节，供宿主调试面板读取（走专用数据通道，与 `println`

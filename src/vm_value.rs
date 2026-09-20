@@ -55,7 +55,7 @@ impl ClosureInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Function {
     ClosureMeta(Rc<ClosureInfo>),
-    Closure(Rc<ClosureInfo>, usize, Vec<Rc<RefCell<Value>>>), // (info, abs ip, upvalue cells)
+    Closure(Rc<ClosureInfo>, usize, Rc<Vec<Rc<RefCell<Value>>>>), // (info, abs ip, 共享 upvalue 单元表)
     Syscall(&'static str),             // (name)
     Continuation(usize, Vec<Rc<RefCell<CallFrame>>>), // (ra, context)
 }
