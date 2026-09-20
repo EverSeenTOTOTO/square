@@ -12,7 +12,7 @@ use crate::vm_insts::Inst;
 use crate::vm_value::Object;
 use crate::{
     vm::{ExecResult, RtCx, VM},
-    vm_value::{Function, Value},
+    vm_value::{Function, ProxyData, Value},
 };
 
 #[cfg(target_family = "wasm")]
@@ -403,19 +403,20 @@ impl Builtin {
                         let value = params.borrow().get(2).cloned().unwrap_or(Value::Nil);
 
                         match target {
-                            Value::Proxy { target, set: Some(trap), .. } => inst.call(
+                            Value::Proxy(data) if data.set.is_some() => inst.call(
                                 vm,
                                 cx,
-                                trap,
+                                data.set.clone().unwrap(),
                                 Rc::new(RefCell::new(vec![
-                                    Value::Obj(target),
+                                    Value::Obj(data.target.clone()),
                                     key.map(Value::Str).unwrap_or(Value::Nil),
                                     value,
                                 ])),
                                 false,
                             ),
-                            Value::Proxy { target, set: None, .. } => {
+                            Value::Proxy(data) => {
                                 if let Some(k) = key {
+                                    let target = data.target.clone();
                                     Self::try_capture_this(&value, &target);
                                     target.borrow_mut().insert(k, value);
                                     vm.current_frame().borrow_mut().push(Value::Obj(target));
@@ -458,19 +459,19 @@ impl Builtin {
                         let key = params.borrow().get(1).and_then(|v| v.as_str());
 
                         match target {
-                            Value::Proxy { target, get: Some(trap), .. } => inst.call(
+                            Value::Proxy(data) if data.get.is_some() => inst.call(
                                 vm,
                                 cx,
-                                trap,
+                                data.get.clone().unwrap(),
                                 Rc::new(RefCell::new(vec![
-                                    Value::Obj(target),
+                                    Value::Obj(data.target.clone()),
                                     key.map(Value::Str).unwrap_or(Value::Nil),
                                 ])),
                                 false,
                             ),
-                            Value::Proxy { target, get: None, .. } => {
+                            Value::Proxy(data) => {
                                 if let Some(k) = key {
-                                    let cloned = target.borrow().get(&k).cloned().unwrap_or(Value::Nil);
+                                    let cloned = data.target.borrow().get(&k).cloned().unwrap_or(Value::Nil);
                                     vm.current_frame().borrow_mut().push(cloned);
                                     Ok(())
                                 } else {
@@ -539,7 +540,7 @@ impl Builtin {
 
                         vm.current_frame()
                             .borrow_mut()
-                            .push(Value::Proxy { target, get, set });
+                            .push(Value::Proxy(Rc::new(ProxyData { target, get, set })));
                         Ok(())
                     },
                 ) as Syscall),

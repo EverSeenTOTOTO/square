@@ -17,6 +17,14 @@ use crate::{errors::SquareError, vm::CallFrame};
 
 pub type Object = HashMap<Rc<str>, Value>;
 
+/// Proxy 载荷单独装箱，避免撑大 Value enum（搬运成本）
+#[derive(Debug)]
+pub struct ProxyData {
+    pub target: Rc<RefCell<Object>>,
+    pub get: Option<Rc<RefCell<Function>>>,
+    pub set: Option<Rc<RefCell<Function>>>,
+}
+
 /// upvalue 的捕获来源：外层函数帧的槽位、外层闭包的第 j 个 upvalue（传递捕获）、
 /// 或 `this`（方法注入：闭包存入 obj 时由 set/obj 回填）
 #[derive(Debug, Clone, PartialEq)]
@@ -92,11 +100,7 @@ pub enum Value {
     Str(Rc<str>),
     Vec(Rc<RefCell<Vec<Value>>>),
     Obj(Rc<RefCell<Object>>),
-    Proxy {
-        target: Rc<RefCell<Object>>,
-        get: Option<Rc<RefCell<Function>>>,
-        set: Option<Rc<RefCell<Function>>>,
-    },
+    Proxy(Rc<ProxyData>),
     Function(Rc<RefCell<Function>>),
     UpValue(Rc<RefCell<Value>>),
     Nil,
@@ -148,7 +152,7 @@ impl fmt::Display for Value {
                         .join(", ")
                 )
             }
-            Value::Proxy { target, .. } => fmt::Display::fmt(&Value::Obj(target.clone()), f),
+            Value::Proxy(data) => fmt::Display::fmt(&Value::Obj(data.target.clone()), f),
             Value::Function(func) => func.borrow().fmt(f),
             Value::UpValue(val) => match *val.borrow() {
                 Value::UpValue(_) => panic!("nested upvalue"),
@@ -212,7 +216,7 @@ impl PartialEq for Value {
             (Value::Vec(lhs), Value::Vec(rhs)) => Rc::ptr_eq(lhs, rhs),
             (Value::Obj(lhs), Value::Obj(rhs)) => Rc::ptr_eq(lhs, rhs),
             (Value::Function(lhs), Value::Function(rhs)) => Rc::ptr_eq(lhs, rhs),
-            (Value::Proxy { target: l, .. }, Value::Proxy { target: r, .. }) => Rc::ptr_eq(l, r),
+            (Value::Proxy(l), Value::Proxy(r)) => Rc::ptr_eq(l, r),
 
             (Value::UpValue(lhs), Value::UpValue(rhs)) => lhs.borrow().eq(&rhs.borrow()),
             (Value::UpValue(lhs), rhs) => lhs.borrow().eq(rhs),
@@ -404,7 +408,7 @@ impl Value {
             Value::Str(_) => "str",
             Value::Vec(_) => "vec",
             Value::Obj(_) => "obj",
-            Value::Proxy { .. } => "proxy",
+            Value::Proxy(_) => "proxy",
             Value::Function(f) => match *f.borrow() {
                 Function::Continuation(..) => "cc",
                 _ => "fn",
