@@ -169,22 +169,20 @@ impl Inst {
 
             Inst::CALL => {
                 // call() will borrow again, so don't borrow here
-                // let binding = vm.current_frame();
-                // let mut frame = binding.borrow_mut();
+                let (params, function) = {
+                    let frame = vm.current_frame();
+                    let frame = frame.borrow();
+                    let sp = frame.sp;
+                    (frame.stack[sp - 1].as_vec(), frame.stack[sp - 2].as_fn())
+                };
 
-                // call closure
-                let sp = vm.current_frame().borrow().sp;
-                let params = vm.current_frame().borrow().stack[sp - 1].as_vec();
-                let function = vm.current_frame().borrow().stack[sp - 2].as_fn();
-
-                if let Some(func) = function {
-                    if let Some(args) = params {
-                        vm.current_frame().borrow_mut().sp -= 2;
-                        let is_tail_call = vm.pc + 1 < insts.len() && insts[vm.pc + 1] == Inst::RET;
-                        return self.call(vm, cx, func, args, is_tail_call);
-                    }
+                if let (Some(func), Some(args)) = (function, params) {
+                    vm.current_frame().borrow_mut().sp -= 2;
+                    let is_tail_call = vm.pc + 1 < insts.len() && insts[vm.pc + 1] == Inst::RET;
+                    return self.call(vm, cx, func, args, is_tail_call);
                 }
 
+                let sp = vm.current_frame().borrow().sp;
                 Err(SquareError::InstructionError(
                     format!(
                         "bad call, cannot call with {}",
@@ -275,54 +273,57 @@ impl Inst {
                 let top = frame.stack[frame.sp - 1].as_vec();
 
                 if let Some(val) = top {
-                    let pack = val.borrow().clone();
+                    // 只借用 pack 计算下标、clone 单个元素；整包 clone 会让
+                    // 多参函数的参数绑定退化为每参一次 O(n) 拷贝
+                    let pack = val.borrow();
+                    let len = pack.len();
 
                     let index = if *i > 0 {
                         *i as usize
                     } else {
-                        if *offset >= pack.len() {
+                        if *offset >= len {
                             return Err(SquareError::InstructionError(
                                 format!(
                                     "bad peek_vec, offset {} out of range, pack length is {}",
                                     offset,
-                                    pack.len()
+                                    len
                                 ),
                                 self.clone(),
                                 vm.pc,
                             ));
                         }
 
-                        let len = (pack.len() - offset) as i32;
+                        let rest = (len - offset) as i32;
 
-                        ((*i + len) % len) as usize + offset
+                        ((*i + rest) % rest) as usize + offset
                     };
 
-                    if index < pack.len() {
-                        return {
-                            frame.push(pack[index].clone());
-                            Ok(())
-                        };
+                    if index < len {
+                        let val = pack[index].clone();
+                        drop(pack);
+                        frame.push(val);
+                        Ok(())
                     } else {
-                        return Err(SquareError::InstructionError(
+                        Err(SquareError::InstructionError(
                             format!(
                                 "bad peek_vec, index {} out of range, pack length is {}",
                                 index,
-                                pack.len()
+                                len
                             ),
                             self.clone(),
                             vm.pc,
-                        ));
+                        ))
                     }
+                } else {
+                    Err(SquareError::InstructionError(
+                        format!(
+                            "bad peek_vec, top value is not a vector, got {}",
+                            frame.top().unwrap_or(&Value::Nil).clone()
+                        ),
+                        self.clone(),
+                        vm.pc,
+                    ))
                 }
-
-                Err(SquareError::InstructionError(
-                    format!(
-                        "bad peek_vec, top value is not a vector, got {}",
-                        frame.top().unwrap_or(&Value::Nil).clone()
-                    ),
-                    self.clone(),
-                    vm.pc,
-                ))
             }
 
             Inst::GET(key) => {
@@ -873,6 +874,21 @@ fn test_snapshot_roundtrip() {
     }
 
     assert_eq!(o, bytes.len(), "trailing bytes / over-read mismatch");
+}
+
+#[test]
+fn test_profile_fib() {
+    let code = "
+[let fib /[n] [if [<= n 2] 1 [+ [fib [- n 1]] [fib [- n 2]]]]]
+[fib 22]
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+    let mut cx = RtCx::test();
+
+    vm.run(&insts, &mut cx).unwrap();
+    vm.print_times();
 }
 
 #[test]
