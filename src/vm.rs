@@ -94,14 +94,6 @@ impl Inst {
                 }
             }
             Inst::LOAD(name) => {
-                if let Some(value) = vm.buildin.resolve_builtin(name) {
-                    let cloned = value.clone();
-                    return {
-                        vm.current_frame().borrow_mut().push(cloned);
-                        Ok(())
-                    };
-                }
-
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
                 if let Some(value) = frame.resolve_local(name) {
@@ -113,6 +105,9 @@ impl Inst {
                         value.clone()
                     };
                     frame.push(resolved);
+                    Ok(())
+                } else if let Some(value) = vm.buildin.resolve_builtin(name) {
+                    frame.push(value);
                     Ok(())
                 } else {
                     Err(SquareError::InstructionError(
