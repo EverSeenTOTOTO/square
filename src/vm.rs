@@ -19,6 +19,9 @@ use crate::parse::parse;
 
 pub type ExecResult = Result<(), SquareError>;
 
+#[cfg(target_family = "wasm")]
+use crate::println;
+
 /// 被 unwind 出来的 VM 栈快照：`ra`（下一条指令）+ 调用栈 `context`。由 runtime 的
 /// `tick`/`step_tick` rewind 回 VM 继续跑。与语言层续延值 `Function::Continuation` 区分：
 /// 后者是暴露给用户程序的一等续延，`UnwindFrame` 是调度器持有的 task 快照。
@@ -195,6 +198,38 @@ impl Inst {
                 Ok(())
             }
 
+            Inst::CMP_JNE(op, value) => {
+                // 比较与条件跳转融合：免中间 Bool 压栈/弹栈与一次派发。
+                // JNE 语义保持：条件为假才跳转
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let sp = frame.sp;
+                let (lhs, rhs) = (&frame.stack[sp - 2], &frame.stack[sp - 1]);
+                let cond = match *op {
+                    11 => lhs == rhs,
+                    12 => lhs != rhs,
+                    13 => lhs < rhs,
+                    14 => lhs <= rhs,
+                    15 => lhs > rhs,
+                    16 => lhs >= rhs,
+                    _ => unreachable!(),
+                };
+                frame.sp = sp - 2;
+                if !cond {
+                    drop(frame);
+                    return self.jump(insts, &mut vm.pc, *value);
+                }
+                Ok(())
+            }
+            Inst::LOAD2_LOCAL(a, b) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let va = frame.load_slot(*a);
+                let vb = frame.load_slot(*b);
+                frame.push(va);
+                frame.push(vb);
+                Ok(())
+            }
             Inst::JMP(value) => self.jump(insts, &mut vm.pc, *value),
             Inst::JNE(value) => {
                 let binding = vm.current_frame();
@@ -287,13 +322,16 @@ impl Inst {
                             caller.ups = ups;
                             caller.sp = 0;
                         } else {
-                            let mut callee_frame = vm.take_frame();
-                            bind_params(&mut callee_frame, &info, &caller.stack[sp - n..sp]);
-                            callee_frame.ups = ups;
-                            callee_frame.ra = vm.pc;
+                            let callee_rc = vm.take_frame();
+                            {
+                                let mut callee = callee_rc.borrow_mut();
+                                bind_params(&mut callee, &info, &caller.stack[sp - n..sp]);
+                                callee.ups = ups;
+                                callee.ra = vm.pc;
+                            }
                             caller.sp = sp - n - 1;
                             drop(caller);
-                            vm.push_frame(callee_frame);
+                            vm.push_frame(callee_rc);
                         }
 
                         vm.pc = ip;
@@ -587,11 +625,14 @@ impl Inst {
                     frame.ups = ups.clone();
                     frame.sp = 0;
                 } else {
-                    let mut new_frame = vm.take_frame();
-                    bind_params(&mut new_frame, info, &args);
-                    new_frame.ups = ups.clone();
-                    new_frame.ra = vm.pc;
-                    vm.push_frame(new_frame);
+                    let frame_rc = vm.take_frame();
+                    {
+                        let mut new_frame = frame_rc.borrow_mut();
+                        bind_params(&mut new_frame, info, &args);
+                        new_frame.ups = ups.clone();
+                        new_frame.ra = vm.pc;
+                    }
+                    vm.push_frame(frame_rc);
                 }
 
                 vm.pc = *ip;
@@ -781,10 +822,10 @@ pub struct VM {
 
     /// 回收的调用帧：CALL 复用而非重新分配（含 `vec![Nil; 8]` 操作数栈）。
     /// 仅在 `Rc` 唯一（无 callcc 续延共享）时回收，见 [`recycle_frame`]。
-    frame_pool: Vec<CallFrame>,
+    frame_pool: Vec<Rc<RefCell<CallFrame>>>,
 
     /// 逐指令剖析：(rdtsc 周期累计, 执行次数)。profiling 开启时由 step 记录
-    pub inst_cycles: [(u64, u64); 36],
+    pub inst_cycles: [(u64, u64); 38],
     pub profiling: bool,
 }
 
@@ -807,7 +848,7 @@ impl VM {
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
-            inst_cycles: [(0, 0); 36],
+            inst_cycles: [(0, 0); 38],
             profiling: false,
         }
     }
@@ -816,7 +857,7 @@ impl VM {
         self.pc = 0;
         self.mpc = 0;
         self.globals.clear();
-        self.inst_cycles = [(0, 0); 36];
+        self.inst_cycles = [(0, 0); 38];
         let root = Rc::new(RefCell::new(CallFrame::new()));
         self.cur = root.clone();
         self.call_frames.splice(0.., vec![root]);
@@ -828,8 +869,7 @@ impl VM {
     }
 
     #[inline]
-    pub fn push_frame(&mut self, frame: CallFrame) {
-        let rc = Rc::new(RefCell::new(frame));
+    pub fn push_frame(&mut self, rc: Rc<RefCell<CallFrame>>) {
         self.cur = rc.clone();
         self.call_frames.push(rc)
     }
@@ -843,26 +883,26 @@ impl VM {
         popped
     }
 
-    /// 取一个调用帧供新 CALL 使用：优先复用池中帧（清空 locals、复位 sp，保留操作数栈
-    /// 容量），池空才新建。避免每次 CALL 的 `vec![Nil; 8]` 栈分配。
-    fn take_frame(&mut self) -> CallFrame {
-        if let Some(mut frame) = self.frame_pool.pop() {
+    /// 取一个调用帧供新 CALL 使用：优先复用池中帧（连 Rc 壳一起，复位槽位与 sp，
+    /// 保留操作数栈与槽位容量），池空才新建。CALL 全程零堆分配。
+    fn take_frame(&mut self) -> Rc<RefCell<CallFrame>> {
+        if let Some(rc) = self.frame_pool.pop() {
+            let mut frame = rc.borrow_mut();
             frame.slots.clear();
             frame.sp = 0;
-            frame
+            drop(frame);
+            rc
         } else {
-            CallFrame::new()
+            Rc::new(RefCell::new(CallFrame::new()))
         }
     }
 
-    /// RET 退栈时回收帧。仅当 `Rc` 唯一（无 callcc 续延共享该帧）时入池；否则丢弃，
-    /// 由其最后一个引用释放。池设上限，避免极端递归深度下无限增长。
+    /// RET 退栈时回收帧。仅当 `Rc` 唯一（无 callcc 续延共享该帧）时连壳入池；
+    /// 否则丢弃，由其最后一个引用释放。池设上限，避免极端递归深度下无限增长。
     fn recycle_frame(&mut self, rc: Rc<RefCell<CallFrame>>) {
         const POOL_CAP: usize = 256;
-        if self.frame_pool.len() < POOL_CAP {
-            if let Ok(cell) = Rc::try_unwrap(rc) {
-                self.frame_pool.push(cell.into_inner());
-            }
+        if self.frame_pool.len() < POOL_CAP && Rc::strong_count(&rc) == 1 {
+            self.frame_pool.push(rc);
         }
     }
 

@@ -52,14 +52,18 @@ pub enum Inst {
     DELIMITER(usize), // delimiter for top level expressions
 
     NAMES(Rc<Vec<String>>), // 程序开头：登记根帧槽位名表（快照/调试用）
+
+    // 超指令（peephole 融合，见 emit::fuse_superinsts）
+    CMP_JNE(u8, i32), // 比较 + 条件跳转：op 用 Inst::id 的 EQ..GE，为假跳转，免中间 Bool
+    LOAD2_LOCAL(u16, u16), // 两次槽位读取合一次派发/借用
 }
 
 /// 指令名表（与 [`Inst::id`] 对齐），剖析输出用
-pub const NAMES: [&str; 36] = [
+pub const NAMES: [&str; 38] = [
     "PUSH", "POP", "ADD", "SUB", "MUL", "DIV", "REM", "BITAND", "BITOR", "BITXOR", "BITNOT",
     "EQ", "NE", "LT", "LE", "GT", "GE", "SHL", "SHR", "JMP", "JNE", "LOAD_LOCAL", "LOAD_UP",
     "LOAD_GLOBAL", "STORE_LOCAL", "STORE_UP", "STORE_GLOBAL", "CALL", "RET", "PUSH_CLOSURE",
-    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES",
+    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL",
 ];
 
 impl Inst {
@@ -107,6 +111,8 @@ impl Inst {
             Inst::SET(_) => 33,
             Inst::DELIMITER(_) => 34,
             Inst::NAMES(_) => 35,
+            Inst::CMP_JNE(..) => 36,
+            Inst::LOAD2_LOCAL(..) => 37,
         }
     }
 
@@ -149,6 +155,8 @@ impl Inst {
 
             Inst::DELIMITER(_) => "DELIMITER",
             Inst::NAMES(_) => "NAMES",
+            Inst::CMP_JNE(..) => "CMP_JNE",
+            Inst::LOAD2_LOCAL(..) => "LOAD2_LOCAL",
         }
     }
 }
@@ -203,6 +211,8 @@ impl fmt::Display for Inst {
 
             Inst::DELIMITER(mindex) => write!(f, "DELIMITER {}", mindex),
             Inst::NAMES(names) => write!(f, "NAMES {}", names.len()),
+            Inst::CMP_JNE(op, off) => write!(f, "CMP_JNE {}, {}", NAMES[*op as usize], off),
+            Inst::LOAD2_LOCAL(a, b) => write!(f, "LOAD2_LOCAL {}, {}", a, b),
         }
     }
 }

@@ -1372,6 +1372,88 @@ fn test_emit_expand_nested() {
     );
 }
 
+/// 超指令融合（peephole）：整程序出口对最终指令序列做模式替换，
+/// 省一次派发与中间值往返：
+///   CMP + JNE     → CMP_JNE（比较跳转，免中间 Bool）
+///   LOAD_LOCAL ×2 → LOAD2_LOCAL（合一次借用）
+/// 只挂在 [`emit`]（整程序）；`emit_multi_node` 不做，字节码断言不受影响。
+/// 融合改变指令下标，所有相对偏移（JMP/JNE/CMP_JNE、PUSH_CLOSURE meta）
+/// 经 old→new 索引映射统一改写。
+fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
+    fn cmp_op(inst: &Inst) -> Option<u8> {
+        match inst {
+            Inst::EQ => Some(11),
+            Inst::NE => Some(12),
+            Inst::LT => Some(13),
+            Inst::LE => Some(14),
+            Inst::GT => Some(15),
+            Inst::GE => Some(16),
+            _ => None,
+        }
+    }
+
+    // pass 1：模式替换，记录 old→new 下标映射
+    let mut fused: Vec<Inst> = Vec::with_capacity(insts.len());
+    let mut map: Vec<usize> = Vec::with_capacity(insts.len() + 1);
+    let mut src: Vec<usize> = Vec::with_capacity(insts.len()); // new idx -> 融合对首条（或自身）的旧下标
+    let mut i = 0;
+    while i < insts.len() {
+        match (&insts[i], insts.get(i + 1)) {
+            (cmp, Some(Inst::JNE(off))) if cmp_op(cmp).is_some() => {
+                // 保留原 JNE 偏移，pass 2 以 JNE 位置为基准重定位
+                fused.push(Inst::CMP_JNE(cmp_op(cmp).unwrap(), *off));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 2;
+            }
+            (Inst::LOAD_LOCAL(a), Some(Inst::LOAD_LOCAL(b))) => {
+                fused.push(Inst::LOAD2_LOCAL(*a, *b));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 2;
+            }
+            _ => {
+                fused.push(insts[i].clone());
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 1;
+            }
+        }
+    }
+    map.push(fused.len()); // target == len 的哨兵（run 以 pc < len 终止）
+
+    // pass 2：按映射改写相对偏移
+    for (new_idx, inst) in fused.iter_mut().enumerate() {
+        let old_idx = src[new_idx];
+        match inst {
+            Inst::JMP(off) => {
+                let target = (old_idx as i32 + 1 + *off) as usize;
+                *off = map[target] as i32 - (new_idx as i32 + 1);
+            }
+            Inst::JNE(off) => {
+                let target = (old_idx as i32 + 1 + *off) as usize;
+                *off = map[target] as i32 - (new_idx as i32 + 1);
+            }
+            Inst::CMP_JNE(_, off) => {
+                // 基准是融合前的 JNE（对的第二条）
+                let target = (old_idx as i32 + 2 + *off) as usize;
+                *off = map[target] as i32 - (new_idx as i32 + 1);
+            }
+            Inst::PUSH_CLOSURE(f) => {
+                if let Function::ClosureMeta(info) = f {
+                    let info = Rc::make_mut(info);
+                    let ip = (old_idx as i32 + info.offset) as usize;
+                    info.offset = map[ip] as i32 - new_idx as i32;
+                }
+            }
+            _ => {}
+        }
+    }
+    fused
+}
+
 /// Emit `base.k1.k2.…` as `base` followed by one GET per key.
 fn emit_get_chain(
     input: &str,
@@ -1487,6 +1569,6 @@ pub fn emit(
         *names = Rc::new(ctx.borrow().root_names());
     }
 
-    Ok((insts, source_map))
+    Ok((fuse_superinsts(insts), source_map))
 }
 
