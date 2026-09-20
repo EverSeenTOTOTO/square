@@ -230,6 +230,37 @@ impl Inst {
                 frame.push(vb);
                 Ok(())
             }
+            Inst::LOADP_LOCAL(a, v) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let val = frame.load_slot(*a);
+                frame.push(val);
+                frame.push(v.clone());
+                Ok(())
+            }
+            Inst::BINOP_IMM(op, imm) => {
+                // 立即数为右操作数：栈顶是左操作数，原地替换
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let sp = frame.sp;
+                let lhs = &frame.stack[sp - 1];
+                let result = match *op {
+                    2 => lhs + imm,
+                    3 => lhs - imm,
+                    4 => lhs * imm,
+                    5 => lhs / imm,
+                    6 => lhs % imm,
+                    _ => unreachable!(),
+                }
+                .map_err(|e| match e {
+                    SquareError::RuntimeError(msg) => {
+                        SquareError::InstructionError(msg, self.clone(), vm.pc)
+                    }
+                    _ => e,
+                })?;
+                frame.stack[sp - 1] = result;
+                Ok(())
+            }
             Inst::JMP(value) => self.jump(insts, &mut vm.pc, *value),
             Inst::JNE(value) => {
                 let binding = vm.current_frame();
@@ -245,7 +276,7 @@ impl Inst {
 
             Inst::CALL(argc) => {
                 let n = *argc as usize;
-                let callee_and_target = {
+                let callee = {
                     let frame = vm.current_frame();
                     let frame = frame.borrow();
                     let sp = frame.sp;
@@ -256,12 +287,18 @@ impl Inst {
                             vm.pc,
                         ));
                     }
-                    (frame.stack[sp - 1 - n].as_fn(), frame.stack[sp - 1 - n].clone())
+                    frame.stack[sp - 1 - n].as_fn()
                 };
 
-                let Some(func) = callee_and_target.0 else {
+                let Some(func) = callee else {
+                    // 错误路径才付克隆的代价
+                    let target = {
+                        let frame = vm.current_frame();
+                        let frame = frame.borrow();
+                        frame.stack[frame.sp - 1 - n].clone()
+                    };
                     return Err(SquareError::InstructionError(
-                        format!("bad call, cannot call with {}", callee_and_target.1),
+                        format!("bad call, cannot call with {}", target),
                         self.clone(),
                         vm.pc,
                     ));
@@ -825,7 +862,7 @@ pub struct VM {
     frame_pool: Vec<Rc<RefCell<CallFrame>>>,
 
     /// 逐指令剖析：(rdtsc 周期累计, 执行次数)。profiling 开启时由 step 记录
-    pub inst_cycles: [(u64, u64); 38],
+    pub inst_cycles: [(u64, u64); 40],
     pub profiling: bool,
 }
 
@@ -848,7 +885,7 @@ impl VM {
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
-            inst_cycles: [(0, 0); 38],
+            inst_cycles: [(0, 0); 40],
             profiling: false,
         }
     }
@@ -857,7 +894,7 @@ impl VM {
         self.pc = 0;
         self.mpc = 0;
         self.globals.clear();
-        self.inst_cycles = [(0, 0); 38];
+        self.inst_cycles = [(0, 0); 40];
         let root = Rc::new(RefCell::new(CallFrame::new()));
         self.cur = root.clone();
         self.call_frames.splice(0.., vec![root]);

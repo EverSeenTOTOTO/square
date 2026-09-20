@@ -56,14 +56,16 @@ pub enum Inst {
     // 超指令（peephole 融合，见 emit::fuse_superinsts）
     CMP_JNE(u8, i32), // 比较 + 条件跳转：op 用 Inst::id 的 EQ..GE，为假跳转，免中间 Bool
     LOAD2_LOCAL(u16, u16), // 两次槽位读取合一次派发/借用
+    LOADP_LOCAL(u16, Value), // 槽位读取 + 立即数入栈合一次派发/借用
+    BINOP_IMM(u8, Value), // 立即数为右操作数的二元运算（op 用 Inst::id 的 ADD..REM）
 }
 
 /// 指令名表（与 [`Inst::id`] 对齐），剖析输出用
-pub const NAMES: [&str; 38] = [
+pub const NAMES: [&str; 40] = [
     "PUSH", "POP", "ADD", "SUB", "MUL", "DIV", "REM", "BITAND", "BITOR", "BITXOR", "BITNOT",
     "EQ", "NE", "LT", "LE", "GT", "GE", "SHL", "SHR", "JMP", "JNE", "LOAD_LOCAL", "LOAD_UP",
     "LOAD_GLOBAL", "STORE_LOCAL", "STORE_UP", "STORE_GLOBAL", "CALL", "RET", "PUSH_CLOSURE",
-    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL",
+    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL", "LOADP_LOCAL", "BINOP_IMM",
 ];
 
 impl Inst {
@@ -113,6 +115,8 @@ impl Inst {
             Inst::NAMES(_) => 35,
             Inst::CMP_JNE(..) => 36,
             Inst::LOAD2_LOCAL(..) => 37,
+            Inst::LOADP_LOCAL(..) => 38,
+            Inst::BINOP_IMM(..) => 39,
         }
     }
 
@@ -157,6 +161,8 @@ impl Inst {
             Inst::NAMES(_) => "NAMES",
             Inst::CMP_JNE(..) => "CMP_JNE",
             Inst::LOAD2_LOCAL(..) => "LOAD2_LOCAL",
+            Inst::LOADP_LOCAL(..) => "LOADP_LOCAL",
+            Inst::BINOP_IMM(..) => "BINOP_IMM",
         }
     }
 }
@@ -213,6 +219,8 @@ impl fmt::Display for Inst {
             Inst::NAMES(names) => write!(f, "NAMES {}", names.len()),
             Inst::CMP_JNE(op, off) => write!(f, "CMP_JNE {}, {}", NAMES[*op as usize], off),
             Inst::LOAD2_LOCAL(a, b) => write!(f, "LOAD2_LOCAL {}, {}", a, b),
+            Inst::LOADP_LOCAL(a, v) => write!(f, "LOADP_LOCAL {}, {}", a, v),
+            Inst::BINOP_IMM(op, v) => write!(f, "BINOP_IMM {}, {}", NAMES[*op as usize], v),
         }
     }
 }

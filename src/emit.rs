@@ -1414,6 +1414,27 @@ fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
                 src.push(i);
                 i += 2;
             }
+            (Inst::LOAD_LOCAL(a), Some(Inst::PUSH(v))) => {
+                fused.push(Inst::LOADP_LOCAL(*a, v.clone()));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 2;
+            }
+            (Inst::PUSH(v), Some(op @ (Inst::ADD | Inst::SUB | Inst::MUL | Inst::DIV | Inst::REM))) => {
+                let op_id = match op {
+                    Inst::ADD => 2,
+                    Inst::SUB => 3,
+                    Inst::MUL => 4,
+                    Inst::DIV => 5,
+                    _ => 6,
+                };
+                fused.push(Inst::BINOP_IMM(op_id, v.clone()));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 2;
+            }
             _ => {
                 fused.push(insts[i].clone());
                 map.push(fused.len() - 1);
