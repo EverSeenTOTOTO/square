@@ -92,6 +92,8 @@ pub struct Runtime {
     insts_ptr: *const Vec<crate::vm_insts::Inst>,
     mode: Cell<Mode>,
     source_map: RefCell<SourceMap>,
+    /// 用户代码首指令 pc（prelude 拼接后），compile 时设置；导出 `user_start()` 供宿主快进
+    user_start: Cell<u32>,
 }
 
 impl Runtime {
@@ -104,6 +106,7 @@ impl Runtime {
             insts_ptr: core::ptr::null(),
             mode: Cell::new(Mode::Run),
             source_map: RefCell::new(SourceMap::new()),
+            user_start: Cell::new(0),
         }
     }
 
@@ -290,6 +293,17 @@ fn set_run_targets(vm: *mut VM, insts: *const Vec<crate::vm_insts::Inst>) {
 /// compile 时存入当前程序的 source map，供错误定位反查。
 pub fn set_source_map(sm: SourceMap) {
     *rt().source_map.borrow_mut() = sm;
+}
+
+/// compile 时存入用户代码首指令 pc（见 [`crate::prelude::user_start_pc`]）。
+/// 属编译产物而非运行状态，reset 不清除。
+pub fn set_user_start(pc: usize) {
+    rt().user_start.set(pc as u32);
+}
+
+/// 宿主查询用户代码起点：单步模式下宿主可先快进 prelude 再交互单步
+pub fn user_start() -> u32 {
+    rt().user_start.get()
 }
 
 /// 用当前 source map 把错误的 pc 反查为源码位置后格式化。

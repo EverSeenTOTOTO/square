@@ -23,6 +23,14 @@ pub fn prepend(source: &str) -> alloc::string::String {
     format!("{}\n{}", PRELUDE, source)
 }
 
+/// 用户代码首条指令的 pc（第一顶层语句的 DELIMITER 位）。source map 条目按
+/// cursor（字符下标）定位，prelude 前缀长度即分界；无用户语句时回落指令总数。
+/// 供宿主在单步模式下快进 prelude（导出 `user_start()`）。
+pub fn user_start_pc(insts: &[crate::vm_insts::Inst], sm: &crate::code_frame::SourceMap) -> usize {
+    sm.pc_after_cursor(PRELUDE.chars().count())
+        .unwrap_or(insts.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +87,38 @@ mod tests {
     fn test_prelude_shadow() {
         let (_, v) = run("[begin [let map /[] 7] [map]]");
         assert_eq!(v, Value::Num(7.0));
+    }
+
+    /// user_start 落在用户首语句的 DELIMITER 上；纯空白程序回落指令总数
+    #[test]
+    fn test_user_start_pc() {
+        let full = prepend("[let x 1]\nx");
+        let ast = parse(&full, &mut Position::new()).unwrap();
+        let (insts, sm) = emit(&full, &ast, &RefCell::new(EmitContext::new())).unwrap();
+
+        let start = user_start_pc(&insts, &sm);
+        assert!(start < insts.len());
+        assert!(matches!(insts[start], crate::vm_insts::Inst::DELIMITER(_)));
+
+        // 融合收缩后 source_map 条目仍逐条精确落在 DELIMITER 位（回迁正确性）
+        for (pc, _) in sm.entries() {
+            assert!(matches!(insts[*pc], crate::vm_insts::Inst::DELIMITER(_)));
+        }
+
+        // 跑到 user_start 时 prelude 全部执行完毕（`=` 动态定义的全局 map 已就位）
+        let mut vm = crate::vm::VM::new();
+        let mut cx = crate::vm::RtCx::test();
+        while vm.pc < start {
+            vm.step(&insts, &mut cx).unwrap();
+        }
+        assert!(matches!(
+            vm.globals.get("map"),
+            Some(Value::Function(_))
+        ));
+
+        let blank = prepend("  \n");
+        let ast = parse(&blank, &mut Position::new()).unwrap();
+        let (insts, sm) = emit(&blank, &ast, &RefCell::new(EmitContext::new())).unwrap();
+        assert_eq!(user_start_pc(&insts, &sm), insts.len());
     }
 }

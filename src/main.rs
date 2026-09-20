@@ -103,6 +103,7 @@ pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Ve
         }
         Ok(pair) => pair,
     };
+    runtime::set_user_start(prelude::user_start_pc(&insts, &source_map));
     runtime::set_source_map(source_map);
 
     Box::into_raw(Box::new(insts))
@@ -130,6 +131,13 @@ pub extern "C" fn snapshot_insts(insts_addr: *const u8) -> u64 {
 #[no_mangle]
 pub extern "C" fn init() -> *mut vm::VM {
     Box::into_raw(Box::new(vm::VM::new()))
+}
+
+/// 用户代码首指令 pc（prelude 拼接后）。宿主单步模式可据此先快进 prelude。
+#[cfg(target_family = "wasm")]
+#[no_mangle]
+pub extern "C" fn user_start() -> u32 {
+    runtime::user_start()
 }
 
 #[cfg(target_family = "wasm")]

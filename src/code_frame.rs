@@ -68,6 +68,27 @@ impl SourceMap {
             Some(&self.0[i - 1].1)
         }
     }
+
+    /// 条目按 pc 升序的 (pc, Position) 视图
+    pub fn entries(&self) -> &[(usize, Position)] {
+        &self.0
+    }
+
+    /// 超指令融合收缩指令后，按 old→new 下标映射回迁各条目 pc。
+    /// 条目都记在顶层语句的 DELIMITER 位（不参与任何融合模式），映射逐条精确。
+    pub fn relocate(&mut self, map: &[usize]) {
+        for (pc, _) in self.0.iter_mut() {
+            *pc = map[*pc];
+        }
+    }
+
+    /// 首个 cursor 越过给定字符数的条目 pc（定位拼接前缀之后的第一条语句）
+    pub fn pc_after_cursor(&self, cursor: usize) -> Option<usize> {
+        self.0
+            .iter()
+            .find(|(_, pos)| pos.cursor > cursor)
+            .map(|(pc, _)| *pc)
+    }
 }
 
 fn first_non_whitespace_index(s: &str) -> usize {

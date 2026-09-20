@@ -1422,7 +1422,8 @@ fn test_emit_expand_nested() {
 /// 只挂在 [`emit`]（整程序）；`emit_multi_node` 不做，字节码断言不受影响。
 /// 融合改变指令下标，所有相对偏移（JMP/JNE/CMP_JNE、PUSH_CLOSURE meta）
 /// 经 old→new 索引映射统一改写。
-fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
+/// 返回 (融合后指令, old→new 下标映射)；映射同时供 source_map 回迁（见 [`emit`]）
+fn fuse_superinsts(insts: Vec<Inst>) -> (Vec<Inst>, Vec<usize>) {
     fn cmp_op(inst: &Inst) -> Option<u8> {
         match inst {
             Inst::EQ => Some(11),
@@ -1616,7 +1617,7 @@ fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
             }
         }
     }
-    fused
+    (fused, map)
 }
 
 /// Emit `base.k1.k2.…` as `base` followed by one GET per key.
@@ -1734,6 +1735,8 @@ pub fn emit(
         *names = Rc::new(ctx.borrow().root_names());
     }
 
-    Ok((fuse_superinsts(insts), source_map))
+    let (fused, map) = fuse_superinsts(insts);
+    source_map.relocate(&map);
+    Ok((fused, source_map))
 }
 
