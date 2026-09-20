@@ -28,28 +28,6 @@ pub type Syscall =
 
 
 
-/// 把闭包包装成 `UnwindFrame`，供 `defer`/`spawn` 使用。
-///
-/// `ra = ip + 1`：`PUSH_CLOSURE` 算出的 `ip` 指向闭包体入口前的 `JMP`，正常 `CALL` 靠
-/// step 循环的 `pc += 1` 跳过它；这里 `tick` 直接 `vm.pc = ra` 进 `run`，没有那步 +1，
-/// 故手动对齐。零参任务：空参数绑定（重置槽位布局），upvalue 单元直接装帧。
-#[cfg(target_family = "wasm")]
-fn new_closure_unwind(
-    info: &Rc<ClosureInfo>,
-    ip: usize,
-    ups: &Rc<Vec<Rc<RefCell<Value>>>>,
-) -> UnwindFrame {
-    let mut frame = CallFrame::new();
-    crate::vm::bind_params(&mut frame, info, &[]);
-    frame.ups = ups.clone();
-    let sentinel = CallFrame::new();
-
-    UnwindFrame {
-        ra: ip + 1,
-        context: vec![Rc::new(RefCell::new(sentinel)), Rc::new(RefCell::new(frame))],
-    }
-}
-
 pub struct Builtin {
     values: FxHashMap<&'static str, (Value, Option<Syscall>)>,
 }
@@ -590,13 +568,13 @@ impl Builtin {
                 Some(Rc::new(
                     |vm: &mut VM,
                      params: Rc<RefCell<Vec<Value>>>,
-                     _cx: &mut RtCx,
+                     cx: &mut RtCx,
                      inst: &Inst|
                      -> ExecResult {
                         let name = params.borrow().first().and_then(|v| v.as_str());
                         let args = params.borrow().get(1).and_then(|v| v.as_vec());
                         match (name, args) {
-                            (Some(n), Some(a)) => crate::ffi::call_js(vm, inst, &n, &a),
+                            (Some(n), Some(a)) => crate::ffi::call_js(vm, inst, cx, &n, &a),
                             _ => Err(SquareError::InstructionError(
                                 "js expect (dotted-path, args-vec) parameter".to_string(),
                                 inst.clone(),
@@ -646,6 +624,32 @@ impl Builtin {
         math_unary!("round", libm::round);
         math_unary!("abs", libm::fabs);
         math_unary!("sqrt", libm::sqrt);
+
+        #[cfg(target_family = "wasm")]
+        values.insert(
+            "await",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("await")))),
+                Some(Rc::new(
+                    |vm: &mut VM,
+                     params: Rc<RefCell<Vec<Value>>>,
+                     cx: &mut RtCx,
+                     inst: &Inst|
+                     -> ExecResult {
+                        let name = params.borrow().first().and_then(|v| v.as_str());
+                        let args = params.borrow().get(1).and_then(|v| v.as_vec());
+                        match (name, args) {
+                            (Some(n), Some(a)) => crate::ffi::await_js(vm, inst, cx, &n, &a),
+                            _ => Err(SquareError::InstructionError(
+                                "await expect (dotted-path, args-vec) parameter".to_string(),
+                                inst.clone(),
+                                vm.pc,
+                            )),
+                        }
+                    },
+                ) as Syscall),
+            ),
+        );
 
         values.insert(
             "pow",
@@ -787,88 +791,6 @@ impl Builtin {
                             .borrow_mut()
                             .push(Value::Str(Rc::from(sub.as_str())));
                         Ok(())
-                    },
-                ) as Syscall),
-            ),
-        );
-
-        values.insert(
-            "sleep",
-            (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("sleep")))),
-                Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
-                        if let Some(cost) = params.borrow().first().and_then(Value::as_num) {
-                            #[cfg(target_family = "wasm")]
-                            {
-                                let frame = UnwindFrame {
-                                    ra: vm.pc + 1,
-                                    context: vm.save_context(),
-                                };
-                                cx.park_sleep(frame, cost as u32);
-                            }
-                            Ok(())
-                        } else {
-                            Err(SquareError::InstructionError(
-                                "sleep expect a number parameter".to_string(),
-                                inst.clone(),
-                                vm.pc,
-                            ))
-                        }
-                    },
-                ) as Syscall),
-            ),
-        );
-
-        values.insert(
-            "defer",
-            (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("defer")))),
-                Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
-                        if let Some(func) = params.borrow().first().and_then(Value::as_fn) {
-                            #[cfg(target_family = "wasm")]
-                            {
-                                if let Function::Closure(info, ip, ref ups) = &*func.borrow() {
-                                    cx.defer(new_closure_unwind(info, *ip, ups));
-                                }
-                            }
-                            let _ = vm;
-                            Ok(())
-                        } else {
-                            Err(SquareError::InstructionError(
-                                "defer expect a function parameter".to_string(),
-                                inst.clone(),
-                                vm.pc,
-                            ))
-                        }
-                    },
-                ) as Syscall),
-            ),
-        );
-
-        values.insert(
-            "spawn",
-            (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("spawn")))),
-                Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, cx: &mut RtCx, inst: &Inst| -> ExecResult {
-                        if let Some(func) = params.borrow().first().and_then(Value::as_fn) {
-                            #[cfg(target_family = "wasm")]
-                            {
-                                if let Function::Closure(info, ip, ref ups) = &*func.borrow() {
-                                    cx.spawn(new_closure_unwind(info, *ip, ups));
-                                }
-                            }
-                            let _ = vm;
-                            Ok(())
-                        } else {
-                            Err(SquareError::InstructionError(
-                                "spawn expect a function parameter".to_string(),
-                                inst.clone(),
-                                vm.pc,
-                            ))
-                        }
                     },
                 ) as Syscall),
             ),

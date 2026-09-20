@@ -225,6 +225,8 @@ pub fn main() {
     vm.profiling = profile;
     let task = alloc::rc::Rc::new(vm::Task {
         frame: RefCell::new(None),
+        pending: RefCell::new(None),
+        arg_slot: RefCell::new(u16::MAX),
     });
     let mut cx = vm::RtCx::new(task);
     if let Err(e) = vm.run(&insts, &mut cx) {

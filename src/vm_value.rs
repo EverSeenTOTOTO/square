@@ -281,11 +281,18 @@ impl Add for &Value {
     fn add(self, other: Self) -> Self::Output {
         match (self, other) {
             (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(lhs + rhs)),
-            // 字符串拼接：cat 的语言级形态
+            // 字符串拼接：cat 的语言级形态；与非字符串混合时按显示文本拼接
             (Value::Str(lhs), Value::Str(rhs)) => {
                 let mut s = String::with_capacity(lhs.len() + rhs.len());
                 s.push_str(lhs);
                 s.push_str(rhs);
+                Ok(Value::Str(Rc::from(s.as_str())))
+            }
+            (Value::Str(lhs), other) | (other, Value::Str(lhs)) => {
+                let mut s = String::with_capacity(lhs.len() + 8);
+                s.push_str(lhs);
+                let rhs = format!("{}", other);
+                s.push_str(&rhs);
                 Ok(Value::Str(Rc::from(s.as_str())))
             }
             (Value::UpValue(lhs), Value::UpValue(rhs)) => &*lhs.borrow() + &*rhs.borrow(),

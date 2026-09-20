@@ -25,17 +25,33 @@ mod host {
             args_ptr: *const u8,
             args_len: usize,
         ) -> u64;
+        /// await 形态：宿主调用后按结果回调 cb_id——Promise 则 .then/.catch，
+        /// 同步值立即回调；客机侧 park 等待
+        pub fn js_await_call(
+            name_ptr: *const u8,
+            name_len: usize,
+            args_ptr: *const u8,
+            args_len: usize,
+            cb_id: u32,
+        );
     }
 }
 
 /// `js` syscall 入口：参数 (Str 路径, Vec 实参)，结果压栈。
-pub fn call_js(vm: &mut VM, inst: &Inst, name: &str, args: &Rc<RefCell<Vec<Value>>>) -> ExecResult {
+/// 实参中的闭包跨界为回调句柄（宿主换成 JS 函数，调用即 call_cb 唤醒该任务）。
+pub fn call_js(
+    vm: &mut VM,
+    inst: &Inst,
+    cx: &RtCx,
+    name: &str,
+    args: &Rc<RefCell<Vec<Value>>>,
+) -> ExecResult {
     let mut json = String::from("[");
     for (i, arg) in args.borrow().iter().enumerate() {
         if i > 0 {
             json.push(',');
         }
-        value_to_json(arg, &mut json)
+        value_to_json(arg, &mut json, cx)
             .map_err(|e| SquareError::InstructionError(e, inst.clone(), vm.pc))?;
     }
     json.push(']');
@@ -54,13 +70,62 @@ pub fn call_js(vm: &mut VM, inst: &Inst, name: &str, args: &Rc<RefCell<Vec<Value
     // 宿主侧 alloc 的结果缓冲，读完归还
     crate::dealloc(ptr as *mut u8, len);
 
+    // 宿主异常以 {__sq_err} 回传 → 语言级错误（try 可捕获）
+    if let Value::Obj(obj) = &val {
+        if obj.borrow().contains_key("__sq_err") {
+            let msg = match obj.borrow().get("__sq_err") {
+                Some(Value::Str(s)) => String::from(&**s),
+                _ => String::from("host call failed"),
+            };
+            return Err(SquareError::InstructionError(
+                msg,
+                inst.clone(),
+                vm.pc,
+            ));
+        }
+    }
+
     vm.current_frame().borrow_mut().push(val);
+    Ok(())
+}
+
+/// `await` syscall 入口：参数 (Str 路径, Vec 实参)。注册当前任务为回调句柄、
+/// 交给宿主（Promise then / 同步值立即回调），park 等待；恢复时 call_cb 投递的
+/// 值压到本调用点（Promise 拒绝走 try 的 handle_error 路径）。
+pub fn await_js(
+    vm: &mut VM,
+    inst: &Inst,
+    cx: &RtCx,
+    name: &str,
+    args: &Rc<RefCell<Vec<Value>>>,
+) -> ExecResult {
+    let mut json = String::from("[");
+    for (i, arg) in args.borrow().iter().enumerate() {
+        if i > 0 {
+            json.push(',');
+        }
+        value_to_json(arg, &mut json, cx)
+            .map_err(|e| SquareError::InstructionError(e, inst.clone(), vm.pc))?;
+    }
+    json.push(']');
+
+    let cb_id = cx.register(cx.task.clone());
+    unsafe {
+        host::js_await_call(
+            name.as_ptr(),
+            name.len(),
+            json.as_ptr(),
+            json.len(),
+            cb_id,
+        )
+    };
+    cx.park_self(vm);
     Ok(())
 }
 
 // ── 序列化 ───────────────────────────────────────────────────────────────────
 
-fn value_to_json(v: &Value, out: &mut String) -> Result<(), String> {
+fn value_to_json(v: &Value, out: &mut String, cx: &RtCx) -> Result<(), String> {
     match v {
         Value::Nil => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
@@ -69,13 +134,20 @@ fn value_to_json(v: &Value, out: &mut String) -> Result<(), String> {
         // NaN/Inf 无 JSON 表示，回落 null
         Value::Num(_) => out.push_str("null"),
         Value::Str(s) => json_escape(s, out),
+        // 闭包跨界：注册任务换句柄，宿主替换成 JS 函数（调用即 call_cb）
+        Value::Function(_) => {
+            let id = crate::runtime::register_closure(v).ok_or_else(|| {
+                String::from("js cannot cross non-closure function")
+            })?;
+            out.push_str(&format!("{{\"__sq_cb\":{}}}", id));
+        }
         Value::Vec(vec) => {
             out.push('[');
             for (i, item) in vec.borrow().iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
-                value_to_json(item, out)?;
+                value_to_json(item, out, cx)?;
             }
             out.push(']');
         }
@@ -87,11 +159,11 @@ fn value_to_json(v: &Value, out: &mut String) -> Result<(), String> {
                 }
                 json_escape(k, out);
                 out.push(':');
-                value_to_json(val, out)?;
+                value_to_json(val, out, cx)?;
             }
             out.push('}');
         }
-        Value::UpValue(cell) => value_to_json(&cell.borrow(), out)?,
+        Value::UpValue(cell) => value_to_json(&cell.borrow(), out, cx)?,
         _ => {
             return Err(format!(
                 "js cannot serialize {} (function/proxy)",

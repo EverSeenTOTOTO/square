@@ -29,10 +29,13 @@ use crate::println;
 pub struct UnwindFrame {
     pub ra: usize,
     pub context: Vec<Rc<RefCell<CallFrame>>>,
+    /// park 时刻的活动 try handler——任务交错时各自的 handler 互不串扰
+    pub handlers: Vec<TryHandler>,
 }
 
 /// try 安装的错误处理器：帧栈深度（回退目标）、操作数栈 sp（handler 闭包位置）、
 /// catch 段入口。错误发生时帧栈截到 depth、sp 复位、错误值（Str 消息）入栈后跳 target。
+#[derive(Clone)]
 pub struct TryHandler {
     pub depth: usize,
     pub sp: usize,
@@ -41,10 +44,21 @@ pub struct TryHandler {
     pub handler: Value,
 }
 
+/// call_cb 投递的待交付结果：值（await 结果/回调实参）或错误（Promise 拒绝，try 可捕获）
+pub enum Pending {
+    Value(Value),
+    Error(String),
+}
+
 /// 运行时任务。`frame` 存在性可当作 park 信号：`Some` = 正在 park（延续已存、不在 VM 里活），
 /// `None` = live（状态在 VM 里）。定义在 `vm.rs` 是因为 native 单测也要构造（runtime.rs 整个 `#[cfg(wasm)]`）。
 pub struct Task {
     pub frame: RefCell<Option<UnwindFrame>>,
+    /// 宿主回调写入、恢复时刻投递（tick 取出后压栈或走 handle_error）
+    pub pending: RefCell<Option<Pending>>,
+    /// 闭包跨界任务的实参槽位（Fixed 首参 / Pack 的参数包槽）；
+    /// u16::MAX = 非闭包任务（await park，投递走操作数栈）
+    pub arg_slot: RefCell<u16>,
 }
 
 /// 运行时上下文，对标 `Future::poll` 的 `cx`：把当前 task 顺调用栈（`run→step→exec→syscall`）
@@ -65,6 +79,8 @@ impl RtCx {
     pub fn test() -> Self {
         Self::new(Rc::new(Task {
             frame: RefCell::new(None),
+            pending: RefCell::new(None),
+            arg_slot: RefCell::new(u16::MAX),
         }))
     }
 
@@ -1038,7 +1054,7 @@ impl VM {
     /// 错误恢复：弹最内层有效 handler，帧栈截回其深度、sp 复位（handler 闭包在栈顶），
     /// 错误消息以 Str 入栈，pc 跳 catch 段。跨续延跳出的过期 handler（深度大于当前
     /// 帧栈）直接丢弃。返回 false 表示无 handler，错误继续向上抛。
-    fn handle_error(&mut self, e: &SquareError) -> bool {
+    pub(crate) fn handle_error(&mut self, e: &SquareError) -> bool {
         loop {
             let Some(h) = self.handlers.pop() else {
                 return false;
@@ -1049,8 +1065,11 @@ impl VM {
             while self.call_frames.len() > h.depth {
                 self.pop_frame();
             }
+            // handler 收原始消息：InstructionError/RuntimeError 都是裸 msg，
+            // 其余类型才走 Display 格式化
             let msg = match e {
-                SquareError::InstructionError(msg, ..) => msg.clone(),
+                SquareError::InstructionError(msg, ..)
+                | SquareError::RuntimeError(msg) => msg.clone(),
                 other => format!("{}", other),
             };
             {
@@ -1124,6 +1143,15 @@ impl VM {
         self.call_frames.clone()
     }
 
+    /// 连同活动 handler 一起快照（任务交错时 try 域互不串扰）
+    pub fn unwind_snapshot(&self) -> UnwindFrame {
+        UnwindFrame {
+            ra: 0,
+            context: self.save_context(),
+            handlers: self.handlers.clone(),
+        }
+    }
+
     #[inline]
     pub fn restore_context(&mut self, context: Vec<Rc<RefCell<CallFrame>>>) {
         self.call_frames = context;
@@ -1193,7 +1221,11 @@ impl VM {
     }
 
     pub fn run(&mut self, insts: &Vec<Inst>, cx: &mut RtCx) -> ExecResult {
-        self.current_frame().borrow_mut().ra = insts.len();
+        // 程序结束哨兵 ra 只属于根帧；跨帧 park 恢复时当前帧的 ra 是活的返回地址，
+        // 覆盖它会吞掉闭包调用的返回（await 在闭包内 park 即中招）
+        if self.call_frames.len() == 1 {
+            self.current_frame().borrow_mut().ra = insts.len();
+        }
 
         while self.pc < insts.len() {
             match self.step(insts, cx) {

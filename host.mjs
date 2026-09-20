@@ -28,36 +28,113 @@ export async function loadSquare({ wasmPath = defaultWasm, onWrite } = {}) {
     onWrite?.(s);
   };
 
+  /** square 闭包句柄 → JS 函数：实参经 call_cb 送回客机。
+   *  投递一律 microtask 化：同步回调（如 forEach）会在 syscall 执行中途重入 VM，
+   *  await 的同步结果会在 park 完成前唤醒任务（tick 会把未 park 的任务当已完成丢弃） */
+  const squareCallback = (a) => {
+    if (a && typeof a === "object" && !Array.isArray(a) && "__sq_cb" in a) {
+      const id = a.__sq_cb;
+      return (...as) => queueMicrotask(() => sendToSquare(id, as));
+    }
+    return a;
+  };
+
+  /** 宿主 → 客机唯一唤醒入口：实参数组序列化写入线性内存后 call_cb(id, ptr, len) */
+  const sendToSquare = (id, args) => {
+    const bytes = encoder.encode(JSON.stringify(args ?? []));
+    const ptr = exportsObj.alloc(bytes.length);
+    new Uint8Array(ref.memory.buffer, ptr, bytes.length).set(bytes);
+    exportsObj.call_cb(id, ptr, bytes.length);
+  };
+
+  const packResult = (result) => {
+    let json;
+    try {
+      json = JSON.stringify(result);
+    } catch {
+      json = "null";
+    }
+    const bytes = encoder.encode(json);
+    const ptr = exportsObj.alloc(bytes.length);
+    new Uint8Array(ref.memory.buffer, ptr, bytes.length).set(bytes);
+    return (BigInt(ptr) << 32n) | BigInt(bytes.length);
+  };
+
+  // 宿主辅助：Promise 化 sleep（await 只走值/Promise 约定；回调风格 API 用闭包跨界）
+  if (!globalThis.__square_sleep) {
+    globalThis.__square_sleep = (ms) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   const { instance } = await WebAssembly.instantiate(bytes, {
     memory: { write },
     host: {
-      js_sleep: (id, ms) => setTimeout(() => ref.exports.wake_by_id(id), ms),
-      js_queue_microtask: (id) =>
-        queueMicrotask(() => ref.exports.wake_by_id(id)),
       // JS FFI：按点路径在 globalThis 解析、展开实参调用；结果 JSON 写回线性内存，
-      // 返回 packed (ptr << 32 | len)。函数不存在/undefined 结果 → null（0 句柄由客机置 nil）
+      // 返回 packed (ptr << 32 | len)。函数不存在/undefined → 0 句柄（客机置 nil）。
+      // 参数中的 {"__sq_cb": id} 是 square 闭包句柄 → 换成 JS 函数（调用即 call_cb 唤醒）
       js_call: (name_ptr, name_len, args_ptr, args_len) => {
         const name = decoder.decode(
           new Uint8Array(ref.memory.buffer, name_ptr, name_len),
         );
         const args = JSON.parse(
           decoder.decode(new Uint8Array(ref.memory.buffer, args_ptr, args_len)),
-        );
-        const resolved = name.split(".").reduce((o, k) => o?.[k], globalThis);
-        // 函数则调用；非函数（属性，如 Math.PI）直接取值
-        let result =
-          typeof resolved === "function" ? resolved(...args) : resolved;
-        if (result === undefined) return 0n;
-        let json;
-        try {
-          json = JSON.stringify(result);
-        } catch {
-          json = "null";
+        ).map(squareCallback);
+        // 解析点路径同时保留父对象作接收者（Promise.reject 等需要 this）
+        let parent = globalThis;
+        let resolved = globalThis;
+        for (const k of name.split(".")) {
+          parent = resolved;
+          resolved = resolved?.[k];
         }
-        const bytes = encoder.encode(json);
-        const ptr = exportsObj.alloc(bytes.length);
-        new Uint8Array(ref.memory.buffer, ptr, bytes.length).set(bytes);
-        return (BigInt(ptr) << 32n) | BigInt(bytes.length);
+        if (typeof resolved !== "function") {
+          return packResult(resolved === undefined ? null : resolved);
+        }
+        let result;
+        try {
+          result = resolved.apply(parent, args);
+        } catch (e) {
+          // 宿主异常回传为错误对象：客机转 InstructionError（try 可捕获，实例存活）
+          return packResult({ __sq_err: String(e) });
+        }
+        if (result === undefined) return 0n;
+        return packResult(result);
+      },
+      // await 形态：调用后按结果回调 cb_id——Promise 则 .then(v)/.catch(e)，同步值立即回调
+      js_await_call: (name_ptr, name_len, args_ptr, args_len, cb_id) => {
+        const name = decoder.decode(
+          new Uint8Array(ref.memory.buffer, name_ptr, name_len),
+        );
+        const args = JSON.parse(
+          decoder.decode(new Uint8Array(ref.memory.buffer, args_ptr, args_len)),
+        ).map(squareCallback);
+        let parent = globalThis;
+        let resolved = globalThis;
+        for (const k of name.split(".")) {
+          parent = resolved;
+          resolved = resolved?.[k];
+        }
+        if (typeof resolved !== "function") {
+          const v = resolved;
+          queueMicrotask(() => sendToSquare(cb_id, v === undefined ? [] : [v]));
+          return;
+        }
+        let result;
+        try {
+          result = resolved.apply(parent, args);
+        } catch (e) {
+          const err = String(e);
+          queueMicrotask(() => sendToSquare(cb_id, [{ __sq_err: err }]));
+          return;
+        }
+        if (result && typeof result.then === "function") {
+          result.then(
+            (v) => sendToSquare(cb_id, [v]),
+            (e) => sendToSquare(cb_id, [{ __sq_err: String(e) }]),
+          );
+        } else {
+          const v = result;
+          queueMicrotask(() => sendToSquare(cb_id, v === undefined ? [] : [v]));
+        }
       },
     },
   });

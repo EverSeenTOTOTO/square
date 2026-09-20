@@ -61,25 +61,54 @@ test("嵌套 defer + sleep: 内层 deferred task 自己 sleep，仍按序完成"
 
 // ── 错误处理：坏参 / 缺参都该 trap 并报因 ────────────────────────
 
-test("错误: sleep 非数字 → 状态返回（实例存活）", async () => {
+test("await: 拒绝 → try 捕获原始消息", async () => {
   const s = await sq();
-  assert.equal(s.program("[sleep 'x']\n").run(), 1);
-  assert.match(s.stdout(), /sleep expect a number/);
+  assert.equal(
+    s.program("[println [try [await 'Promise.reject' [vec 'boom']] /[e] e]]\n").run(),
+    0,
+  );
+  await flush(30);
+  assert.equal(s.stdout().trim(), "boom");
 });
 
-test("错误: defer 非函数 → 状态返回（实例存活）", async () => {
+test("await: 同步值立即回调", async () => {
+  const s = await sq();
+  assert.equal(s.program("[println [await 'Math.max' [vec 1 7 3]]]\n").run(), 0);
+  await flush(30);
+  assert.equal(s.stdout().trim(), "7");
+});
+
+test("defer: 非闭包 → js 序列化错误（状态返回）", async () => {
   const s = await sq();
   assert.equal(s.program("[defer 5]\n").run(), 1);
-  assert.match(s.stdout(), /defer expect a function/);
+  // 宿主 queueMicrotask(5) 抛 TypeError → 回传为语言级错误（实例存活）
+  assert.match(s.stdout(), /ERR_INVALID_ARG_TYPE|callback/);
 });
 
-test("错误: 缺参数 → 状态返回（不该 index 越界 panic）", async () => {
-  const a = await sq();
-  assert.equal(a.program("[sleep]\n").run(), 1);
-  assert.match(a.stdout(), /sleep expect a number/);
-  const b = await sq();
-  assert.equal(b.program("[defer]\n").run(), 1);
-  assert.match(b.stdout(), /defer expect a function/);
+test("回调跨界：square 闭包作为 JS 事件回调（异步触发）", async () => {
+  const s = await sq();
+  globalThis.__sq_test_emit = (cb) => setTimeout(() => cb(42), 10);
+  assert.equal(
+    s.program("[js '__sq_test_emit' [vec /[v] [println [+ 'got ' v]]]]\n").run(),
+    0,
+  );
+  await flush(50);
+  assert.equal(s.stdout().trim(), "got 42");
+});
+
+test("闭包跨界多实参 → 首参收 vec", async () => {
+  const s = await sq();
+  globalThis.__sq_test_pair = (cb) => setTimeout(() => cb(7, 8), 10);
+  assert.equal(
+    s
+      .program(
+        "[js '__sq_test_pair' [vec /[xs] [println [str [at xs 0]]]]]\n",
+      )
+      .run(),
+    0,
+  );
+  await flush(50);
+  assert.equal(s.stdout().trim(), "7");
 });
 
 // ── step 模式：逐指令粒度 ────────────────────────────────────────

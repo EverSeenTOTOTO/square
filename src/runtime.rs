@@ -9,7 +9,8 @@ extern crate alloc;
 use alloc::{
     collections::{BTreeMap, VecDeque},
     rc::Rc,
-    string::String,
+    string::{String, ToString},
+    vec,
     vec::Vec,
 };
 use core::cell::{Cell, RefCell};
@@ -17,13 +18,58 @@ use core::cell::{Cell, RefCell};
 use crate::code_frame::SourceMap;
 use crate::println;
 use crate::errors::SquareError;
-use crate::vm::{ExecResult, RtCx, Task, UnwindFrame, VM};
+use crate::ffi;
+use crate::vm::{ExecResult, Pending, RtCx, Task, TryHandler, UnwindFrame, VM};
+use crate::vm_value::{Function, Value};
 
-mod host {
-    #[link(wasm_import_module = "host")]
-    extern "C" {
-        pub fn js_sleep(id: u32, ms: u32);
-        pub fn js_queue_microtask(id: u32);
+/// 把闭包包装成可唤醒任务：`ra = ip + 1`（闭包 ip 指向入口前的 JMP，tick 直接
+/// `vm.pc = ra` 进 run，没有 step 循环的那步 +1，手动对齐）。
+pub(crate) fn new_closure_unwind(
+    info: &alloc::rc::Rc<crate::vm_value::ClosureInfo>,
+    ip: usize,
+    ups: &alloc::rc::Rc<alloc::vec::Vec<alloc::rc::Rc<core::cell::RefCell<Value>>>>,
+) -> UnwindFrame {
+    let mut frame = crate::vm::CallFrame::new();
+    crate::vm::bind_params(&mut frame, info, &[]);
+    frame.ups = ups.clone();
+    // 闭包体 RET 的去向：程序外大值使 run 循环立即结束——
+    // 若回落到哨兵帧默认 ra=0，任务会从程序头重跑并级联注册（无限循环）
+    frame.ra = usize::MAX >> 1;
+    let sentinel = crate::vm::CallFrame::new();
+
+    UnwindFrame {
+        ra: ip + 1,
+        context: vec![
+            alloc::rc::Rc::new(core::cell::RefCell::new(sentinel)),
+            alloc::rc::Rc::new(core::cell::RefCell::new(frame)),
+        ],
+        handlers: Vec::new(),
+    }
+}
+
+/// 闭包首参槽位：Fixed 取首参；Pack 取参数包槽（投递整包）；无参 u16::MAX
+fn first_param_slot(params: &crate::vm_value::ParamLayout) -> u16 {
+    match params {
+        crate::vm_value::ParamLayout::Fixed(slots) => {
+            slots.first().copied().unwrap_or(u16::MAX)
+        }
+        crate::vm_value::ParamLayout::Pack(slot) => *slot,
+    }
+}
+
+/// 闭包值注册为可唤醒任务（js 传参跨界 / 事件回调），返回句柄 id
+pub fn register_closure(f: &Value) -> Option<u32> {
+    let func = f.as_fn()?;
+    let closure = func.borrow();
+    if let Function::Closure(info, ip, ups) = &*closure {
+        let task = Rc::new(Task {
+            frame: core::cell::RefCell::new(Some(new_closure_unwind(info, *ip, ups))),
+            pending: core::cell::RefCell::new(None),
+            arg_slot: RefCell::new(first_param_slot(&info.params)),
+        });
+        Some(rt().alloc_id_and_insert(task))
+    } else {
+        None
     }
 }
 
@@ -64,6 +110,8 @@ impl Runtime {
     fn spawn_frame(&self, frame: UnwindFrame) {
         let task = Rc::new(Task {
             frame: RefCell::new(Some(frame)),
+            pending: RefCell::new(None),
+            arg_slot: RefCell::new(u16::MAX),
         });
         self.queue.borrow_mut().push_back(task);
     }
@@ -72,6 +120,12 @@ impl Runtime {
         let v = self.next_id.get();
         self.next_id.set(v.wrapping_add(1));
         v
+    }
+
+    fn alloc_id_and_insert(&self, task: Rc<Task>) -> u32 {
+        let id = self.alloc_id();
+        self.registry.borrow_mut().insert(id, Entry { task });
+        id
     }
 }
 
@@ -87,9 +141,11 @@ fn tick(vm: &mut VM, insts: &Vec<crate::vm_insts::Inst>) -> ExecResult {
             continue; // 已完成
         };
         vm.restore_context(frame.context);
+        vm.handlers = frame.handlers;
         vm.pc = frame.ra;
+        deliver_pending(vm, &task);
         let mut cx = RtCx { task: task.clone(), rt };
-        vm.run(insts, &mut cx)?; // 出错即向上抛（run 导出会 panic）
+        vm.run(insts, &mut cx)?; // 出错即向上抛（run 导出打印后返回状态）
     }
 }
 
@@ -101,8 +157,13 @@ fn step_tick(vm: &mut VM, insts: &Vec<crate::vm_insts::Inst>) -> ExecResult {
     };
     let frame = front.frame.borrow_mut().take().expect("ready task has frame");
     vm.restore_context(frame.context);
+    vm.handlers = frame.handlers;
     vm.pc = frame.ra;
-    vm.current_frame().borrow_mut().ra = insts.len();
+    deliver_pending(vm, &front);
+    // 同 run()：哨兵 ra 只设根帧（恢复中的闭包帧 ra 是活的返回地址）
+    if vm.call_frames.len() == 1 {
+        vm.current_frame().borrow_mut().ra = insts.len();
+    }
     let mut cx = RtCx { task: front.clone(), rt };
     let result = if vm.pc < insts.len() {
         vm.step(insts, &mut cx)
@@ -113,12 +174,32 @@ fn step_tick(vm: &mut VM, insts: &Vec<crate::vm_insts::Inst>) -> ExecResult {
     if result.is_err() || cx.is_parked() || vm.pc >= insts.len() {
         rt.queue.borrow_mut().pop_front();
     } else {
-        *front.frame.borrow_mut() = Some(UnwindFrame {
-            ra: vm.pc,
-            context: vm.save_context(),
-        });
+        let mut f = vm.unwind_snapshot();
+        f.ra = vm.pc;
+        *front.frame.borrow_mut() = Some(f);
     }
     result
+}
+
+/// 恢复时刻投递 call_cb 写入的回调结果：值压栈（await/回调实参），
+/// 错误走 try handler（无 handler 打印后以 nil 继续，保持栈形）。
+fn deliver_pending(vm: &mut VM, task: &Rc<Task>) {
+    let slot = *task.arg_slot.borrow();
+    match task.pending.borrow_mut().take() {
+        // 闭包任务：实参写参数槽（Fixed 首参 / Pack 包槽），而非操作数栈
+        Some(Pending::Value(v)) if slot != u16::MAX => {
+            vm.current_frame().borrow_mut().store_slot(slot, v)
+        }
+        Some(Pending::Value(v)) => vm.current_frame().borrow_mut().push(v),
+        Some(Pending::Error(msg)) => {
+            let e = SquareError::RuntimeError(msg);
+            if !vm.handle_error(&e) {
+                println!("{}", format_error(&e));
+                vm.current_frame().borrow_mut().push(Value::Nil);
+            }
+        }
+        None => {}
+    }
 }
 
 static mut RUNTIME: Runtime = Runtime::new();
@@ -129,39 +210,63 @@ pub(crate) fn rt() -> &'static Runtime {
 }
 
 impl RtCx {
-    /// sleep：登记外侧延续到等待表、排 setTimeout、把延续存入 task.frame 并 park。
-    pub fn park_sleep(&mut self, frame: UnwindFrame, ms: u32) {
+    /// 注册可唤醒任务句柄（宿主回调经 call_cb 按 id 唤醒）
+    pub fn register(&self, task: Rc<Task>) -> u32 {
         let id = self.rt.alloc_id();
-        *self.task.frame.borrow_mut() = Some(frame);
-        self.rt
-            .registry
-            .borrow_mut()
-            .insert(id, Entry { task: self.task.clone() });
-        unsafe { host::js_sleep(id, ms) };
-    }
-
-    /// spawn：闭包续延直接进就绪队列，不停当前任务。
-    pub fn spawn(&mut self, frame: UnwindFrame) {
-        self.rt.spawn_frame(frame);
-    }
-
-    /// defer：闭包续延挂到等待表，microtask 回调 wake_by_id 时才进就绪队列，不停当前任务（主延续）
-    pub fn defer(&mut self, frame: UnwindFrame) {
-        let id = self.rt.alloc_id();
-        let task = Rc::new(Task {
-            frame: RefCell::new(Some(frame)),
-        });
         self.rt.registry.borrow_mut().insert(id, Entry { task });
-        unsafe { host::js_queue_microtask(id) };
+        id
+    }
+
+    /// park 当前任务：延续（含活动 try handler）存入 task.frame，run 循环检测到即停
+    pub fn park_self(&self, vm: &mut VM) {
+        let mut frame = vm.unwind_snapshot();
+        frame.ra = vm.pc + 1;
+        *self.task.frame.borrow_mut() = Some(frame);
     }
 }
 
-/// 宿主 `setTimeout`/`queueMicrotask` 到点时回调：按 id 入队 → 按 mode 推进。
+/// 宿主唯一唤醒入口：`call_cb(id, args_json_ptr, len)`。零参即旧裸唤醒；
+/// 带参则作为回调实参/await 结果投递（`{"__sq_err": msg}` 对象 → try 可捕获的错误）。
 #[no_mangle]
-pub extern "C" fn wake_by_id(id: u32) {
+pub extern "C" fn call_cb(id: u32, ptr: u32, len: u32) {
     let Some(e) = rt().registry.borrow_mut().remove(&id) else {
         return;
     };
+    if len > 0 {
+        let bytes =
+            unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
+        // 宿主传来实参数组：按元数解包（0 → nil，1 → 该值，n → vec），
+        // 再识别 {"__sq_err": msg}（Promise 拒绝/宿主异常 → try 可捕获）
+        let value = match ffi::json_to_value(bytes) {
+            Some(Value::Vec(arr)) => {
+                let v = {
+                    let a = arr.borrow();
+                    match a.len() {
+                        0 => Value::Nil,
+                        1 => a[0].clone(),
+                        _ => Value::Vec(arr.clone()),
+                    }
+                };
+                v
+            }
+            Some(v) => v,
+            None => Value::Nil,
+        };
+        let pending = if let Value::Obj(obj) = &value {
+            if obj.borrow().contains_key("__sq_err") {
+                let msg = match obj.borrow().get("__sq_err") {
+                    Some(Value::Str(s)) => s.to_string(),
+                    _ => "rejected".to_string(),
+                };
+                Pending::Error(msg)
+            } else {
+                Pending::Value(value)
+            }
+        } else {
+            Pending::Value(value)
+        };
+        *e.task.pending.borrow_mut() = Some(pending);
+    }
     rt().queue.borrow_mut().push_back(e.task); // 唤醒 = 入队
     let (vm, insts) = current_run_targets();
     let result = if rt().mode.get() == Mode::Step {
@@ -200,10 +305,8 @@ pub fn start(vm: *mut VM, insts: *const Vec<crate::vm_insts::Inst>) -> ExecResul
     rt().mode.set(Mode::Run);
     unsafe {
         let vm_ref = &mut *vm;
-        let frame = UnwindFrame {
-            ra: 0,
-            context: vm_ref.save_context(),
-        };
+        let mut frame = vm_ref.unwind_snapshot();
+        frame.ra = 0;
         rt().spawn_frame(frame);
         tick(vm_ref, &*insts)?;
     }
@@ -220,10 +323,8 @@ pub fn ensure_started(vm: *mut VM, insts: *const Vec<crate::vm_insts::Inst>) {
     rt().mode.set(Mode::Step);
     unsafe {
         let vm_ref = &mut *vm;
-        let frame = UnwindFrame {
-            ra: 0,
-            context: vm_ref.save_context(),
-        };
+        let mut frame = vm_ref.unwind_snapshot();
+        frame.ra = 0;
         rt().spawn_frame(frame);
     }
 }
