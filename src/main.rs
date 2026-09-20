@@ -24,6 +24,8 @@ mod allocator;
 #[cfg(target_family = "wasm")]
 mod externs;
 #[cfg(target_family = "wasm")]
+mod ffi;
+#[cfg(target_family = "wasm")]
 mod runtime;
 
 mod builtin;

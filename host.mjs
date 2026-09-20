@@ -34,6 +34,30 @@ export async function loadSquare({ wasmPath = defaultWasm, onWrite } = {}) {
       js_sleep: (id, ms) => setTimeout(() => ref.exports.wake_by_id(id), ms),
       js_queue_microtask: (id) =>
         queueMicrotask(() => ref.exports.wake_by_id(id)),
+      // JS FFI：按点路径在 globalThis 解析、展开实参调用；结果 JSON 写回线性内存，
+      // 返回 packed (ptr << 32 | len)。函数不存在/undefined 结果 → null（0 句柄由客机置 nil）
+      js_call: (name_ptr, name_len, args_ptr, args_len) => {
+        const name = decoder.decode(
+          new Uint8Array(ref.memory.buffer, name_ptr, name_len),
+        );
+        const args = JSON.parse(
+          decoder.decode(new Uint8Array(ref.memory.buffer, args_ptr, args_len)),
+        );
+        const fn = name.split(".").reduce((o, k) => o?.[k], globalThis);
+        let result =
+          typeof fn === "function" ? fn(...args) : undefined;
+        if (result === undefined) return 0n;
+        let json;
+        try {
+          json = JSON.stringify(result);
+        } catch {
+          json = "null";
+        }
+        const bytes = encoder.encode(json);
+        const ptr = exportsObj.alloc(bytes.length);
+        new Uint8Array(ref.memory.buffer, ptr, bytes.length).set(bytes);
+        return (BigInt(ptr) << 32n) | BigInt(bytes.length);
+      },
     },
   });
   const exportsObj = instance.exports;

@@ -577,6 +577,32 @@ impl Builtin {
             ),
         );
 
+        #[cfg(target_family = "wasm")]
+        values.insert(
+            "js",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("js")))),
+                Some(Rc::new(
+                    |vm: &mut VM,
+                     params: Rc<RefCell<Vec<Value>>>,
+                     _cx: &mut RtCx,
+                     inst: &Inst|
+                     -> ExecResult {
+                        let name = params.borrow().first().and_then(|v| v.as_str());
+                        let args = params.borrow().get(1).and_then(|v| v.as_vec());
+                        match (name, args) {
+                            (Some(n), Some(a)) => crate::ffi::call_js(vm, inst, &n, &a),
+                            _ => Err(SquareError::InstructionError(
+                                "js expect (dotted-path, args-vec) parameter".to_string(),
+                                inst.clone(),
+                                vm.pc,
+                            )),
+                        }
+                    },
+                ) as Syscall),
+            ),
+        );
+
         values.insert(
             "sleep",
             (
