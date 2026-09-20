@@ -1,6 +1,8 @@
 use crate::vm_value::{Function, Value};
 
+use alloc::rc::Rc;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
 #[allow(non_camel_case_types)]
@@ -30,10 +32,14 @@ pub enum Inst {
     JMP(i32),
     JNE(i32), // jump if false
 
-    STORE(String),
-    LOAD(String),
+    LOAD_LOCAL(u16), // frame slot i
+    LOAD_UP(u16),    // closure upvalue i
+    LOAD_GLOBAL(String), // 全局表/builtin（编译期无法静态归属的名字）
+    STORE_LOCAL(u16),
+    STORE_UP(u16),
+    STORE_GLOBAL(String), // `= x v` 定义未声明名字 → 全局表
 
-    CALL,
+    CALL(u16), // callee 之下 n 个参数
     RET,
     PUSH_CLOSURE(Function), // create a closure and push on top of the operand stack
 
@@ -44,6 +50,8 @@ pub enum Inst {
     SET(String), // set a field, stack: [target, value] -> [target]
 
     DELIMITER(usize), // delimiter for top level expressions
+
+    NAMES(Rc<Vec<String>>), // 程序开头：登记根帧槽位名表（快照/调试用）
 }
 
 impl Inst {
@@ -70,9 +78,13 @@ impl Inst {
             Inst::SHR => "SHR",
             Inst::JMP(_) => "JMP",
             Inst::JNE(_) => "JNE",
-            Inst::STORE(_) => "STORE",
-            Inst::LOAD(_) => "LOAD",
-            Inst::CALL => "CALL",
+            Inst::LOAD_LOCAL(_) => "LOAD_LOCAL",
+            Inst::LOAD_UP(_) => "LOAD_UP",
+            Inst::LOAD_GLOBAL(_) => "LOAD_GLOBAL",
+            Inst::STORE_LOCAL(_) => "STORE_LOCAL",
+            Inst::STORE_UP(_) => "STORE_UP",
+            Inst::STORE_GLOBAL(_) => "STORE_GLOBAL",
+            Inst::CALL(_) => "CALL",
             Inst::RET => "RET",
             Inst::PUSH_CLOSURE(_) => "PUSH_CLOSURE",
             Inst::PACK(_) => "PACK",
@@ -81,6 +93,7 @@ impl Inst {
             Inst::SET(_) => "SET",
 
             Inst::DELIMITER(_) => "DELIMITER",
+            Inst::NAMES(_) => "NAMES",
         }
     }
 }
@@ -112,10 +125,14 @@ impl fmt::Display for Inst {
             Inst::JMP(value) => write!(f, "JMP {}", value),
             Inst::JNE(value) => write!(f, "JNE {}", value),
 
-            Inst::STORE(name) => write!(f, "STORE {}", name),
-            Inst::LOAD(name) => write!(f, "LOAD {}", name),
+            Inst::LOAD_LOCAL(i) => write!(f, "LOAD_LOCAL {}", i),
+            Inst::LOAD_UP(i) => write!(f, "LOAD_UP {}", i),
+            Inst::LOAD_GLOBAL(name) => write!(f, "LOAD_GLOBAL {}", name),
+            Inst::STORE_LOCAL(i) => write!(f, "STORE_LOCAL {}", i),
+            Inst::STORE_UP(i) => write!(f, "STORE_UP {}", i),
+            Inst::STORE_GLOBAL(name) => write!(f, "STORE_GLOBAL {}", name),
 
-            Inst::CALL => write!(f, "CALL"),
+            Inst::CALL(n) => write!(f, "CALL {}", n),
             Inst::RET => write!(f, "RET"),
             Inst::PUSH_CLOSURE(closure) => write!(
                 // closure meta
@@ -130,6 +147,7 @@ impl fmt::Display for Inst {
             Inst::SET(key) => write!(f, "SET {}", key),
 
             Inst::DELIMITER(mindex) => write!(f, "DELIMITER {}", mindex),
+            Inst::NAMES(names) => write!(f, "NAMES {}", names.len()),
         }
     }
 }

@@ -1,14 +1,13 @@
 use alloc::{format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
 use core::{cell::RefCell, fmt};
 
-#[cfg(test)]
 use hashbrown::HashMap;
 
 use crate::{
     builtin::Builtin,
     errors::SquareError,
     vm_insts::Inst,
-    vm_value::{CalcResult, Function, Value},
+    vm_value::{CalcResult, CaptureSrc, ClosureInfo, Function, ParamLayout, Value},
 };
 
 #[cfg(test)]
@@ -77,13 +76,13 @@ impl Inst {
                 Ok(())
             }
 
-            Inst::STORE(name) => {
+            Inst::STORE_LOCAL(i) => {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
 
                 if let Some(val) = frame.top() {
                     let cloned = val.clone();
-                    frame.assign_local(name, cloned);
+                    frame.store_slot(*i, cloned);
                     Ok(())
                 } else {
                     Err(SquareError::InstructionError(
@@ -93,25 +92,74 @@ impl Inst {
                     ))
                 }
             }
-            Inst::LOAD(name) => {
+            Inst::STORE_UP(i) => {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
-                if let Some(value) = frame.resolve_local(name) {
-                    // 解包 UpValue：捕获变量以 UpValue(Rc<RefCell<Value>>) 存储，
-                    // LOAD 时需取出内部值，否则 syscall 的类型匹配（如 at 匹配 Num）会失败。
-                    let resolved = if let Value::UpValue(ref u) = value {
-                        u.borrow().clone()
-                    } else {
-                        value.clone()
-                    };
-                    frame.push(resolved);
+
+                let Some(cell) = frame.ups.get(*i as usize).cloned() else {
+                    return Err(SquareError::InstructionError(
+                        format!("bad store_up, no upvalue {}", i),
+                        self.clone(),
+                        vm.pc,
+                    ));
+                };
+                if let Some(val) = frame.top() {
+                    *cell.borrow_mut() = val.clone();
+                    Ok(())
+                } else {
+                    Err(SquareError::InstructionError(
+                        "bad store_up, operand stack empty".to_string(),
+                        self.clone(),
+                        vm.pc,
+                    ))
+                }
+            }
+            Inst::LOAD_LOCAL(i) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let value = frame.load_slot(*i);
+                frame.push(value);
+                Ok(())
+            }
+            Inst::LOAD_UP(i) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let Some(cell) = frame.ups.get(*i as usize).cloned() else {
+                    return Err(SquareError::InstructionError(
+                        format!("bad load_up, no upvalue {}", i),
+                        self.clone(),
+                        vm.pc,
+                    ));
+                };
+                let value = cell.borrow().clone();
+                frame.push(value);
+                Ok(())
+            }
+            Inst::LOAD_GLOBAL(name) => {
+                // 全局表（`=` 动态定义）→ builtin → 未定义报错
+                if let Some(value) = vm.globals.get(name).cloned() {
+                    vm.current_frame().borrow_mut().push(value);
                     Ok(())
                 } else if let Some(value) = vm.buildin.resolve_builtin(name) {
-                    frame.push(value);
+                    vm.current_frame().borrow_mut().push(value);
                     Ok(())
                 } else {
                     Err(SquareError::InstructionError(
                         format!("undefined variable: {}", name),
+                        self.clone(),
+                        vm.pc,
+                    ))
+                }
+            }
+            Inst::STORE_GLOBAL(name) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                if let Some(val) = frame.top() {
+                    vm.globals.insert(name.clone(), val.clone());
+                    Ok(())
+                } else {
+                    Err(SquareError::InstructionError(
+                        "bad store, operand stack empty".to_string(),
                         self.clone(),
                         vm.pc,
                     ))
@@ -162,30 +210,126 @@ impl Inst {
                 }
             }
 
-            Inst::CALL => {
-                // call() will borrow again, so don't borrow here
-                let (params, function) = {
+            Inst::CALL(argc) => {
+                let n = *argc as usize;
+                let callee_and_target = {
                     let frame = vm.current_frame();
                     let frame = frame.borrow();
                     let sp = frame.sp;
-                    (frame.stack[sp - 1].as_vec(), frame.stack[sp - 2].as_fn())
+                    if sp < n + 1 {
+                        return Err(SquareError::InstructionError(
+                            "bad call, operand stack underflow".to_string(),
+                            self.clone(),
+                            vm.pc,
+                        ));
+                    }
+                    (frame.stack[sp - 1 - n].as_fn(), frame.stack[sp - 1 - n].clone())
                 };
 
-                if let (Some(func), Some(args)) = (function, params) {
-                    vm.current_frame().borrow_mut().sp -= 2;
-                    let is_tail_call = vm.pc + 1 < insts.len() && insts[vm.pc + 1] == Inst::RET;
-                    return self.call(vm, cx, func, args, is_tail_call);
-                }
+                let Some(func) = callee_and_target.0 else {
+                    return Err(SquareError::InstructionError(
+                        format!("bad call, cannot call with {}", callee_and_target.1),
+                        self.clone(),
+                        vm.pc,
+                    ));
+                };
 
-                let sp = vm.current_frame().borrow().sp;
-                Err(SquareError::InstructionError(
-                    format!(
-                        "bad call, cannot call with {}",
-                        vm.current_frame().borrow().stack[sp - 2]
-                    ),
-                    self.clone(),
-                    vm.pc,
-                ))
+                let is_tail_call = vm.pc + 1 < insts.len() && insts[vm.pc + 1] == Inst::RET;
+
+                // 先把被调者数据克隆出来（Rc 自增），避免函数体 RefCell 借用跨 VM 操作
+                enum Callee {
+                    Closure(Rc<ClosureInfo>, usize, Vec<Rc<RefCell<Value>>>),
+                    Syscall(&'static str),
+                    Continuation(usize, Vec<Rc<RefCell<CallFrame>>>),
+                }
+                let callee = match &*func.borrow() {
+                    Function::Closure(info, ip, ups) => {
+                        Callee::Closure(info.clone(), *ip, ups.clone())
+                    }
+                    Function::Syscall(name) => Callee::Syscall(name),
+                    Function::Continuation(ra, context) => {
+                        Callee::Continuation(*ra, context.clone())
+                    }
+                    Function::ClosureMeta(..) => unreachable!(),
+                };
+                drop(func);
+
+                match callee {
+                    Callee::Closure(info, ip, ups) => {
+                        // 参数不走 Vec 打包：直接从调用方栈拷进被调方槽位
+                        let caller_rc = vm.current_frame();
+                        let mut caller = caller_rc.borrow_mut();
+                        let sp = caller.sp;
+
+                        if is_tail_call {
+                            // 同帧重置：清槽位后把栈顶 n 个参数逆序弹出直填
+                            caller.slots.clear();
+                            caller.slots.resize(info.n_slots as usize, Value::Nil);
+                            caller.names = info.names.clone();
+                            match &info.params {
+                                ParamLayout::Fixed(param_slots) => {
+                                    for k in (0..param_slots.len()).rev() {
+                                        let v = if k < n {
+                                            caller.pop()
+                                        } else {
+                                            Value::Nil
+                                        };
+                                        caller.slots[param_slots[k] as usize] = v;
+                                    }
+                                }
+                                ParamLayout::Pack(slot) => {
+                                    // pop 从栈顶来（末参在前），收集后反转恢复入参顺序
+                                    let mut packed: Vec<Value> =
+                                        (0..n).map(|_| caller.pop()).collect();
+                                    packed.reverse();
+                                    caller.slots[*slot as usize] =
+                                        Value::Vec(Rc::new(RefCell::new(packed)));
+                                }
+                            }
+                            caller.ups = ups;
+                            caller.sp = 0;
+                        } else {
+                            let mut callee_frame = vm.take_frame();
+                            bind_params(&mut callee_frame, &info, &caller.stack[sp - n..sp]);
+                            callee_frame.ups = ups;
+                            callee_frame.ra = vm.pc;
+                            caller.sp = sp - n - 1;
+                            drop(caller);
+                            vm.push_frame(callee_frame);
+                        }
+
+                        vm.pc = ip;
+                        Ok(())
+                    }
+                    Callee::Syscall(name) => {
+                        let syscall = vm.buildin.get_syscall(name);
+                        let params = {
+                            let frame = vm.current_frame();
+                            let frame = frame.borrow();
+                            let sp = frame.sp;
+                            Rc::new(RefCell::new(frame.stack[sp - n..sp].to_vec()))
+                        };
+                        vm.current_frame().borrow_mut().sp -= n + 1;
+                        syscall(vm, params, cx, self)
+                    }
+                    Callee::Continuation(ra, context) => {
+                        let first = {
+                            let frame = vm.current_frame();
+                            let frame = frame.borrow();
+                            let sp = frame.sp;
+                            if n > 0 {
+                                frame.stack[sp - n].clone()
+                            } else {
+                                Value::Nil
+                            }
+                        };
+                        vm.current_frame().borrow_mut().sp -= n + 1;
+                        vm.pc = ra;
+                        vm.restore_context(context);
+                        vm.current_frame().borrow_mut().push(first);
+                        Ok(())
+                    }
+                }
             }
             Inst::RET => {
                 // 借而不克隆 Rc：取 ra 与返回值后立即释放借用，使 pop 出的帧 Rc 唯一、可回池。
@@ -206,44 +350,36 @@ impl Inst {
                 Ok(())
             }
             Inst::PUSH_CLOSURE(meta) => {
-                if let Function::ClosureMeta(offset, captures) = meta {
-                    let ip = (vm.pc as i32) + offset;
+                let Function::ClosureMeta(info) = meta else {
+                    unreachable!()
+                };
+                let ip = info.abs_ip(vm.pc);
 
-                    // 无捕获：直接造空 upvalues 的闭包，跳过 frame 借用与捕获循环。
-                    let upvalues = if captures.is_empty() {
-                        Vec::new()
-                    } else {
-                        let mut upvalues: Vec<(String, Value)> = Vec::new();
-                        let binding = vm.current_frame();
-                        let mut frame = binding.borrow_mut();
+                // 无捕获：直接造空 upvalues 的闭包，跳过 frame 借用与捕获循环
+                let ups = if info.captures.is_empty() {
+                    Vec::new()
+                } else {
+                    let binding = vm.current_frame();
+                    let mut frame = binding.borrow_mut();
+                    info.captures
+                        .iter()
+                        .map(|src| match src {
+                            CaptureSrc::Local(i) => frame.slot_cell(*i),
+                            CaptureSrc::Upvalue(j) => frame
+                                .ups
+                                .get(*j as usize)
+                                .cloned()
+                                .unwrap_or_else(|| Rc::new(RefCell::new(Value::Nil))),
+                            // 每个闭包实例独立的 this 单元，存入 obj 时回填
+                            CaptureSrc::This => Rc::new(RefCell::new(Value::Nil)),
+                        })
+                        .collect()
+                };
 
-                        // upgrade value to captured
-                        for name in captures.iter().cloned().collect::<Vec<_>>() {
-                            if let Some(value) = frame.resolve_local(&name) {
-                                let upvalue = value.upgrade();
-
-                                upvalues.push((name.clone(), upvalue.clone()));
-                                frame.insert_local(&name, upvalue);
-                            } else {
-                                // else undefined yet, if later be defined in same scope,
-                                // the value will be assigned
-                                let upvalue = Value::UpValue(Rc::new(RefCell::new(Value::Nil)));
-
-                                upvalues.push((name.clone(), upvalue.clone()));
-                                frame.insert_local(&name, upvalue);
-                            }
-                        }
-
-                        upvalues
-                    };
-
-                    vm.current_frame().borrow_mut().push(Value::Function(Rc::new(
-                        RefCell::new(Function::Closure(ip as usize, upvalues)),
-                    )));
-                    return Ok(());
-                }
-
-                unreachable!()
+                vm.current_frame().borrow_mut().push(Value::Function(Rc::new(
+                    RefCell::new(Function::Closure(info.clone(), ip, ups)),
+                )));
+                Ok(())
             }
 
             Inst::PACK(len) => {
@@ -379,6 +515,11 @@ impl Inst {
                 vm.mpc += 1;
                 Ok(())
             }
+
+            Inst::NAMES(names) => {
+                vm.current_frame().borrow_mut().names = names.clone();
+                Ok(())
+            }
         }
     }
 
@@ -413,6 +554,8 @@ impl Inst {
         Ok(())
     }
 
+    /// 内建侧调用入口（proxy trap / callcc iife）：参数已是打包好的 Vec。
+    /// CALL 指令的快路径不经过这里。
     pub fn call(
         &self,
         vm: &mut VM,
@@ -421,41 +564,34 @@ impl Inst {
         params: Rc<RefCell<Vec<Value>>>,
         is_tail_call: bool,
     ) -> ExecResult {
-        match *closure.borrow() {
+        match &*closure.borrow() {
             Function::ClosureMeta(..) => unreachable!(),
-            Function::Closure(ip, ref upvalues) => {
+            Function::Closure(info, ip, ups) => {
+                let args = params.borrow();
+
                 if is_tail_call {
                     let binding = vm.current_frame();
                     let mut frame = binding.borrow_mut();
-
-                    // always push params as first operand
-                    frame.stack[0] = Value::Vec(params);
-                    frame.sp = 1;
-                    frame.clear_locals();
-                    // fill up captures
-                    frame.extend_locals(upvalues);
+                    bind_params(&mut frame, info, &args);
+                    frame.ups = ups.clone();
+                    frame.sp = 0;
                 } else {
                     let mut new_frame = vm.take_frame();
+                    bind_params(&mut new_frame, info, &args);
+                    new_frame.ups = ups.clone();
                     new_frame.ra = vm.pc;
-                    // always push params as first operand
-                    new_frame.stack[0] = Value::Vec(params);
-                    new_frame.sp = 1;
-                    // fill up captures
-                    new_frame.extend_locals(upvalues);
-
                     vm.push_frame(new_frame);
                 }
 
-                // jump to function
-                vm.pc = ip;
+                vm.pc = *ip;
                 Ok(())
             }
             Function::Syscall(name) => {
                 let syscall = vm.buildin.get_syscall(name);
                 syscall(vm, params, cx, self)
             }
-            Function::Continuation(ra, ref context) => {
-                vm.pc = ra;
+            Function::Continuation(ra, context) => {
+                vm.pc = *ra;
                 vm.restore_context(context.clone());
 
                 vm.current_frame()
@@ -467,9 +603,34 @@ impl Inst {
     }
 }
 
+/// 绑定参数并重置帧布局：槽位清到 info.n_slots（定参直拷，展开参数整包），
+/// 装载名表。调用方负责随后设置 ups / ra / sp。
+pub(crate) fn bind_params(frame: &mut CallFrame, info: &ClosureInfo, args: &[Value]) {
+    frame.slots.clear();
+    frame.slots.resize(info.n_slots as usize, Value::Nil);
+    frame.names = info.names.clone();
+
+    match &info.params {
+        ParamLayout::Fixed(param_slots) => {
+            for (k, slot) in param_slots.iter().enumerate() {
+                frame.slots[*slot as usize] = args.get(k).cloned().unwrap_or(Value::Nil);
+            }
+        }
+        ParamLayout::Pack(slot) => {
+            frame.slots[*slot as usize] = Value::Vec(Rc::new(RefCell::new(args.to_vec())));
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallFrame {
-    pub locals: Vec<(String, Value)>,
+    /// 槽位化局部变量（编译期静态布局）。被捕获的槽位以 Value::UpValue 共享单元存储，
+    /// 读写自动解包/写穿。
+    pub slots: Vec<Value>,
+    /// 本帧对应闭包的 upvalue 单元，CALL 时由闭包拷入（LOAD_UP/STORE_UP 直访）
+    pub ups: Vec<Rc<RefCell<Value>>>,
+    /// 槽位名表（快照/调试用），与 ClosureInfo 共享同一 Rc
+    pub names: Rc<Vec<String>>,
 
     // operand stack
     pub stack: Vec<Value>,
@@ -484,8 +645,9 @@ impl fmt::Display for CallFrame {
         writeln!(f, "-----------------------------")?;
         writeln!(f, "Return Addr: {}", self.ra)?;
         writeln!(f, "Locals:")?;
-        for (key, value) in &self.locals {
-            writeln!(f, "{:>8}: {}", key, value)?;
+        for (i, value) in self.slots.iter().enumerate() {
+            let name = self.names.get(i).map(|s| s.as_str()).unwrap_or("");
+            writeln!(f, "{:>8}: {}", name, value)?;
         }
 
         writeln!(f, "Operand Stack:")?;
@@ -507,7 +669,9 @@ impl Default for CallFrame {
 impl CallFrame {
     pub fn new() -> Self {
         Self {
-            locals: Vec::new(),
+            slots: Vec::new(),
+            ups: Vec::new(),
+            names: Rc::new(Vec::new()),
             stack: vec![Value::Nil; 8],
             sp: 0,
             ra: 0,
@@ -535,55 +699,55 @@ impl CallFrame {
         self.stack.get(self.sp - 1)
     }
 
-    /// 按名更新或追加（保持一名一项，等价 HashMap 语义）。
-    fn upsert_local(&mut self, name: &str, value: Value) {
-        if let Some(slot) = self.locals.iter_mut().find(|(n, _)| n.as_str() == name) {
-            slot.1 = value;
-        } else {
-            self.locals.push((name.to_string(), value));
+    /// 读槽位：捕获槽位解包 UpValue 单元。根帧槽位惰性增长，未赋值读 Nil。
+    #[inline]
+    pub fn load_slot(&self, i: u16) -> Value {
+        match self.slots.get(i as usize) {
+            Some(Value::UpValue(cell)) => cell.borrow().clone(),
+            Some(v) => v.clone(),
+            None => Value::Nil,
         }
     }
 
+    /// 写槽位：捕获槽位写穿共享单元，保持捕获的可变性。
     #[inline]
-    pub fn insert_local(&mut self, name: &str, value: Value) {
-        self.upsert_local(name, value);
-    }
-
-    #[inline]
-    pub fn extend_locals(&mut self, upvalues: &[(String, Value)]) {
-        for (k, v) in upvalues {
-            self.upsert_local(k, v.clone());
+    pub fn store_slot(&mut self, i: u16, value: Value) {
+        let i = i as usize;
+        if i >= self.slots.len() {
+            self.slots.resize(i + 1, Value::Nil);
+        }
+        if let Value::UpValue(cell) = &self.slots[i] {
+            *cell.borrow_mut() = value;
+        } else {
+            self.slots[i] = value;
         }
     }
 
+    /// 取槽位的共享单元：未升级则原地升级为 UpValue（闭包捕获用）。
     #[inline]
-    pub fn resolve_local(&self, name: &str) -> Option<&Value> {
-        self.locals
-            .iter()
-            .find(|(n, _)| n.as_str() == name)
-            .map(|(_, v)| v)
-    }
-
-    #[inline]
-    pub fn clear_locals(&mut self) {
-        self.locals.clear();
-    }
-
-    pub fn assign_local(&mut self, name: &str, value: Value) {
-        let new = if let Value::UpValue(upval) = value {
-            upval.borrow().clone() // if ref appeared as right value, it should be cloned
-        } else {
-            value
-        };
-
-        if let Some(slot) = self.locals.iter_mut().find(|(n, _)| n.as_str() == name) {
-            if let Value::UpValue(old) = &slot.1 {
-                *old.borrow_mut() = new; // 写穿共享单元，保持捕获的可变性
-            } else {
-                slot.1 = new;
+    pub fn slot_cell(&mut self, i: u16) -> Rc<RefCell<Value>> {
+        let i = i as usize;
+        if i >= self.slots.len() {
+            self.slots.resize(i + 1, Value::Nil);
+        }
+        match &self.slots[i] {
+            Value::UpValue(cell) => cell.clone(),
+            v => {
+                let cell = Rc::new(RefCell::new(v.clone()));
+                self.slots[i] = Value::UpValue(cell.clone());
+                cell
             }
-        } else {
-            self.locals.push((name.to_string(), new));
+        }
+    }
+
+    /// 按名反查槽位（测试断言用）：同名多槽位时取最内层（后定义者遮蔽前者），
+    /// 捕获槽位解包 UpValue。
+    #[cfg(test)]
+    pub fn local_by_name(&self, name: &str) -> Option<Value> {
+        let i = self.names.iter().position(|n| n == name)?;
+        match self.slots.get(i)? {
+            Value::UpValue(cell) => Some(cell.borrow().clone()),
+            v => Some(v.clone()),
         }
     }
 }
@@ -594,6 +758,9 @@ pub struct VM {
     pub mpc: usize,
 
     buildin: Builtin,
+
+    /// `= x v` 动态定义的全局（编译期无法归属槽位的名字）
+    pub globals: HashMap<String, Value>,
 
     /// 回收的调用帧：CALL 复用而非重新分配（含 `vec![Nil; 8]` 操作数栈）。
     /// 仅在 `Rc` 唯一（无 callcc 续延共享）时回收，见 [`recycle_frame`]。
@@ -614,6 +781,7 @@ impl VM {
         Self {
             call_frames: vec![Rc::new(RefCell::new(CallFrame::new()))],
             buildin: Builtin::new(),
+            globals: HashMap::new(),
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
@@ -626,6 +794,7 @@ impl VM {
     pub fn reset(&mut self) {
         self.pc = 0;
         self.mpc = 0;
+        self.globals.clear();
         self.call_frames
             .splice(0.., vec![Rc::new(RefCell::new(CallFrame::new()))]);
 
@@ -652,7 +821,8 @@ impl VM {
     /// 容量），池空才新建。避免每次 CALL 的 `vec![Nil; 8]` 栈分配。
     fn take_frame(&mut self) -> CallFrame {
         if let Some(mut frame) = self.frame_pool.pop() {
-            frame.locals.clear();
+            frame.slots.clear();
+            frame.ups.clear();
             frame.sp = 0;
             frame
         } else {
@@ -700,9 +870,10 @@ impl VM {
         for frame in &self.call_frames {
             let frame = frame.borrow();
             push_str(&mut buf, &frame.ra.to_string());
-            push_u32(&mut buf, frame.locals.len() as u32);
-            for (key, value) in &frame.locals {
-                push_str(&mut buf, key);
+            push_u32(&mut buf, frame.slots.len() as u32);
+            for (i, value) in frame.slots.iter().enumerate() {
+                let name = frame.names.get(i).map(|s| s.as_str()).unwrap_or("");
+                push_str(&mut buf, name);
                 push_str(&mut buf, &format!("{}", value));
             }
             push_u32(&mut buf, frame.sp as u32);
@@ -855,7 +1026,7 @@ fn test_snapshot_roundtrip() {
         assert_eq!(ra, expected.ra);
 
         let n_locals = u32_at(&bytes, &mut o) as usize;
-        assert_eq!(n_locals, expected.locals.len());
+        assert_eq!(n_locals, expected.slots.len());
         for _ in 0..n_locals {
             str_at(&bytes, &mut o);
             str_at(&bytes, &mut o);
@@ -869,6 +1040,23 @@ fn test_snapshot_roundtrip() {
     }
 
     assert_eq!(o, bytes.len(), "trailing bytes / over-read mismatch");
+}
+
+
+/// TCO + 展开参数（Pack）组合：尾调用复用帧时参数包顺序必须保持入参顺序
+#[test]
+fn test_exec_pack_args_tco() {
+    let code = "[let cons /[x g] /[f] [f x g]]\n[let car /[p] [p /[x .] x]]\n[let r1 [car [cons 42 /[] nil]]]\n[let r2 [[cons 42 /[] nil] /[x .] x]]";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+    let mut cx = RtCx::test();
+    vm.current_frame().borrow_mut().ra = insts.len();
+    while vm.pc < insts.len() {
+        vm.step(&insts, &mut cx).unwrap();
+    }
+    assert_eq!(vm.current_frame().borrow().local_by_name("r1"), Some(Value::Num(42.0)));
+    assert_eq!(vm.current_frame().borrow().local_by_name("r2"), Some(Value::Num(42.0)));
 }
 
 #[test]
@@ -904,15 +1092,12 @@ fn test_exec_token() {
 
 #[test]
 fn test_exec_load() {
-    let code = "x";
+    let code = "[let x 42]\nx";
     let ast = parse(code, &mut Position::new()).unwrap();
     let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
-    vm.current_frame()
-        .borrow_mut()
-        .assign_local("x", Value::Num(42.0));
     vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
@@ -933,8 +1118,8 @@ fn test_exec_load_undefined() {
         vm.run(&insts, &mut cx),
         Err(SquareError::InstructionError(
             "undefined variable: x".to_string(),
-            Inst::LOAD("x".to_string()),
-            1,
+            Inst::LOAD_GLOBAL("x".to_string()),
+            2,
         ))
     );
 }
@@ -951,7 +1136,7 @@ fn test_exec_define() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -966,7 +1151,7 @@ fn test_exec_assign() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -981,7 +1166,7 @@ fn test_exec_assign_capture() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -996,7 +1181,7 @@ fn test_exec_define_expand() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -1011,7 +1196,7 @@ fn test_exec_assign_expand() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -1026,7 +1211,7 @@ fn test_exec_assign_expand_capture() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -1041,7 +1226,7 @@ fn test_exec_define_expand_dot() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -1074,7 +1259,7 @@ fn test_exec_define_expand_greed() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -1109,7 +1294,7 @@ fn test_exec_define_expand_nested() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -1124,9 +1309,9 @@ fn test_exec_define_chain() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0));
-    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(42.0));
-    assert_eq!(callframe.resolve_local("z").unwrap(), &Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("y").unwrap(), Value::Num(42.0));
+    assert_eq!(callframe.local_by_name("z").unwrap(), Value::Num(42.0));
 }
 
 #[test]
@@ -1146,21 +1331,18 @@ fn test_exec_op() {
 
 #[test]
 fn test_exec_op_assign() {
-    let code = "[+= x 2]";
+    let code = "[let x 1]\n[+= x 2]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
-    vm.current_frame()
-        .borrow_mut()
-        .assign_local("x", Value::Num(1.0));
     vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(3.0));
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(3.0))
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(3.0))
 }
 
 #[test]
@@ -1182,20 +1364,12 @@ fn test_exec_op_assign_dot() {
 
 #[test]
 fn test_exec_dot() {
-    let code = "o.x.y";
+    let code = "[let o [obj 'x' [obj 'y' 42]]]\no.x.y";
     let ast = parse(code, &mut Position::new()).unwrap();
     let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
-    let mut o = HashMap::new();
-    let mut x = HashMap::new();
-    let y = Value::Num(42.0);
-    x.insert("y".to_string(), y);
-    o.insert("x".to_string(), Value::Obj(Rc::new(RefCell::new(x))));
-    vm.current_frame()
-        .borrow_mut()
-        .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
     vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
@@ -1205,20 +1379,12 @@ fn test_exec_dot() {
 
 #[test]
 fn test_exec_assign_dot() {
-    let code = "[= o.x.y 42] o.x.y";
+    let code = "[let o [obj 'x' [obj 'y' 0]]]\n[= o.x.y 42]\no.x.y";
     let ast = parse(code, &mut Position::new()).unwrap();
     let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
-    let mut o = HashMap::new();
-    let mut x = HashMap::new();
-    let y = Value::Num(24.0);
-    x.insert("y".to_string(), y);
-    o.insert("x".to_string(), Value::Obj(Rc::new(RefCell::new(x))));
-    vm.current_frame()
-        .borrow_mut()
-        .assign_local("o", Value::Obj(Rc::new(RefCell::new(o))));
     vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
@@ -1283,13 +1449,13 @@ fn test_exec_scope() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(1.0));
-    assert_eq!(callframe.resolve_local("y").unwrap(), &Value::Num(2.0));
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(1.0));
+    assert_eq!(callframe.local_by_name("y").unwrap(), Value::Num(2.0));
 }
 
 #[test]
 fn test_exec_tail_call() {
-    let code = "[begin [begin [begin 42]]]";
+    let code = "[let f /[n] [if [>= n 100000] n [f [+ n 1]]]]\n[f 0]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
@@ -1307,8 +1473,8 @@ fn test_exec_tail_call() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
-    assert_eq!(max_depth, 2);
+    assert_eq!(callframe.top().unwrap(), &Value::Num(100000.0));
+    assert_eq!(max_depth, 2); // 10 万层尾递归只增 1 帧
 }
 
 #[test]
@@ -1358,20 +1524,17 @@ fn test_exec_if_false() {
 
 #[test]
 fn test_exec_while() {
-    let code = "[while [< x 4] [begin [+= x 1]]]";
+    let code = "[let x 0]\n[while [< x 4] [+= x 1]]";
     let ast = parse(code, &mut Position::new()).unwrap();
     let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
-    vm.current_frame()
-        .borrow_mut()
-        .assign_local("x", Value::Num(0.0));
     vm.run(&insts, &mut cx).unwrap();
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(4.0))
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(4.0))
 }
 
 #[test]
@@ -1438,7 +1601,7 @@ fn test_exec_fn_overwrite_params() {
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
     assert_eq!(callframe.top().unwrap(), &Value::Num(42.0));
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(24.0))
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(24.0))
 }
 
 #[test]
@@ -1520,8 +1683,15 @@ fn test_exec_fn_capture_error() {
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
-    vm.run(&insts, &mut cx).unwrap(); // FIXME: should report undefined variable: x
-    assert_eq!(vm.current_frame().borrow().top(), Some(&Value::Nil))
+    // 姊妹作用域的 let 不会发布到全局表：前向引用在此处报未定义（旧实现静默 Nil）
+    assert_eq!(
+        vm.run(&insts, &mut cx),
+        Err(SquareError::InstructionError(
+            "undefined variable: x".to_string(),
+            Inst::LOAD_GLOBAL("x".to_string()),
+            3,
+        ))
+    )
 }
 
 #[test]
@@ -1536,14 +1706,12 @@ fn test_exec_fn_capture_shadow() {
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
-    assert_eq!(
-        vm.run(&insts, &mut cx),
-        Err(SquareError::InstructionError(
-            "undefined variable: x".to_string(),
-            Inst::LOAD("x".to_string()),
-            4,
-        )),
-    );
+    vm.run(&insts, &mut cx).unwrap();
+
+    // fn 体内 [let x 24] 遮蔽外层：返回 24（旧实现此处误报 undefined）
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    assert_eq!(callframe.top(), Some(&Value::Num(24.0)));
 }
 
 #[test]
@@ -1600,8 +1768,8 @@ fn test_exec_builtin_value() {
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
     assert_eq!(
-        callframe.resolve_local("t").unwrap(),
-        &Value::Str("fn".to_string())
+        callframe.local_by_name("t").unwrap(),
+        Value::Str("fn".to_string())
     )
 }
 
@@ -1669,7 +1837,7 @@ fn test_callcc_flow() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0))
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0))
 }
 
 #[test]
@@ -1686,7 +1854,7 @@ fn test_callcc_break() {
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("x").unwrap(), &Value::Num(42.0))
+    assert_eq!(callframe.local_by_name("x").unwrap(), Value::Num(42.0))
 }
 
 #[test]
@@ -1707,7 +1875,7 @@ cc
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
+    assert_eq!(callframe.local_by_name("cc").unwrap(), Value::Num(42.0))
 }
 
 #[test]
@@ -1728,7 +1896,7 @@ cc
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
+    assert_eq!(callframe.local_by_name("cc").unwrap(), Value::Num(42.0))
 }
 
 #[test]
@@ -1749,7 +1917,7 @@ cc
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
+    assert_eq!(callframe.local_by_name("cc").unwrap(), Value::Num(42.0))
 }
 
 #[test]
@@ -1770,7 +1938,7 @@ cc
 
     let binding = vm.current_frame();
     let callframe = binding.borrow_mut();
-    assert_eq!(callframe.resolve_local("cc").unwrap(), &Value::Num(42.0))
+    assert_eq!(callframe.local_by_name("cc").unwrap(), Value::Num(42.0))
 }
 
 #[test]
@@ -1787,14 +1955,11 @@ x
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
-    assert_eq!(
-        vm.run(&insts, &mut cx),
-        Err(SquareError::InstructionError(
-            "undefined variable: x".to_string(),
-            Inst::LOAD("x".to_string()),
-            26,
-        )),
-    );
+    // abort 把执行带回 callcc 之后：cc 被覆写为 42，let x 从未执行
+    // （DELIMITER 跳过已完成语句），x 槽位未初始化
+    vm.run(&insts, &mut cx).unwrap();
+    assert_eq!(vm.current_frame().borrow().local_by_name("cc"), Some(Value::Num(42.0)));
+    assert_eq!(vm.current_frame().borrow().local_by_name("x"), None);
 }
 
 #[test]

@@ -7,20 +7,60 @@ use crate::{
     parse::Node,
     scan::Token,
     vm_insts::Inst,
-    vm_value::{Function, Value},
+    vm_value::{CaptureSrc, ClosureInfo, Function, ParamLayout, Value},
 };
 
 #[cfg(test)]
 use crate::parse::parse;
-
-use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 use hashbrown::HashSet;
+
+use alloc::{boxed::Box, format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
+use hashbrown::HashMap;
 
 pub type EmitResult = Result<Vec<Inst>, SquareError>;
 
+/// 名字使用处的静态解析结果
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Binding {
+    Local(u16),
+    Upvalue(u16),
+    /// builtin 或编译期无法归属（`=` 动态定义）：执行期才揭晓
+    Global,
+}
+
+/// 每个函数（含顶层）的编译上下文：作用域栈（名→槽位）+ upvalue 表。
+/// 槽位静态布局，作用域进出只影响编译期可见性，无运行时开销。
+struct FnCtx {
+    scopes: Vec<HashMap<String, u16>>,
+    next_slot: u16,
+    /// 本函数闭包的捕获表：(名字, 来源)，下标即 LOAD_UP/STORE_UP 的操作数
+    upvalues: Vec<(String, CaptureSrc)>,
+    /// 槽位名表（快照/调试）
+    names: Vec<String>,
+}
+
+impl FnCtx {
+    fn new() -> Self {
+        Self {
+            scopes: vec![HashMap::new()],
+            next_slot: 0,
+            upvalues: Vec::new(),
+            names: Vec::new(),
+        }
+    }
+
+    fn lookup_local(&self, name: &str) -> Option<u16> {
+        self.scopes.iter().rev().find_map(|s| s.get(name).copied())
+    }
+}
+
 pub struct EmitContext {
-    scopes: Vec<(HashSet<String>, HashSet<String>)>, // (locals, captures)
+    fns: Vec<FnCtx>,
     builtin: Builtin,
+    /// 嵌套函数内引用、编译期无处归属的名字（前向引用/方法引用宿主对象）：
+    /// 走 Global（全局表），顶层 let 这些名字时双写（STORE_GLOBAL + STORE_LOCAL），
+    /// 保住旧运行时"Nil 单元 + 后续 let 写穿"的惰性捕获语义
+    deferred: HashSet<String>,
     /// DELIMITER 起始段落号。REPL 把每条语句拼进同一份 session insts 时，用递增的 base
     /// 保证各语句的 DELIMITER 编号全局唯一（与 VM 的 mpc 同步）。默认 0（整程序编译）。
     pub base_mindex: usize,
@@ -29,13 +69,15 @@ pub struct EmitContext {
 impl EmitContext {
     pub fn new() -> Self {
         Self {
-            scopes: vec![(HashSet::new(), HashSet::new())],
+            fns: vec![FnCtx::new()],
             builtin: Builtin::new(),
+            deferred: HashSet::new(),
             base_mindex: 0,
         }
     }
 
-    pub fn add_local(&mut self, name: String) -> Result<(), SquareError> {
+    /// 声明局部：当前函数最内层作用域分配槽位（重名/内建名报错，保持旧语义）
+    pub fn add_local(&mut self, name: String) -> Result<u16, SquareError> {
         if self.builtin.is_builtin(&name) {
             return Err(SquareError::RuntimeError(format!(
                 "redefine of builtin variable {}",
@@ -43,42 +85,140 @@ impl EmitContext {
             )));
         }
 
-        let (ref mut locals, ref mut captures) = self.scopes.last_mut().unwrap();
-
-        if locals.contains(&name) {
+        let f = self.fns.last_mut().unwrap();
+        let scope = f.scopes.last_mut().unwrap();
+        if scope.contains_key(&name) {
             return Err(SquareError::RuntimeError(format!(
                 "redefine of variable {}",
                 name
             )));
         }
 
-        captures.remove(&name); // scope shadow
-        locals.insert(name);
-
-        Ok(())
+        let slot = f.next_slot;
+        f.next_slot += 1;
+        scope.insert(name.clone(), slot);
+        if f.names.len() <= slot as usize {
+            f.names.resize(slot as usize + 1, String::new());
+        }
+        f.names[slot as usize] = name;
+        Ok(slot)
     }
 
-    pub fn mark_if_capture(&mut self, name: &String) {
+    /// 使用处解析：当前函数作用域 → 本函数已有 upvalue → 外层函数链（逐层注册
+    /// 传递捕获）→ Global。
+    fn resolve(&mut self, name: &str) -> Binding {
         if self.builtin.is_builtin(name) {
-            return;
+            return Binding::Global;
         }
 
-        // once a value is captured, it will be captured in all upper scopes until where it is defined
-        for (locals, ref mut captures) in self.scopes.iter_mut().rev() {
-            if !locals.contains(name) {
-                captures.insert(name.clone());
-            } else {
+        let last = self.fns.len() - 1;
+        if let Some(slot) = self.fns[last].lookup_local(name) {
+            return Binding::Local(slot);
+        }
+        if let Some(idx) = self.fns[last]
+            .upvalues
+            .iter()
+            .position(|(n, _)| n == name)
+        {
+            return Binding::Upvalue(idx as u16);
+        }
+
+        // 找定义者：最内层的外层函数，名字或是其局部槽位、或是其 upvalue
+        let mut owner = None;
+        for i in (0..last).rev() {
+            if let Some(slot) = self.fns[i].lookup_local(name) {
+                owner = Some((i, CaptureSrc::Local(slot)));
                 break;
             }
+            if let Some(idx) = self.fns[i]
+                .upvalues
+                .iter()
+                .position(|(n, _)| n == name)
+            {
+                owner = Some((i, CaptureSrc::Upvalue(idx as u16)));
+                break;
+            }
+        }
+
+        let Some((owner, mut src)) = owner else {
+            // 嵌套函数内的前向引用（定义在使用之后）：走全局表，顶层 let 双写接住
+            if self.fns.len() > 1 {
+                self.deferred.insert(name.to_string());
+            }
+            // `this`：方法体引用宿主对象，编译期注册专用捕获源，
+            // 闭包存入 obj 时由 set/obj 内建回填（try_capture_this）
+            if name == "this" {
+                let f = self.fns.last_mut().unwrap();
+                if let Some(idx) = f.upvalues.iter().position(|(n, _)| n == name) {
+                    return Binding::Upvalue(idx as u16);
+                }
+                f.upvalues.push((name.to_string(), CaptureSrc::This));
+                return Binding::Upvalue((f.upvalues.len() - 1) as u16);
+            }
+            return Binding::Global;
+        };
+
+        // 从定义者向内逐层注册捕获（含当前函数），链到自己的 upvalue 下标
+        for j in owner + 1..=last {
+            if let Some(idx) = self.fns[j]
+                .upvalues
+                .iter()
+                .position(|(n, _)| n == name)
+            {
+                src = CaptureSrc::Upvalue(idx as u16);
+            } else {
+                self.fns[j].upvalues.push((name.to_string(), src));
+                src = CaptureSrc::Upvalue((self.fns[j].upvalues.len() - 1) as u16);
+            }
+        }
+        match src {
+            CaptureSrc::Upvalue(idx) => Binding::Upvalue(idx),
+            _ => unreachable!(),
         }
     }
 
     pub fn push_scope(&mut self) {
-        self.scopes.push((HashSet::new(), HashSet::new()));
+        self.fns.last_mut().unwrap().scopes.push(HashMap::new());
     }
 
-    pub fn pop_scope(&mut self) -> HashSet<String> {
-        self.scopes.pop().unwrap().1
+    pub fn pop_scope(&mut self) {
+        self.fns.last_mut().unwrap().scopes.pop();
+    }
+
+    fn push_fn(&mut self) {
+        self.fns.push(FnCtx::new());
+    }
+
+    fn pop_fn(&mut self) -> FnCtx {
+        self.fns.pop().unwrap()
+    }
+
+    /// 顶层（根帧）槽位名表
+    fn root_names(&self) -> Vec<String> {
+        self.fns[0].names.clone()
+    }
+
+    /// 是否处于顶层裸作用域（非嵌套函数、非块作用域）——延迟名字双写的生效条件
+    fn in_root_plain_scope(&self) -> bool {
+        self.fns.len() == 1 && self.fns[0].scopes.len() == 1
+    }
+}
+
+/// 名字读取 → 指令
+fn load_inst(ctx: &RefCell<EmitContext>, name: &str) -> Inst {
+    match ctx.borrow_mut().resolve(name) {
+        Binding::Local(i) => Inst::LOAD_LOCAL(i),
+        Binding::Upvalue(i) => Inst::LOAD_UP(i),
+        Binding::Global => Inst::LOAD_GLOBAL(name.to_string()),
+    }
+}
+
+/// 名字写入（`= x v`）→ 指令；未声明名字落到全局表（保持旧 `=` 即定义的语义）
+fn store_inst(ctx: &RefCell<EmitContext>, name: &str) -> Inst {
+    match ctx.borrow_mut().resolve(name) {
+        Binding::Local(i) => Inst::STORE_LOCAL(i),
+        Binding::Upvalue(i) => Inst::STORE_UP(i),
+        Binding::Global => Inst::STORE_GLOBAL(name.to_string()),
     }
 }
 
@@ -120,8 +260,7 @@ fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitRes
             Ok(vec![Inst::PUSH(val)])
         }
         Token::Id(_, id) => {
-            ctx.borrow_mut().mark_if_capture(id);
-            Ok(vec![Inst::LOAD(id.clone())])
+            Ok(vec![load_inst(ctx, id)])
         }
         _ => {
             return Err(SquareError::SyntaxError(
@@ -135,6 +274,24 @@ fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitRes
             ));
         }
     }
+}
+
+/// 测试断言用的 ClosureMeta 构造
+#[cfg(test)]
+fn closure_meta(
+    offset: i32,
+    n_slots: u16,
+    captures: Vec<CaptureSrc>,
+    params: ParamLayout,
+    names: &[&str],
+) -> Function {
+    Function::ClosureMeta(Rc::new(ClosureInfo {
+        offset,
+        n_slots,
+        captures,
+        params,
+        names: Rc::new(names.iter().map(|s| s.to_string()).collect()),
+    }))
 }
 
 #[test]
@@ -161,7 +318,10 @@ fn test_emit_token_lit() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    assert_eq!(insts, vec![Inst::LOAD("nil".to_string())]);
+    assert_eq!(
+        insts,
+        vec![Inst::LOAD_GLOBAL("nil".to_string())]
+    );
 }
 
 #[test]
@@ -170,7 +330,10 @@ fn test_emit_token_id() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    assert_eq!(insts, vec![Inst::LOAD("a".to_string())]);
+    assert_eq!(
+        insts,
+        vec![Inst::LOAD_GLOBAL("a".to_string())]
+    );
 }
 
 fn emit_assign(
@@ -182,14 +345,23 @@ fn emit_assign(
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
     let mut result = vec![];
-    let value = emit_node(input, expression, ctx)?;
     let is_define = eq.source() == "let";
+    let declare = |ctx: &RefCell<EmitContext>, name: &str, pos: &Position| -> Result<u16, SquareError> {
+        ctx.borrow_mut()
+            .add_local(name.to_string())
+            .map_err(|e| match e {
+                SquareError::RuntimeError(msg) => {
+                    SquareError::SyntaxError(input.to_string(), msg, pos.clone(), None)
+                }
+                _ => e,
+            })
+    };
 
     match target.as_ref() {
         Node::Token(id) => {
             if let Token::Id(_, source) = id {
                 if !properties.is_empty() {
-                    // o.p1…pN = value  →  [set <o.p1…p(N-1)> 'pN value]
+                    // o.p1…pN = value  →  <o.p1…p(N-1)> value SET pN
                     let keys: Vec<String> = properties
                         .iter()
                         .map(|n| match n.as_ref() {
@@ -199,29 +371,34 @@ fn emit_assign(
                         .collect();
                     let (last_key, rest_keys) = keys.split_last().unwrap();
                     result.extend(emit_get_chain(input, target, rest_keys, ctx)?);
-                    result.extend(value);
+                    result.extend(emit_node(input, expression, ctx)?);
                     result.push(Inst::SET(last_key.clone()));
-                } else {
-                    if is_define {
-                        // let x y
-                        ctx.borrow_mut()
-                            .add_local(source.clone())
-                            .map_err(|e| match e {
-                                SquareError::RuntimeError(msg) => SquareError::SyntaxError(
-                                    input.to_string(),
-                                    msg,
-                                    id.pos().clone(),
-                                    None,
-                                ),
-                                _ => e,
-                            })?;
+                } else if is_define {
+                    // let x v：函数字面量先声明再求值（letrec 自引用，`[let fib /[n] ...]`）；
+                    // 其余值先行（`[let x [+ x 1]]` 的 RHS 读外层 x）
+                    let is_fn_value = matches!(expression.as_ref(), Node::Fn(..));
+                    let early = if is_fn_value {
+                        Some(declare(ctx, source, id.pos())?)
                     } else {
-                        // = x y
-                        ctx.borrow_mut().mark_if_capture(source);
+                        None
+                    };
+                    result.extend(emit_node(input, expression, ctx)?);
+                    let slot = match early {
+                        Some(s) => s,
+                        None => declare(ctx, source, id.pos())?,
+                    };
+                    // 前向引用过的名字：顶层 let 同步发布到全局表，接住闭包内的
+                    // LOAD_GLOBAL（块作用域内的 let 不发布，保持块级封闭）
+                    if ctx.borrow().deferred.contains(source.as_str())
+                        && ctx.borrow().in_root_plain_scope()
+                    {
+                        result.push(Inst::STORE_GLOBAL(source.clone()));
                     }
-
-                    result.extend(value);
-                    result.push(Inst::STORE(source.clone()));
+                    result.push(Inst::STORE_LOCAL(slot));
+                } else {
+                    // = x v
+                    result.extend(emit_node(input, expression, ctx)?);
+                    result.push(store_inst(ctx, source));
                 }
             } else {
                 return Err(SquareError::SyntaxError(
@@ -236,7 +413,7 @@ fn emit_assign(
             }
         }
         Node::Expand(.., placeholders) => {
-            result.extend(value);
+            result.extend(emit_node(input, expression, ctx)?);
             result.extend(emit_expand(input, is_define, placeholders, ctx)?);
         }
         _ => unreachable!(),
@@ -253,7 +430,10 @@ fn test_emit_assign() {
 
     assert_eq!(
         insts,
-        vec![Inst::PUSH(Value::Num(42.0)), Inst::STORE("a".to_string())]
+        vec![
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::STORE_GLOBAL("a".to_string()),
+        ]
     );
 }
 
@@ -267,7 +447,7 @@ fn test_emit_assign_dot() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("o".to_string()),
+            Inst::LOAD_GLOBAL("o".to_string()),
             Inst::GET("x".to_string()),
             Inst::PUSH(Value::Num(42.0)),
             Inst::SET("y".to_string()),
@@ -283,7 +463,10 @@ fn test_emit_define() {
 
     assert_eq!(
         insts,
-        vec![Inst::PUSH(Value::Num(42.0)), Inst::STORE("a".to_string())]
+        vec![
+            Inst::PUSH(Value::Num(42.0)),
+            Inst::STORE_LOCAL(0),
+        ]
     );
 }
 
@@ -360,11 +543,11 @@ fn emit_op(
                 result.push(action);
                 result.push(Inst::SET(last_key.clone()));
             } else {
-                ctx.borrow_mut().mark_if_capture(source);
-                result.push(Inst::LOAD(source.clone()));
+                let load = load_inst(ctx, source);
+                result.push(load);
                 result.extend(rhs);
                 result.push(action);
-                result.push(Inst::STORE(source.clone()));
+                result.push(store_inst(ctx, source));
             }
 
             Ok(result)
@@ -423,8 +606,8 @@ fn test_emit_op() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("a".to_string()),
-            Inst::LOAD("b".to_string()),
+            Inst::LOAD_GLOBAL("a".to_string()),
+            Inst::LOAD_GLOBAL("b".to_string()),
             Inst::ADD,
         ]
     );
@@ -439,10 +622,10 @@ fn test_emit_op_assign() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("a".to_string()),
-            Inst::LOAD("b".to_string()),
+            Inst::LOAD_GLOBAL("a".to_string()),
+            Inst::LOAD_GLOBAL("b".to_string()),
             Inst::ADD,
-            Inst::STORE("a".to_string()),
+            Inst::STORE_GLOBAL("a".to_string()),
         ]
     );
 }
@@ -457,12 +640,12 @@ fn test_emit_op_assign_dot() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("a".to_string()),
+            Inst::LOAD_GLOBAL("a".to_string()),
             Inst::GET("b".to_string()),
-            Inst::LOAD("a".to_string()),
+            Inst::LOAD_GLOBAL("a".to_string()),
             Inst::GET("b".to_string()),
             Inst::GET("c".to_string()),
-            Inst::LOAD("d".to_string()),
+            Inst::LOAD_GLOBAL("d".to_string()),
             Inst::ADD,
             Inst::SET("c".to_string()),
         ]
@@ -488,44 +671,26 @@ fn emit_if(
     let condition = expressions.get(1).unwrap();
     ctx.borrow_mut().push_scope();
     let condition_result = emit_node(input, condition, ctx)?;
-    let condition_len = condition_result.len() as i32;
     result.extend(condition_result);
 
     let true_branch = expressions.get(2).unwrap();
     let true_branch_result = emit_node(input, true_branch, ctx)?;
     let true_branch_len = true_branch_result.len() as i32;
-    // skip true branch, +1 for one extra JMP instcurtion
+    // 为假跳过真分支，+1 抵随后的 JMP
     result.push(Inst::JNE(true_branch_len + 1));
     result.extend(true_branch_result);
 
-    if let Some(false_branch) = expressions.get(3) {
-        let false_branch_result = emit_node(input, false_branch, ctx)?;
-        let captures = ctx.borrow_mut().pop_scope();
-        let false_branch_len = false_branch_result.len() as i32;
-        // skip false branch
-        result.push(Inst::JMP(false_branch_len));
-        result.extend(false_branch_result);
-        result.push(Inst::RET);
-        result.insert(
-            0,
-            Inst::JMP(condition_len + true_branch_len + false_branch_len + 3),
-        );
-        result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
-            -4 - (condition_len + true_branch_len + false_branch_len),
-            captures,
-        )));
+    let false_branch_result = if let Some(false_branch) = expressions.get(3) {
+        emit_node(input, false_branch, ctx)?
     } else {
-        let captures = ctx.borrow_mut().pop_scope();
+        vec![Inst::PUSH(Value::Nil)] // FIXME: else { nil }
+    };
+    ctx.borrow_mut().pop_scope();
 
-        result.push(Inst::JMP(1));
-        result.push(Inst::PUSH(Value::Nil)); // FIXME: else { nil }
-        result.push(Inst::RET);
-        result.insert(0, Inst::JMP(condition_len + true_branch_len + 4));
-        result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
-            -5 - (condition_len + true_branch_len),
-            captures,
-        )));
-    }
+    let false_branch_len = false_branch_result.len() as i32;
+    // 为真跳过假分支
+    result.push(Inst::JMP(false_branch_len));
+    result.extend(false_branch_result);
 
     Ok(result)
 }
@@ -539,16 +704,11 @@ fn test_emit_if_true() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(6),
-            Inst::LOAD("true".to_string()),
+            Inst::LOAD_GLOBAL("true".to_string()),
             Inst::JNE(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(1),
             Inst::PUSH(Value::Nil),
-            Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, HashSet::new())),
-            Inst::PACK(0),
-            Inst::CALL
         ]
     );
 }
@@ -562,16 +722,11 @@ fn test_emit_if_true_false() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(6),
-            Inst::LOAD("true".to_string()),
+            Inst::LOAD_GLOBAL("true".to_string()),
             Inst::JNE(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(1),
             Inst::PUSH(Value::Num(24.0)),
-            Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, HashSet::new())),
-            Inst::PACK(0),
-            Inst::CALL
         ]
     );
 }
@@ -585,17 +740,12 @@ fn test_emit_if_condition_scope() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(7),
             Inst::PUSH(Value::Num(42.0)),
-            Inst::STORE("x".to_string()),
+            Inst::STORE_LOCAL(0),
             Inst::JNE(2),
-            Inst::LOAD("x".to_string()),
+            Inst::LOAD_LOCAL(0),
             Inst::JMP(1),
             Inst::PUSH(Value::Nil),
-            Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-8, HashSet::new())),
-            Inst::PACK(0),
-            Inst::CALL
         ]
     );
 }
@@ -622,20 +772,14 @@ fn emit_while(
     let body = &expressions[2..].to_vec();
 
     let body_result = emit_multi_node(input, body, ctx)?;
-    let captures = ctx.borrow_mut().pop_scope();
+    ctx.borrow_mut().pop_scope();
     let body_len = body_result.len() as i32;
-    let offset = condition_len + body_len;
 
-    let mut result = vec![Inst::JMP(3 + offset)];
-    result.extend(condition_result);
-    result.push(Inst::JNE(body_len + 1));
+    // [cond, JNE, body, JMP-back]：退出时栈上遗留与旧 thunk 实现一致（留在本帧）
+    let mut result = condition_result;
+    result.push(Inst::JNE(body_len + 1)); // 为假跳出循环
     result.extend(body_result);
-    result.push(Inst::JMP(-((condition_len + body_len + 2) as i32)));
-    result.push(Inst::RET);
-    result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
-        -4 - offset,
-        captures,
-    )));
+    result.push(Inst::JMP(-(condition_len + body_len + 2))); // 回到条件
     Ok(result)
 }
 
@@ -648,15 +792,10 @@ fn test_emit_while() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(5),
-            Inst::LOAD("true".to_string()),
+            Inst::LOAD_GLOBAL("true".to_string()),
             Inst::JNE(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::JMP(-4),
-            Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, HashSet::new())),
-            Inst::PACK(0),
-            Inst::CALL
         ]
     );
 }
@@ -670,16 +809,11 @@ fn test_emit_while_condition_scope() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(6),
-            Inst::LOAD("false".to_string()),
-            Inst::STORE("x".to_string()),
+            Inst::LOAD_GLOBAL("false".to_string()),
+            Inst::STORE_LOCAL(0),
             Inst::JNE(2),
-            Inst::LOAD("x".to_string()),
+            Inst::LOAD_LOCAL(0),
             Inst::JMP(-5),
-            Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, HashSet::new())),
-            Inst::PACK(0),
-            Inst::CALL
         ]
     );
 }
@@ -692,17 +826,11 @@ fn emit_begin(
 ) -> EmitResult {
     ctx.borrow_mut().push_scope();
     let body = emit_multi_node(input, &expressions[1..].to_vec(), ctx)?;
-    let captures = ctx.borrow_mut().pop_scope();
-    let offset = body.len() as i32;
-    let mut result = vec![Inst::JMP(1 + offset)];
-    result.extend(body);
-    result.push(Inst::RET);
-    result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
-        -2 - offset,
-        captures,
-    )));
+    ctx.borrow_mut().pop_scope();
 
-    Ok(result)
+    // 纯顺序执行：各表达式值全部留在栈上，begin 的值 = 栈顶（等价旧 thunk 的 RET top）。
+    // 不逐个 POP——部分表达式（如 print）不压栈，无法静态计数
+    Ok(body)
 }
 
 #[test]
@@ -713,14 +841,7 @@ fn test_emit_begin() {
 
     assert_eq!(
         insts,
-        vec![
-            Inst::JMP(2),
-            Inst::PUSH(Value::Num(42.0)),
-            Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-3, HashSet::new())),
-            Inst::PACK(0),
-            Inst::CALL
-        ]
+        vec![Inst::PUSH(Value::Num(42.0))]
     );
 }
 
@@ -741,9 +862,10 @@ fn emit_cond(
 
     ctx.borrow_mut().push_scope();
     let mut result = vec![];
-    let mut skip = 0;
+    let mut jne_sites: Vec<usize> = vec![]; // 各 pattern 的 JNE 占位（跳到下一 pattern）
+    let mut end_sites: Vec<usize> = vec![]; // 各 action 后的 JMP 占位（跳到结尾）
 
-    for node in expressions[1..].to_vec().iter().rev() {
+    for node in expressions[1..].to_vec().iter() {
         if let Node::Call(left_bracket, _, ref exprs) = node.as_ref() {
             if exprs.len() != 2 {
                 return Err(SquareError::SyntaxError(
@@ -754,16 +876,12 @@ fn emit_cond(
                 ));
             }
 
-            let pattern_result = emit_node(input, &exprs[0], ctx)?;
-            let pattern_len = pattern_result.len() as i32;
-            let action_result = emit_node(input, &exprs[1], ctx)?;
-            let action_len = action_result.len() as i32;
-
-            result.insert(0, Inst::JMP(skip));
-            result.splice(0..0, action_result);
-            result.insert(0, Inst::JNE(action_len + 1));
-            result.splice(0..0, pattern_result);
-            skip += pattern_len + action_len + 2;
+            result.extend(emit_node(input, &exprs[0], ctx)?); // pattern
+            jne_sites.push(result.len());
+            result.push(Inst::JNE(0));
+            result.extend(emit_node(input, &exprs[1], ctx)?); // action
+            end_sites.push(result.len());
+            result.push(Inst::JMP(0));
         } else {
             return Err(SquareError::SyntaxError(
                 input.to_string(),
@@ -773,17 +891,17 @@ fn emit_cond(
             ));
         }
     }
-    let result_len = result.len() as i32;
-    result.push(Inst::RET);
-    result.insert(0, Inst::PUSH(Value::Nil));
-    result.insert(0, Inst::JMP(result_len + 2));
+    result.push(Inst::PUSH(Value::Nil)); // 全不匹配 → nil
+    ctx.borrow_mut().pop_scope();
 
-    let captures = ctx.borrow_mut().pop_scope();
-
-    result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
-        -result_len - 3,
-        captures,
-    )));
+    let end = result.len() as i32;
+    for k in 0..jne_sites.len() {
+        let site = jne_sites[k];
+        result[site] = Inst::JNE((end_sites[k] + 1) as i32 - (site as i32 + 1));
+    }
+    for site in end_sites {
+        result[site] = Inst::JMP(end - (site as i32 + 1));
+    }
 
     Ok(result)
 }
@@ -799,21 +917,16 @@ fn test_emit_cond() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(11),
-            Inst::PUSH(Value::Nil),
-            Inst::LOAD("false".to_string()),
-            Inst::STORE("x".to_string()),
+            Inst::LOAD_GLOBAL("false".to_string()),
+            Inst::STORE_LOCAL(0),
             Inst::JNE(2),
             Inst::PUSH(Value::Num(42.0)),
-            Inst::JMP(4),
-            Inst::LOAD("true".to_string()),
+            Inst::JMP(5),
+            Inst::LOAD_GLOBAL("true".to_string()),
             Inst::JNE(2),
-            Inst::LOAD("x".to_string()),
-            Inst::JMP(0),
-            Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-12, HashSet::new())),
-            Inst::PACK(0),
-            Inst::CALL
+            Inst::LOAD_LOCAL(0),
+            Inst::JMP(1),
+            Inst::PUSH(Value::Nil),
         ]
     );
 }
@@ -840,33 +953,15 @@ fn emit_call(
         Node::Token(id) => match id {
             Token::Id(_, name) => match name.as_str() {
                 // build-in function with speciall syntax
-                "if" => {
-                    result.extend(emit_if(input, id, expressions, ctx)?);
-                    result.push(Inst::PACK(0));
-                    result.push(Inst::CALL);
-                }
-                "while" => {
-                    result.extend(emit_while(input, id, expressions, ctx)?);
-                    result.push(Inst::PACK(0));
-                    result.push(Inst::CALL);
-                }
-                "begin" => {
-                    result.extend(emit_begin(input, id, expressions, ctx)?);
-                    result.push(Inst::PACK(0));
-                    result.push(Inst::CALL);
-                }
-                "cond" => {
-                    result.extend(emit_cond(input, id, expressions, ctx)?);
-                    result.push(Inst::PACK(0));
-                    result.push(Inst::CALL);
-                }
+                "if" => result.extend(emit_if(input, id, expressions, ctx)?),
+                "while" => result.extend(emit_while(input, id, expressions, ctx)?),
+                "begin" => result.extend(emit_begin(input, id, expressions, ctx)?),
+                "cond" => result.extend(emit_cond(input, id, expressions, ctx)?),
                 _ => {
                     // normal function call
-                    ctx.borrow_mut().mark_if_capture(name);
-                    result.push(Inst::LOAD(name.clone()));
+                    result.push(load_inst(ctx, name));
                     result.extend(emit_multi_node(input, &expressions[1..].to_vec(), ctx)?); // provided params
-                    result.push(Inst::PACK(expressions.len() - 1));
-                    result.push(Inst::CALL);
+                    result.push(Inst::CALL(expressions.len() as u16 - 1));
                 }
             },
             _ => {
@@ -881,8 +976,7 @@ fn emit_call(
         Node::Fn(_, params, body) => {
             result.extend(emit_fn(input, params, body, ctx)?);
             result.extend(emit_multi_node(input, &expressions[1..].to_vec(), ctx)?);
-            result.push(Inst::PACK(expressions.len() - 1));
-            result.push(Inst::CALL);
+            result.push(Inst::CALL(expressions.len() as u16 - 1));
         }
         Node::Op(op, body) => result.extend(emit_op(input, op, body, ctx)?),
         Node::Assign(eq, expansion, dot, body) => {
@@ -891,14 +985,12 @@ fn emit_call(
         Node::Call(left_bracket, _, exprs) => {
             result.extend(emit_call(input, left_bracket, exprs, ctx)?);
             result.extend(emit_multi_node(input, &expressions[1..].to_vec(), ctx)?);
-            result.push(Inst::PACK(expressions.len() - 1));
-            result.push(Inst::CALL);
+            result.push(Inst::CALL(expressions.len() as u16 - 1));
         }
         Node::Dot(obj, props) => {
             result.extend(emit_dot(input, obj, props, ctx)?);
             result.extend(emit_multi_node(input, &expressions[1..].to_vec(), ctx)?);
-            result.push(Inst::PACK(expressions.len() - 1));
-            result.push(Inst::CALL);
+            result.push(Inst::CALL(expressions.len() as u16 - 1));
         }
         _ => {
             return Err(SquareError::SyntaxError(
@@ -919,10 +1011,7 @@ fn test_emit_call_no_params() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    assert_eq!(
-        insts,
-        vec![Inst::LOAD("foo".to_string()), Inst::PACK(0), Inst::CALL]
-    );
+    assert_eq!(insts, vec![Inst::LOAD_GLOBAL("foo".to_string()), Inst::CALL(0)]);
 }
 
 #[test]
@@ -934,10 +1023,9 @@ fn test_emit_call_with_params() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("foo".to_string()),
-            Inst::LOAD("bar".to_string()),
-            Inst::PACK(1),
-            Inst::CALL
+            Inst::LOAD_GLOBAL("foo".to_string()),
+            Inst::LOAD_GLOBAL("bar".to_string()),
+            Inst::CALL(1),
         ]
     );
 }
@@ -948,26 +1036,65 @@ fn emit_fn(
     body: &Box<Node>,
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    if let Node::Expand(.., placeholders) = params.as_ref() {
-        ctx.borrow_mut().push_scope();
-        let params_result = emit_expand(input, true, placeholders, ctx)?;
-        let body_result = emit_node(input, body, ctx)?;
-        let captures = ctx.borrow_mut().pop_scope();
-        let offset = (params_result.len() + body_result.len()) as i32;
+    let Node::Expand(.., placeholders) = params.as_ref() else {
+        unreachable!()
+    };
 
-        let mut result = vec![Inst::JMP(offset + 1)];
-        result.extend(params_result);
-        result.extend(body_result);
-        result.push(Inst::RET);
-        result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(
-            -(offset + 2),
-            captures,
-        )));
+    ctx.borrow_mut().push_fn();
 
-        return Ok(result);
-    }
+    // 定参直拷槽位（无入口指令）；含 . / ... / 嵌套展开的参数走 Pack 槽位 + PEEK 绑定
+    let simple = placeholders
+        .iter()
+        .all(|p| matches!(p.as_ref(), Node::Token(Token::Id(_, _))));
 
-    unreachable!()
+    let (layout, params_result): (ParamLayout, Vec<Inst>) = if simple {
+        let mut slots = Vec::new();
+        for p in placeholders.iter() {
+            let Node::Token(Token::Id(pos, id)) = p.as_ref() else {
+                unreachable!()
+            };
+            slots.push(
+                ctx.borrow_mut()
+                    .add_local(id.clone())
+                    .map_err(|e| match e {
+                        SquareError::RuntimeError(msg) => SquareError::SyntaxError(
+                            input.to_string(),
+                            msg,
+                            pos.clone(),
+                            None,
+                        ),
+                        _ => e,
+                    })?,
+            );
+        }
+        (ParamLayout::Fixed(slots), vec![])
+    } else {
+        let pack_slot = ctx.borrow_mut().add_local("__args".to_string()).unwrap();
+        // 参数包载回栈顶复用 PEEK 绑定（emit_expand 末尾自带 drop pack 的 POP）
+        let mut result = vec![Inst::LOAD_LOCAL(pack_slot)];
+        result.extend(emit_expand(input, true, placeholders, ctx)?);
+        (ParamLayout::Pack(pack_slot), result)
+    };
+
+    let body_result = emit_node(input, body, ctx)?;
+    let fnctx = ctx.borrow_mut().pop_fn();
+    let offset = (params_result.len() + body_result.len()) as i32;
+
+    let info = Rc::new(ClosureInfo {
+        offset: -(offset + 2),
+        n_slots: fnctx.next_slot,
+        captures: fnctx.upvalues.iter().map(|(_, src)| src.clone()).collect(),
+        params: layout,
+        names: Rc::new(fnctx.names),
+    });
+
+    let mut result = vec![Inst::JMP(offset + 1)];
+    result.extend(params_result);
+    result.extend(body_result);
+    result.push(Inst::RET);
+    result.push(Inst::PUSH_CLOSURE(Function::ClosureMeta(info)));
+
+    Ok(result)
 }
 
 #[test]
@@ -979,11 +1106,10 @@ fn test_emit_fn() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(3),
-            Inst::POP, // drop param pack
+            Inst::JMP(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-4, HashSet::new())),
+            Inst::PUSH_CLOSURE(closure_meta(-3, 0, vec![], ParamLayout::Fixed(vec![]), &[])),
         ]
     );
 }
@@ -997,14 +1123,16 @@ fn test_emit_fn_params() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(6),
-            Inst::PEEK(0, 0), // peek param
-            Inst::STORE("x".to_string()),
-            Inst::POP, // drop param x
-            Inst::POP, // drop total param pack
+            Inst::JMP(2),
             Inst::PUSH(Value::Num(42.0)),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-7, HashSet::new())),
+            Inst::PUSH_CLOSURE(closure_meta(
+                -3,
+                1,
+                vec![],
+                ParamLayout::Fixed(vec![0]),
+                &["x"]
+            )),
         ]
     );
 }
@@ -1018,15 +1146,10 @@ fn test_emit_fn_capture() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(3),
-            Inst::POP,
-            Inst::LOAD("y".to_string()),
+            Inst::JMP(2),
+            Inst::LOAD_GLOBAL("y".to_string()),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-4, {
-                let mut captures = HashSet::new();
-                captures.insert("y".to_string());
-                captures
-            })),
+            Inst::PUSH_CLOSURE(closure_meta(-3, 0, vec![], ParamLayout::Fixed(vec![]), &[])),
         ]
     );
 }
@@ -1042,37 +1165,23 @@ fn test_emit_fn_capture_nested() {
     assert_eq!(
         insts,
         vec![
-            Inst::JMP(16),
-            Inst::POP,
-            Inst::JMP(10),
+            Inst::JMP(9),
             Inst::PUSH(Value::Num(1.0)),
-            Inst::STORE("x".to_string()),
-            Inst::JMP(5),
-            Inst::POP,
-            Inst::LOAD("x".to_string()),
-            Inst::LOAD("y".to_string()),
+            Inst::STORE_LOCAL(0),
+            Inst::JMP(4),
+            Inst::LOAD_UP(0),
+            Inst::LOAD_GLOBAL("y".to_string()),
             Inst::ADD,
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-6, {
-                let mut unresolved_xy = HashSet::new();
-                unresolved_xy.insert("x".to_string());
-                unresolved_xy.insert("y".to_string());
-                unresolved_xy
-            })),
+            Inst::PUSH_CLOSURE(closure_meta(
+                -5,
+                0,
+                vec![CaptureSrc::Local(0)],
+                ParamLayout::Fixed(vec![]),
+                &[]
+            )),
             Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-11, {
-                let mut unresolved_y = HashSet::new();
-                unresolved_y.insert("y".to_string());
-                unresolved_y
-            })),
-            Inst::PACK(0),
-            Inst::CALL,
-            Inst::RET,
-            Inst::PUSH_CLOSURE(Function::ClosureMeta(-17, {
-                let mut unresolved_y = HashSet::new();
-                unresolved_y.insert("y".to_string());
-                unresolved_y
-            })),
+            Inst::PUSH_CLOSURE(closure_meta(-10, 1, vec![], ParamLayout::Fixed(vec![]), &["x"])),
         ]
     );
 }
@@ -1100,24 +1209,26 @@ fn emit_expand(
             }
             Node::Token(id) => match id {
                 Token::Id(_, source) => {
-                    if is_define {
-                        ctx.borrow_mut()
-                            .add_local(source.clone())
-                            .map_err(|e| match e {
-                                SquareError::RuntimeError(msg) => SquareError::SyntaxError(
-                                    input.to_string(),
-                                    msg,
-                                    id.pos().clone(),
-                                    None,
-                                ),
-                                _ => e,
-                            })?;
+                    let store = if is_define {
+                        Inst::STORE_LOCAL(
+                            ctx.borrow_mut()
+                                .add_local(source.clone())
+                                .map_err(|e| match e {
+                                    SquareError::RuntimeError(msg) => SquareError::SyntaxError(
+                                        input.to_string(),
+                                        msg,
+                                        id.pos().clone(),
+                                        None,
+                                    ),
+                                    _ => e,
+                                })?,
+                        )
                     } else {
-                        ctx.borrow_mut().mark_if_capture(source);
-                    }
+                        store_inst(ctx, source)
+                    };
 
                     result.push(Inst::PEEK(offset, index));
-                    result.push(Inst::STORE(source.clone()));
+                    result.push(store);
                     result.push(Inst::POP);
                 }
                 Token::Op(pos, op) => {
@@ -1167,14 +1278,14 @@ fn test_emit_expand() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("c".to_string()),
+            Inst::LOAD_GLOBAL("c".to_string()),
             Inst::PEEK(0, 0),
-            Inst::STORE("a".to_string()),
+            Inst::STORE_GLOBAL("a".to_string()),
             Inst::POP,
             Inst::PEEK(0, 1),
-            Inst::STORE("b".to_string()),
+            Inst::STORE_GLOBAL("b".to_string()),
             Inst::POP,
-            Inst::POP
+            Inst::POP,
         ]
     );
 }
@@ -1188,11 +1299,11 @@ fn test_emit_expand_dot() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("c".to_string()),
+            Inst::LOAD_GLOBAL("c".to_string()),
             Inst::PEEK(0, 0),
             Inst::POP,
             Inst::PEEK(0, 1),
-            Inst::STORE("b".to_string()),
+            Inst::STORE_GLOBAL("b".to_string()),
             Inst::POP,
             Inst::POP,
         ]
@@ -1208,11 +1319,11 @@ fn test_emit_expand_greed() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("c".to_string()),
+            Inst::LOAD_GLOBAL("c".to_string()),
             Inst::PEEK(0, -1),
-            Inst::STORE("b".to_string()),
+            Inst::STORE_GLOBAL("b".to_string()),
             Inst::POP,
-            Inst::POP
+            Inst::POP,
         ]
     );
 }
@@ -1226,15 +1337,15 @@ fn test_emit_expand_greed_offset() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("c".to_string()),
+            Inst::LOAD_GLOBAL("c".to_string()),
             Inst::PEEK(0, 0),
             Inst::POP,
             Inst::PEEK(1, -2),
             Inst::POP,
             Inst::PEEK(2, -1),
-            Inst::STORE("b".to_string()),
+            Inst::STORE_GLOBAL("b".to_string()),
             Inst::POP,
-            Inst::POP
+            Inst::POP,
         ]
     );
 }
@@ -1248,11 +1359,11 @@ fn test_emit_expand_nested() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("c".to_string()),
+            Inst::LOAD_GLOBAL("c".to_string()),
             Inst::PEEK(0, 0),
             Inst::PEEK(0, 0),
             Inst::PEEK(0, 0),
-            Inst::STORE("b".to_string()),
+            Inst::STORE_GLOBAL("b".to_string()),
             Inst::POP,
             Inst::POP,
             Inst::POP,
@@ -1299,7 +1410,7 @@ fn test_emit_dot() {
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("o".to_string()),
+            Inst::LOAD_GLOBAL("o".to_string()),
             Inst::GET("x".to_string()),
             Inst::GET("y".to_string()),
         ]
@@ -1359,6 +1470,9 @@ pub fn emit(
     let mut source_map = SourceMap::new();
     let mut mindex = ctx.borrow().base_mindex;
 
+    let names_site = insts.len();
+    insts.push(Inst::NAMES(Rc::new(Vec::new()))); // 占位，收尾回填根帧名表
+
     for node in ast {
         if let Some(pos) = node_position(node) {
             source_map.push(insts.len(), pos);
@@ -1369,5 +1483,10 @@ pub fn emit(
     }
     insts.push(Inst::DELIMITER(mindex));
 
+    if let Inst::NAMES(names) = &mut insts[names_site] {
+        *names = Rc::new(ctx.borrow().root_names());
+    }
+
     Ok((insts, source_map))
 }
+

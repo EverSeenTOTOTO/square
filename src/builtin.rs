@@ -18,6 +18,8 @@ use crate::{
 #[cfg(target_family = "wasm")]
 use crate::vm::{CallFrame, UnwindFrame};
 #[cfg(target_family = "wasm")]
+use crate::vm_value::ClosureInfo;
+#[cfg(target_family = "wasm")]
 use alloc::string::String;
 
 // Fn(vm, params, cx, inst)
@@ -26,17 +28,16 @@ pub type Syscall =
 
 
 
-/// 把闭包（`ip` + `upvalues`）包装成 `UnwindFrame`，供 `defer`/`spawn` 使用。
+/// 把闭包包装成 `UnwindFrame`，供 `defer`/`spawn` 使用。
 ///
-/// `ra = ip + 1`：`PUSH_CLOSURE` 的 `ip` 指向闭包体入口前的 `JMP`，正常 `CALL` 靠 `step` 的
-/// `pc += 1` 跳过它；这里 `tick` 直接 `vm.pc = ra` 进 `run`，没有那步 +1，故手动对齐到 `ip + 1`。
-/// `stack[0]` 预置空参数 vec、`sp = 1` 对应入口的 `POP`（参数解包）。
+/// `ra = ip + 1`：`PUSH_CLOSURE` 算出的 `ip` 指向闭包体入口前的 `JMP`，正常 `CALL` 靠
+/// step 循环的 `pc += 1` 跳过它；这里 `tick` 直接 `vm.pc = ra` 进 `run`，没有那步 +1，
+/// 故手动对齐。零参任务：空参数绑定（重置槽位布局），upvalue 单元直接装帧。
 #[cfg(target_family = "wasm")]
-fn new_closure_unwind(ip: usize, upvalues: &[(String, Value)]) -> UnwindFrame {
+fn new_closure_unwind(info: &Rc<ClosureInfo>, ip: usize, ups: &[Rc<RefCell<Value>>]) -> UnwindFrame {
     let mut frame = CallFrame::new();
-    frame.stack[0] = Value::Vec(Rc::new(RefCell::new(vec![])));
-    frame.sp = 1;
-    frame.extend_locals(upvalues);
+    crate::vm::bind_params(&mut frame, info, &[]);
+    frame.ups = ups.to_vec();
     let sentinel = CallFrame::new();
 
     UnwindFrame {
@@ -608,8 +609,8 @@ impl Builtin {
                         if let Some(func) = params.borrow().first().and_then(Value::as_fn) {
                             #[cfg(target_family = "wasm")]
                             {
-                                if let Function::Closure(ip, ref upvalues) = *func.borrow() {
-                                    cx.defer(new_closure_unwind(ip, upvalues));
+                                if let Function::Closure(info, ip, ref ups) = &*func.borrow() {
+                                    cx.defer(new_closure_unwind(info, *ip, ups));
                                 }
                             }
                             let _ = vm;
@@ -635,8 +636,8 @@ impl Builtin {
                         if let Some(func) = params.borrow().first().and_then(Value::as_fn) {
                             #[cfg(target_family = "wasm")]
                             {
-                                if let Function::Closure(ip, ref upvalues) = *func.borrow() {
-                                    cx.spawn(new_closure_unwind(ip, upvalues));
+                                if let Function::Closure(info, ip, ref ups) = &*func.borrow() {
+                                    cx.spawn(new_closure_unwind(info, *ip, ups));
                                 }
                             }
                             let _ = vm;
@@ -658,11 +659,14 @@ impl Builtin {
 
     pub(crate) fn try_capture_this(val: &Value, obj: &Rc<RefCell<Object>>) {
         if let Some(member_fn) = val.as_fn() {
-            if let Function::Closure(_, ref mut captures) = *member_fn.borrow_mut() {
-                if let Some(slot) = captures.iter_mut().find(|(n, _)| n.as_str() == "this") {
-                    slot.1 = Value::Obj(obj.clone());
-                } else {
-                    captures.push(("this".to_string(), Value::Obj(obj.clone())));
+            let f = member_fn.borrow();
+            if let Function::Closure(info, _, ups) = &*f {
+                if let Some(idx) = info
+                    .captures
+                    .iter()
+                    .position(|c| matches!(c, crate::vm_value::CaptureSrc::This))
+                {
+                    *ups[idx].borrow_mut() = Value::Obj(obj.clone());
                 }
             }
         }

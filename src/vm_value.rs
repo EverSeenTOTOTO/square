@@ -11,16 +11,51 @@ use core::{
     fmt,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 
-use crate::{builtin::Builtin, errors::SquareError, vm::CallFrame};
+use crate::{errors::SquareError, vm::CallFrame};
 
 pub type Object = HashMap<String, Value>;
 
+/// upvalue 的捕获来源：外层函数帧的槽位、外层闭包的第 j 个 upvalue（传递捕获）、
+/// 或 `this`（方法注入：闭包存入 obj 时由 set/obj 回填）
+#[derive(Debug, Clone, PartialEq)]
+pub enum CaptureSrc {
+    Local(u16),
+    Upvalue(u16),
+    This,
+}
+
+/// 参数绑定方式：定参按下标直拷进槽位；展开参数（/[. x] / [... x]）整包进槽位
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParamLayout {
+    Fixed(Vec<u16>),
+    Pack(u16),
+}
+
+/// 编译期闭包信息，由 PUSH_CLOSURE 携带；运行期所有闭包实例经 Rc 共享。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosureInfo {
+    /// 闭包体入口相对 PUSH_CLOSURE 的偏移（与 JMP 一致，运行期换算绝对 ip）
+    pub offset: i32,
+    pub n_slots: u16,
+    pub captures: Vec<CaptureSrc>,
+    pub params: ParamLayout,
+    /// 槽位名表（快照/调试用，按槽位下标对应；帧持有同一 Rc 共享）
+    pub names: Rc<Vec<String>>,
+}
+
+impl ClosureInfo {
+    #[inline]
+    pub fn abs_ip(&self, push_site: usize) -> usize {
+        (push_site as i32 + self.offset) as usize
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Function {
-    ClosureMeta(i32, HashSet<String>), // compile time, (offset, captures)
-    Closure(usize, Vec<(String, Value)>), // runtime, (ip, upvalues)
+    ClosureMeta(Rc<ClosureInfo>),
+    Closure(Rc<ClosureInfo>, usize, Vec<Rc<RefCell<Value>>>), // (info, abs ip, upvalue cells)
     Syscall(&'static str),             // (name)
     Continuation(usize, Vec<Rc<RefCell<CallFrame>>>), // (ra, context)
 }
@@ -28,37 +63,17 @@ pub enum Function {
 impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Function::ClosureMeta(offset, captures) => {
-                if captures.is_empty() {
-                    write!(f, "{}", offset)
-                } else {
-                    write!(
-                        f,
-                        "{}, {}",
-                        offset,
-                        captures
-                            .iter()
-                            .map(|k| { format!("{}?", k) })
-                            .collect::<Vec<String>>()
-                            .join(",")
-                    )
-                }
+            Function::ClosureMeta(info) => {
+                write!(
+                    f,
+                    "{}, slots {}, ups {}",
+                    info.offset,
+                    info.n_slots,
+                    info.captures.len()
+                )
             }
-            Function::Closure(ip, upvalues) => {
-                if upvalues.is_empty() {
-                    write!(f, "Closure({})", ip)
-                } else {
-                    write!(
-                        f,
-                        "Closure({}, {})",
-                        ip,
-                        upvalues
-                            .iter()
-                            .map(|(k, _)| format!("{}✓", k))
-                            .collect::<Vec<String>>()
-                            .join(",")
-                    )
-                }
+            Function::Closure(_, ip, upvalues) => {
+                write!(f, "Closure({}, {}✓)", ip, upvalues.len())
             }
             Function::Syscall(name) => {
                 write!(f, "Syscall({})", name)
