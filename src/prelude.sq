@@ -1,0 +1,89 @@
+; square 预置库 —— 实例启动（及 reset）时编译执行。
+; 顶层一律 [= name ...]：值落全局表，用户程序经 LOAD_GLOBAL 可见；
+; 函数内部 let 正常走槽位。递归辅助 [let go ...] 走 letrec 快路径。
+
+; ── 逻辑 ─────────────────────────────────────────────────────────────
+[= not /[x] [if x false true]]
+
+; ── 列表 ─────────────────────────────────────────────────────────────
+[= map /[f v]
+  [begin
+    [let go /[i r]
+      [if [>= i [len v]]
+        r
+        [begin
+          [splice r [len r] 0 [vec [f [at v i]]]]
+          [go [+ i 1] r]]]]
+    [go 0 [vec]]]]
+
+[= filter /[f v]
+  [begin
+    [let go /[i r]
+      [if [>= i [len v]]
+        r
+        [begin
+          [if [f [at v i]] [splice r [len r] 0 [vec [at v i]]] nil]
+          [go [+ i 1] r]]]]
+    [go 0 [vec]]]]
+
+[= fold /[f init v]
+  [begin
+    [let go /[i acc]
+      [if [>= i [len v]]
+        acc
+        [go [+ i 1] [f acc [at v i]]]]]
+    [go 0 init]]]
+
+[= range /[n]
+  [begin
+    [let go /[i r]
+      [if [>= i n]
+        r
+        [begin
+          [splice r [len r] 0 [vec i]]
+          [go [+ i 1] r]]]]
+    [go 0 [vec]]]]
+
+[= reverse /[v]
+  [begin
+    [let r [vec]]
+    [let i [- [len v] 1]]
+    [while [>= i 0]
+      [begin
+        [splice r [len r] 0 [vec [at v i]]]
+        [-= i 1]]]
+    r]]
+
+[= append /[a b]
+  [begin
+    [let r [slice a 0 [len a]]]
+    [let i 0]
+    [while [< i [len b]]
+      [begin
+        [splice r [len r] 0 [vec [at b i]]]
+        [+= i 1]]]
+    r]]
+
+[= contains /[v x]
+  [begin
+    [let found false]
+    [let i 0]
+    [while [< i [len v]]
+      [begin
+        [if [== [at v i] x] [= found true] nil]
+        [+= i 1]]]
+    found]]
+
+[= sum /[v] [fold /[a b] [+ a b] 0 v]]
+
+; ── 字符串 ───────────────────────────────────────────────────────────
+[= join /[sep v]
+  [begin
+    [let r '']
+    [let i 0]
+    [while [< i [len v]]
+      [begin
+        [= r [+ r [str [at v i]]]]
+        [if [< i [- [len v] 1]] [= r [+ r sep]] nil]
+        [+= i 1]]]
+    r]]

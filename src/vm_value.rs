@@ -275,7 +275,30 @@ macro_rules! impl_bitop {
     }
 }
 
-impl_binop!(Add, add, +);
+impl Add for &Value {
+    type Output = CalcResult;
+
+    fn add(self, other: Self) -> Self::Output {
+        match (self, other) {
+            (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(lhs + rhs)),
+            // 字符串拼接：cat 的语言级形态
+            (Value::Str(lhs), Value::Str(rhs)) => {
+                let mut s = String::with_capacity(lhs.len() + rhs.len());
+                s.push_str(lhs);
+                s.push_str(rhs);
+                Ok(Value::Str(Rc::from(s.as_str())))
+            }
+            (Value::UpValue(lhs), Value::UpValue(rhs)) => &*lhs.borrow() + &*rhs.borrow(),
+            (Value::UpValue(lhs), rhs) => &*lhs.borrow() + rhs,
+            (lhs, Value::UpValue(rhs)) => lhs + &*rhs.borrow(),
+            _ => Err(SquareError::RuntimeError(format!(
+                "cannot perform operation on {} and {}",
+                self, other
+            ))),
+        }
+    }
+}
+
 impl_binop!(Sub, sub, -);
 impl_binop!(Mul, mul, *);
 impl_binop!(Div, div, /);

@@ -105,7 +105,8 @@ test("step: sleep 期间 step 空过，wake 后续跑", async () => {
   const s = await sq();
   const prog = s.program("[sleep 40]\n[println 'after']\n");
   // 逐指令推进到 sleep（sleep 会 park，之后 step 空过）。
-  for (let i = 0; i < 8; i++) prog.step();
+  // prelude 拼接后语句数过百，步数上限放宽
+  for (let i = 0; i < 500; i++) prog.step();
   assert.equal(s.stdout(), ""); // 还没 wake，无输出
   await flush(80); // timer 触发 wake
   for (let i = 0; i < 20 && !s.stdout(); i++) prog.step();

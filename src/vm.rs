@@ -37,6 +37,8 @@ pub struct TryHandler {
     pub depth: usize,
     pub sp: usize,
     pub target: usize,
+    /// handler 闭包：TRY 安装时弹出暂存，catch 时压回（成功路径不占操作数栈）
+    pub handler: Value,
 }
 
 /// 运行时任务。`frame` 存在性可当作 park 信号：`Some` = 正在 park（延续已存、不在 VM 里活），
@@ -334,11 +336,17 @@ impl Inst {
                 Ok(())
             }
             Inst::TRY(off) => {
-                let sp = vm.current_frame().borrow().sp;
+                let handler = {
+                    let binding = vm.current_frame();
+                    let mut frame = binding.borrow_mut();
+                    let h = frame.pop();
+                    (h, frame.sp)
+                };
                 vm.handlers.push(TryHandler {
                     depth: vm.call_frames.len(),
-                    sp,
+                    sp: handler.1,
                     target: (vm.pc as i32 + 1 + *off) as usize,
+                    handler: handler.0,
                 });
                 Ok(())
             }
@@ -1049,6 +1057,7 @@ impl VM {
                 let binding = self.current_frame();
                 let mut frame = binding.borrow_mut();
                 frame.sp = h.sp;
+                frame.push(h.handler.clone());
                 frame.push(Value::Str(Rc::from(msg.as_str())));
             }
             self.pc = h.target;

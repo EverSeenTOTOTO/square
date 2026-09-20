@@ -1037,8 +1037,9 @@ fn test_emit_call_with_params() {
 /// TRY(catch 偏移)        ; 安装 {帧深度, sp, catch 入口}
 /// <PROTECTED>            ; 值留栈
 /// POP_HANDLER
+/// POP                    ; 成功路径弹掉 handler 闭包（栈平衡，可作嵌套表达式）
 /// JMP(1)                 ; 跳过 catch 段的 CALL
-/// catch:                 ; VM 已截回帧栈/sp 并压入错误值（Str 消息）
+/// catch:                 ; VM 已截回帧栈/sp（handler 回到栈顶）并压入错误值
 /// CALL 1                 ; handler(err)
 /// ```
 /// try 的值 = PROTECTED 的值（正常）或 handler 的返回值（出错）。
@@ -1693,7 +1694,7 @@ fn emit_node(input: &str, node: &Box<Node>, ctx: &RefCell<EmitContext>) -> EmitR
     }
 }
 
-fn emit_multi_node(
+pub fn emit_multi_node(
     input: &str,
     ast: &Vec<Box<Node>>,
     ctx: &RefCell<EmitContext>,

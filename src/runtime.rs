@@ -123,7 +123,7 @@ fn step_tick(vm: &mut VM, insts: &Vec<crate::vm_insts::Inst>) -> ExecResult {
 
 static mut RUNTIME: Runtime = Runtime::new();
 
-fn rt() -> &'static Runtime {
+pub(crate) fn rt() -> &'static Runtime {
     // SAFETY：单线程 wasm。
     unsafe { &RUNTIME }
 }

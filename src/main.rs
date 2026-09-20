@@ -33,6 +33,7 @@ mod code_frame;
 mod emit;
 mod errors;
 mod parse;
+mod prelude;
 mod scan;
 mod vm;
 mod vm_insts;
@@ -83,9 +84,10 @@ fn pack_buffer(bytes: &[u8]) -> u64 {
 #[cfg(target_family = "wasm")]
 #[no_mangle]
 pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Vec<vm_insts::Inst> {
-    let code = externs::ext::read(source_addr as usize, source_length);
+    // prelude 编译期拼接：与用户程序同一代码空间（闭包 ip 的单空间假设）
+    let code = prelude::prepend(externs::ext::read(source_addr as usize, source_length));
 
-    let ast = match parse::parse(code, &mut code_frame::Position::new()) {
+    let ast = match parse::parse(&code, &mut code_frame::Position::new()) {
         Err(e) => {
             // 编译错误走输出通道返回空句柄，宿主可继续使用实例（不再 panic 毒化）
             println!("{}", e);
@@ -94,7 +96,7 @@ pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Ve
         Ok(node) => node,
     };
 
-    let (insts, source_map) = match emit::emit(code, &ast, &mut RefCell::new(emit::EmitContext::new())) {
+    let (insts, source_map) = match emit::emit(&code, &ast, &mut RefCell::new(emit::EmitContext::new())) {
         Err(e) => {
             println!("{}", e);
             return core::ptr::null_mut();
@@ -202,14 +204,15 @@ pub fn main() {
         std::process::exit(2);
     });
 
-    let ast = match parse::parse(&code, &mut code_frame::Position::new()) {
+    let full = prelude::prepend(&code);
+    let ast = match parse::parse(&full, &mut code_frame::Position::new()) {
         Ok(ast) => ast,
         Err(e) => {
             eprintln!("{}", e);
             std::process::exit(1);
         }
     };
-    let (insts, _sm) = match emit::emit(&code, &ast, &mut RefCell::new(emit::EmitContext::new()))
+    let (insts, _sm) = match emit::emit(&full, &ast, &mut RefCell::new(emit::EmitContext::new()))
     {
         Ok(pair) => pair,
         Err(e) => {

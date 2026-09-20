@@ -1,0 +1,15 @@
+; 生态三件套演示：prelude / try / js FFI 协同
+
+; prelude：函数式组合
+[println [sum [map /[x] [* x x] [range 5]]]]
+[println [join ', ' [map str [filter /[x] [> x 2] [vec 1 2 3 4]]]]]
+
+; 内建：数学与字符串
+[println [floor [sqrt 2]]]
+[println [+ 'pi ~= ' [str [round [* [pow 10 6] [js 'Math.PI' [vec]]]]]]]
+
+; js FFI：宿主生态（JSON 解析 → obj 字段 → prelude 处理）
+[println [sum [map /[o] o.age [js 'JSON.parse' [vec '[{"age":30},{"age":4}]']]]]]
+
+; try：错误处理与恢复
+[println [try [put [vec 1] 5 0] /[e] 'caught: out of range']]

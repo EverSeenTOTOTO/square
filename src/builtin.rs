@@ -197,6 +197,11 @@ impl Builtin {
                                 .borrow_mut()
                                 .push(Value::Num(internal.borrow().len() as f64));
                             Ok(())
+                        } else if let Some(s) = params.borrow().first().and_then(|v| v.as_str()) {
+                            vm.current_frame()
+                                .borrow_mut()
+                                .push(Value::Num(s.chars().count() as f64));
+                            Ok(())
                         } else {
                             Err(SquareError::InstructionError(
                                 "at() expect (vector, index) parameter".to_string(),
@@ -598,6 +603,190 @@ impl Builtin {
                                 vm.pc,
                             )),
                         }
+                    },
+                ) as Syscall),
+            ),
+        );
+
+        // ── 数学（一元，f64）────────────────────────────────────────────
+        macro_rules! math_unary {
+            ($name:literal, $f:expr) => {
+                values.insert(
+                    $name,
+                    (
+                        Value::Function(Rc::new(RefCell::new(Function::Syscall($name)))),
+                        Some(Rc::new(
+                            |vm: &mut VM,
+                             params: Rc<RefCell<Vec<Value>>>,
+                             _cx: &mut RtCx,
+                             inst: &Inst|
+                             -> ExecResult {
+                                match params.borrow().first().and_then(Value::as_num) {
+                                    Some(x) => {
+                                        let r: f64 = $f(x);
+                                        vm.current_frame()
+                                            .borrow_mut()
+                                            .push(Value::Num(r));
+                                        Ok(())
+                                    }
+                                    None => Err(SquareError::InstructionError(
+                                        format!("{} expect a number parameter", $name),
+                                        inst.clone(),
+                                        vm.pc,
+                                    )),
+                                }
+                            },
+                        ) as Syscall),
+                    ),
+                );
+            };
+        }
+        math_unary!("floor", libm::floor);
+        math_unary!("ceil", libm::ceil);
+        math_unary!("round", libm::round);
+        math_unary!("abs", libm::fabs);
+        math_unary!("sqrt", libm::sqrt);
+
+        values.insert(
+            "pow",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("pow")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
+                        let p = params.borrow();
+                        let pair = match (p.first(), p.get(1)) {
+                            (Some(Value::Num(a)), Some(Value::Num(b))) => Some((*a, *b)),
+                            _ => None,
+                        };
+                        drop(p);
+                        if let Some((a, b)) = pair {
+                            vm.current_frame()
+                                .borrow_mut()
+                                .push(Value::Num(libm::pow(a, b)));
+                            Ok(())
+                        } else {
+                            Err(SquareError::InstructionError(
+                                "pow expect (base, exp) number parameters".to_string(),
+                                inst.clone(),
+                                vm.pc,
+                            ))
+                        }
+                    },
+                ) as Syscall),
+            ),
+        );
+
+        // 变参 min/max
+        macro_rules! math_variadic {
+            ($name:literal, $init:expr, $fold:expr) => {
+                values.insert(
+                    $name,
+                    (
+                        Value::Function(Rc::new(RefCell::new(Function::Syscall($name)))),
+                        Some(Rc::new(
+                            |vm: &mut VM,
+                             params: Rc<RefCell<Vec<Value>>>,
+                             _cx: &mut RtCx,
+                             inst: &Inst|
+                             -> ExecResult {
+                                let p = params.borrow();
+                                let mut acc: Option<f64> = None;
+                                for v in p.iter() {
+                                    let Some(Value::Num(x)) = Some(v) else {
+                                        continue;
+                                    };
+                                    let x = *x;
+                                    acc = Some(match acc {
+                                        None => x,
+                                        Some(a) => $fold(a, x),
+                                    });
+                                }
+                                drop(p);
+                                match acc {
+                                    Some(x) => {
+                                        vm.current_frame()
+                                            .borrow_mut()
+                                            .push(Value::Num(x));
+                                        Ok(())
+                                    }
+                                    None => {
+                                        let d: f64 = $init;
+                                        vm.current_frame()
+                                            .borrow_mut()
+                                            .push(Value::Num(d));
+                                        Ok(())
+                                    }
+                                }
+                            },
+                        ) as Syscall),
+                    ),
+                );
+            };
+        }
+        math_variadic!("min", core::f64::INFINITY, |a: f64, x: f64| if a < x { a } else { x });
+        math_variadic!("max", core::f64::NEG_INFINITY, |a: f64, x: f64| if a > x { a } else { x });
+
+        // ── 字符串 ─────────────────────────────────────────────────────
+        // str：任意值 → 显示文本（数字转字符串的主路径）
+        values.insert(
+            "str",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("str")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, _inst: &Inst| -> ExecResult {
+                        let joined = params
+                            .borrow()
+                            .iter()
+                            .map(|v| format!("{}", v))
+                            .collect::<Vec<_>>()
+                            .join("");
+                        vm.current_frame()
+                            .borrow_mut()
+                            .push(Value::Str(Rc::from(joined.as_str())));
+                        Ok(())
+                    },
+                ) as Syscall),
+            ),
+        );
+
+        // substr：(s, start, end) 按字符下标取子串
+        values.insert(
+            "substr",
+            (
+                Value::Function(Rc::new(RefCell::new(Function::Syscall("substr")))),
+                Some(Rc::new(
+                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
+                        let p = params.borrow();
+                        let s = p.first().and_then(|v| v.as_str());
+                        let (Some(start), Some(end)) = (
+                            p.get(1).and_then(Value::as_num).map(|x| x as usize),
+                            p.get(2).and_then(Value::as_num).map(|x| x as usize),
+                        ) else {
+                            drop(p);
+                            return Err(SquareError::InstructionError(
+                                "substr expect (string, start, end) parameters".to_string(),
+                                inst.clone(),
+                                vm.pc,
+                            ));
+                        };
+                        let Some(s) = s else {
+                            drop(p);
+                            return Err(SquareError::InstructionError(
+                                "substr expect (string, start, end) parameters".to_string(),
+                                inst.clone(),
+                                vm.pc,
+                            ));
+                        };
+                        let sub: String = s
+                            .chars()
+                            .skip(start)
+                            .take(end.saturating_sub(start))
+                            .collect();
+                        drop(p);
+                        vm.current_frame()
+                            .borrow_mut()
+                            .push(Value::Str(Rc::from(sub.as_str())));
+                        Ok(())
                     },
                 ) as Syscall),
             ),

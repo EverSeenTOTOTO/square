@@ -121,6 +121,34 @@ unlocking the ability to implement features such as proxies and inheritance.
 [print o.x] ; 42
 ```
 
+## Error handling
+
+```lisp
+; try 表达式：出错时 handler 闭包收到错误消息（Str），返回其值；
+; 正常时值为 PROTECTED 本身。未捕获错误经输出通道打印，实例存活可复用
+[println [try [put [vec 1] 5 0] /[e] 'caught!']]
+```
+
+## JS interop (FFI)
+
+```lisp
+; [js 'dotted.path' [vec args...]] —— 调用宿主（globalThis）函数/读属性，
+; 参数与结果经 JSON 桥往返（number/string/bool/nil/array/object）
+[println [js 'Math.max' [vec 1 2 3]]]              ; 3
+[println [js 'JSON.parse' [vec '{"a":42}']].a]     ; 42
+```
+
+## Prelude & builtins
+
+```lisp
+; 预置库（编译期拼接，可用 let 遮蔽）：not map filter fold range
+; reverse append contains sum join
+[println [sum [map /[x] [* x x] [range 5]]]]       ; 30
+
+; 内建：floor ceil round abs sqrt pow min max str substr；
+; len/at 兼容字符串；+ 对两字符串为拼接
+```
+
 ## Async
 
 ```lisp

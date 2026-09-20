@@ -43,9 +43,10 @@ export async function loadSquare({ wasmPath = defaultWasm, onWrite } = {}) {
         const args = JSON.parse(
           decoder.decode(new Uint8Array(ref.memory.buffer, args_ptr, args_len)),
         );
-        const fn = name.split(".").reduce((o, k) => o?.[k], globalThis);
+        const resolved = name.split(".").reduce((o, k) => o?.[k], globalThis);
+        // 函数则调用；非函数（属性，如 Math.PI）直接取值
         let result =
-          typeof fn === "function" ? fn(...args) : undefined;
+          typeof resolved === "function" ? resolved(...args) : resolved;
         if (result === undefined) return 0n;
         let json;
         try {
