@@ -61,14 +61,17 @@ pub enum Inst {
     LOADC_JNE(u16, u8, Value, i32), // 槽位与立即数比较、为假跳转（整条循环条件一条指令）
     LOAD_ARITH_IMM(u16, u8, Value), // 槽位读 + 立即数运算入栈
     LOAD2_ARITH(u16, u16, u8), // 两槽位读 + 运算入栈
+    LOADGET_LOCAL(u16, String), // 槽位读 + 属性访问（o.y 一条指令）
+    LOADP_UP(u16, Value), // upvalue 读 + 立即数入栈
+    LOADU_ARITH(u16, u8, Value), // upvalue 读 + 立即数运算入栈
 }
 
 /// 指令名表（与 [`Inst::id`] 对齐），剖析输出用
-pub const NAMES: [&str; 43] = [
+pub const NAMES: [&str; 46] = [
     "PUSH", "POP", "ADD", "SUB", "MUL", "DIV", "REM", "BITAND", "BITOR", "BITXOR", "BITNOT",
     "EQ", "NE", "LT", "LE", "GT", "GE", "SHL", "SHR", "JMP", "JNE", "LOAD_LOCAL", "LOAD_UP",
     "LOAD_GLOBAL", "STORE_LOCAL", "STORE_UP", "STORE_GLOBAL", "CALL", "RET", "PUSH_CLOSURE",
-    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL", "LOADP_LOCAL", "BINOP_IMM", "LOADC_JNE", "LOAD_ARITH_IMM", "LOAD2_ARITH",
+    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL", "LOADP_LOCAL", "BINOP_IMM", "LOADC_JNE", "LOAD_ARITH_IMM", "LOAD2_ARITH", "LOADGET_LOCAL", "LOADP_UP", "LOADU_ARITH",
 ];
 
 impl Inst {
@@ -123,6 +126,9 @@ impl Inst {
             Inst::LOADC_JNE(..) => 40,
             Inst::LOAD_ARITH_IMM(..) => 41,
             Inst::LOAD2_ARITH(..) => 42,
+            Inst::LOADGET_LOCAL(..) => 43,
+            Inst::LOADP_UP(..) => 44,
+            Inst::LOADU_ARITH(..) => 45,
         }
     }
 
@@ -172,6 +178,9 @@ impl Inst {
             Inst::LOADC_JNE(..) => "LOADC_JNE",
             Inst::LOAD_ARITH_IMM(..) => "LOAD_ARITH_IMM",
             Inst::LOAD2_ARITH(..) => "LOAD2_ARITH",
+            Inst::LOADGET_LOCAL(..) => "LOADGET_LOCAL",
+            Inst::LOADP_UP(..) => "LOADP_UP",
+            Inst::LOADU_ARITH(..) => "LOADU_ARITH",
         }
     }
 }
@@ -238,6 +247,11 @@ impl fmt::Display for Inst {
             }
             Inst::LOAD2_ARITH(a, b, op) => {
                 write!(f, "LOAD2_ARITH {}, {} {}", a, b, NAMES[*op as usize])
+            }
+            Inst::LOADGET_LOCAL(a, key) => write!(f, "LOADGET_LOCAL {}, .{}", a, key),
+            Inst::LOADP_UP(u, v) => write!(f, "LOADP_UP {}, {}", u, v),
+            Inst::LOADU_ARITH(u, op, v) => {
+                write!(f, "LOADU_ARITH {}, {} {}", u, NAMES[*op as usize], v)
             }
         }
     }

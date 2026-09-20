@@ -273,7 +273,38 @@ impl_binop!(Add, add, +);
 impl_binop!(Sub, sub, -);
 impl_binop!(Mul, mul, *);
 impl_binop!(Div, div, /);
-impl_binop!(Rem, rem, %);
+
+/// f64 的 `%` 走软件 fmod（数十周期）；整数值（i64 往返判定）转 i64 求余再回填。
+/// 语义一致：两者都向零截断、取被除数符号。|x| < 2^53 内 i64 转换无损。
+fn num_rem(l: f64, r: f64) -> f64 {
+    if r != 0.0
+        && l.abs() < 9.0e15
+        && r.abs() < 9.0e15
+        && l == (l as i64) as f64
+        && r == (r as i64) as f64
+    {
+        (l as i64 % r as i64) as f64
+    } else {
+        l % r
+    }
+}
+
+impl Rem for &Value {
+    type Output = CalcResult;
+
+    fn rem(self, other: Self) -> Self::Output {
+        match (self, other) {
+            (Value::Num(lhs), Value::Num(rhs)) => Ok(Value::Num(num_rem(*lhs, *rhs))),
+            (Value::UpValue(lhs), Value::UpValue(rhs)) => &*lhs.borrow() % &*rhs.borrow(),
+            (Value::UpValue(lhs), rhs) => &*lhs.borrow() % rhs,
+            (lhs, Value::UpValue(rhs)) => lhs % &*rhs.borrow(),
+            _ => Err(SquareError::RuntimeError(format!(
+                "cannot perform operation on {} and {}",
+                self, other
+            ))),
+        }
+    }
+}
 impl_bitop!(BitAnd, bitand, &);
 impl_bitop!(BitOr, bitor, |);
 impl_bitop!(BitXor, bitxor, ^);

@@ -585,26 +585,51 @@ impl Inst {
                 }
             }
 
-            Inst::GET(key) => {
-                let target = vm.current_frame().borrow_mut().pop();
-
-                if let Some(obj) = target.as_obj() {
-                    let val = obj.borrow().get(key.as_str()).cloned().unwrap_or(Value::Nil);
-                    vm.current_frame().borrow_mut().push(val);
-                    Ok(())
-                } else {
-                    // proxy 等目标回退 get 内建，保持唯一拦截路径
-                    let get = vm.buildin.get_syscall("get");
-                    get(
-                        vm,
-                        Rc::new(RefCell::new(vec![
-                            target,
-                            Value::Str(Rc::from(key.as_str())),
-                        ])),
-                        cx,
-                        self,
-                    )
+            Inst::GET(key) => self.get_field(vm, cx, key),
+            Inst::LOADGET_LOCAL(a, key) => {
+                // 槽位读 + 属性访问融合：先压目标再走 GET 共享路径（含 proxy 回退）
+                {
+                    let binding = vm.current_frame();
+                    let mut frame = binding.borrow_mut();
+                    let target = frame.load_slot(*a);
+                    frame.push(target);
                 }
+                self.get_field(vm, cx, key)
+            }
+            Inst::LOADP_UP(u, v) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let Some(cell) = frame.ups.get(*u as usize).cloned() else {
+                    return Err(SquareError::InstructionError(
+                        format!("bad loadp_up, no upvalue {}", u),
+                        self.clone(),
+                        vm.pc,
+                    ));
+                };
+                let val = cell.borrow().clone();
+                frame.push(val);
+                frame.push(v.clone());
+                Ok(())
+            }
+            Inst::LOADU_ARITH(u, op, imm) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let Some(cell) = frame.ups.get(*u as usize).cloned() else {
+                    return Err(SquareError::InstructionError(
+                        format!("bad loadu_arith, no upvalue {}", u),
+                        self.clone(),
+                        vm.pc,
+                    ));
+                };
+                let val = cell.borrow().clone();
+                let result = arith_imm(&val, *op, imm).map_err(|e| match e {
+                    SquareError::RuntimeError(msg) => {
+                        SquareError::InstructionError(msg, self.clone(), vm.pc)
+                    }
+                    _ => e,
+                })?;
+                frame.push(result);
+                Ok(())
             }
             Inst::SET(key) => {
                 let value = vm.current_frame().borrow_mut().pop();
@@ -659,6 +684,29 @@ impl Inst {
                 vm.current_frame().borrow_mut().names = names.clone();
                 Ok(())
             }
+        }
+    }
+
+    /// 属性访问共享路径（GET / LOADGET_LOCAL）：Obj 直访，其余回退 get 内建
+    fn get_field(&self, vm: &mut VM, cx: &mut RtCx, key: &String) -> ExecResult {
+        let target = vm.current_frame().borrow_mut().pop();
+
+        if let Some(obj) = target.as_obj() {
+            let val = obj.borrow().get(key.as_str()).cloned().unwrap_or(Value::Nil);
+            vm.current_frame().borrow_mut().push(val);
+            Ok(())
+        } else {
+            // proxy 等目标回退 get 内建，保持唯一拦截路径
+            let get = vm.buildin.get_syscall("get");
+            get(
+                vm,
+                Rc::new(RefCell::new(vec![
+                    target,
+                    Value::Str(Rc::from(key.as_str())),
+                ])),
+                cx,
+                self,
+            )
         }
     }
 
@@ -915,7 +963,7 @@ pub struct VM {
     frame_pool: Vec<Rc<RefCell<CallFrame>>>,
 
     /// 逐指令剖析：(rdtsc 周期累计, 执行次数)。profiling 开启时由 step 记录
-    pub inst_cycles: [(u64, u64); 43],
+    pub inst_cycles: [(u64, u64); 46],
     pub profiling: bool,
 }
 
@@ -938,7 +986,7 @@ impl VM {
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
-            inst_cycles: [(0, 0); 43],
+            inst_cycles: [(0, 0); 46],
             profiling: false,
         }
     }
@@ -947,7 +995,7 @@ impl VM {
         self.pc = 0;
         self.mpc = 0;
         self.globals.clear();
-        self.inst_cycles = [(0, 0); 43];
+        self.inst_cycles = [(0, 0); 46];
         let root = Rc::new(RefCell::new(CallFrame::new()));
         self.cur = root.clone();
         self.call_frames.splice(0.., vec![root]);

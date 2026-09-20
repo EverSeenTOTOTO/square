@@ -1449,6 +1449,18 @@ fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
                 continue;
             }
         }
+        // 三连：LOAD_UP + PUSH + 算术（捕获变量的 += 类模式）
+        if let (Inst::LOAD_UP(u), Some(Inst::PUSH(v))) = (&insts[i], insts.get(i + 1)) {
+            if let Some(op) = arith_op(&insts[i + 2]) {
+                fused.push(Inst::LOADU_ARITH(*u, op, v.clone()));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 3;
+                continue;
+            }
+        }
         match (&insts[i], insts.get(i + 1)) {
             (cmp, Some(Inst::JNE(off))) if cmp_op(cmp).is_some() => {
                 // 保留原 JNE 偏移，pass 2 以 JNE 位置为基准重定位
@@ -1467,6 +1479,20 @@ fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
             }
             (Inst::LOAD_LOCAL(a), Some(Inst::PUSH(v))) => {
                 fused.push(Inst::LOADP_LOCAL(*a, v.clone()));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 2;
+            }
+            (Inst::LOAD_LOCAL(a), Some(Inst::GET(k))) => {
+                fused.push(Inst::LOADGET_LOCAL(*a, k.clone()));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 2;
+            }
+            (Inst::LOAD_UP(u), Some(Inst::PUSH(v))) => {
+                fused.push(Inst::LOADP_UP(*u, v.clone()));
                 map.push(fused.len() - 1);
                 map.push(fused.len() - 1);
                 src.push(i);
