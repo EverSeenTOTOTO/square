@@ -325,6 +325,48 @@ impl Inst {
                 ))
             }
 
+            Inst::GET(key) => {
+                let target = vm.current_frame().borrow_mut().pop();
+
+                if let Some(obj) = target.as_obj() {
+                    let val = obj.borrow().get(key).cloned().unwrap_or(Value::Nil);
+                    vm.current_frame().borrow_mut().push(val);
+                    Ok(())
+                } else {
+                    // proxy 等目标回退 get 内建，保持唯一拦截路径
+                    let get = vm.buildin.get_syscall("get");
+                    get(
+                        vm,
+                        Rc::new(RefCell::new(vec![target, Value::Str(key.to_string())])),
+                        cx,
+                        self,
+                    )
+                }
+            }
+            Inst::SET(key) => {
+                let value = vm.current_frame().borrow_mut().pop();
+                let target = vm.current_frame().borrow_mut().pop();
+
+                if let Some(obj) = target.as_obj() {
+                    Builtin::try_capture_this(&value, &obj);
+                    obj.borrow_mut().insert(key.to_string(), value);
+                    vm.current_frame().borrow_mut().push(Value::Obj(obj));
+                    Ok(())
+                } else {
+                    let set = vm.buildin.get_syscall("set");
+                    set(
+                        vm,
+                        Rc::new(RefCell::new(vec![
+                            target,
+                            Value::Str(key.to_string()),
+                            value,
+                        ])),
+                        cx,
+                        self,
+                    )
+                }
+            }
+
             Inst::DELIMITER(mindex) => {
                 if *mindex < vm.mpc {
                     // TODO: optimize

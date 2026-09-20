@@ -656,7 +656,7 @@ impl Builtin {
         Self { values }
     }
 
-    fn try_capture_this(val: &Value, obj: &Rc<RefCell<Object>>) {
+    pub(crate) fn try_capture_this(val: &Value, obj: &Rc<RefCell<Object>>) {
         if let Some(member_fn) = val.as_fn() {
             if let Function::Closure(_, ref mut captures) = *member_fn.borrow_mut() {
                 if let Some(slot) = captures.iter_mut().find(|(n, _)| n.as_str() == "this") {

@@ -156,7 +156,9 @@ fn test_print_circular() {
     obj.borrow_mut()
         .insert("obj".to_string(), Value::Obj(obj.clone()).upgrade());
 
-    assert_eq!(format!("{}", Value::Obj(obj)), "{obj: &{...}, vec: [...]}");
+    // HashMap 迭代顺序不定（随机种子），键序敏感断言会 flaky，只断言内容
+    let printed = format!("{}", Value::Obj(obj));
+    assert!(printed.contains("obj: &{...}") && printed.contains("vec: [...]"));
     assert_eq!(format!("{}", Value::Vec(vec)), "[{...}]");
 }
 

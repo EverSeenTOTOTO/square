@@ -40,6 +40,9 @@ pub enum Inst {
     PACK(usize),      // pack n elements on top of the operand stack
     PEEK(usize, i32), // (offset, index), peek an element within the top pack of the operand stack
 
+    GET(String), // get a field from the top object on the operand stack
+    SET(String), // set a field, stack: [target, value] -> [target]
+
     DELIMITER(usize), // delimiter for top level expressions
 }
 
@@ -74,6 +77,8 @@ impl Inst {
             Inst::PUSH_CLOSURE(_) => "PUSH_CLOSURE",
             Inst::PACK(_) => "PACK",
             Inst::PEEK(..) => "PEEK",
+            Inst::GET(_) => "GET",
+            Inst::SET(_) => "SET",
 
             Inst::DELIMITER(_) => "DELIMITER",
         }
@@ -121,6 +126,8 @@ impl fmt::Display for Inst {
 
             Inst::PACK(len) => write!(f, "PACK {}", len),
             Inst::PEEK(offset, index) => write!(f, "PEEK {}, {}", offset, index),
+            Inst::GET(key) => write!(f, "GET {}", key),
+            Inst::SET(key) => write!(f, "SET {}", key),
 
             Inst::DELIMITER(mindex) => write!(f, "DELIMITER {}", mindex),
         }

@@ -198,12 +198,9 @@ fn emit_assign(
                         })
                         .collect();
                     let (last_key, rest_keys) = keys.split_last().unwrap();
-                    result.push(Inst::LOAD("set".to_string()));
                     result.extend(emit_get_chain(input, target, rest_keys, ctx)?);
-                    result.push(Inst::PUSH(Value::Str(last_key.clone())));
                     result.extend(value);
-                    result.push(Inst::PACK(3));
-                    result.push(Inst::CALL);
+                    result.push(Inst::SET(last_key.clone()));
                 } else {
                     if is_define {
                         // let x y
@@ -266,20 +263,14 @@ fn test_emit_assign_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    // [set [get o 'x] 'y 42]
+    // o.x 42 SET y
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("set".to_string()),
-            Inst::LOAD("get".to_string()),
             Inst::LOAD("o".to_string()),
-            Inst::PUSH(Value::Str("x".to_string())),
-            Inst::PACK(2),
-            Inst::CALL,
-            Inst::PUSH(Value::Str("y".to_string())),
+            Inst::GET("x".to_string()),
             Inst::PUSH(Value::Num(42.0)),
-            Inst::PACK(3),
-            Inst::CALL,
+            Inst::SET("y".to_string()),
         ]
     );
 }
@@ -361,16 +352,13 @@ fn emit_op(
 
         if let Node::Token(Token::Id(_, source)) = expressions[0].as_ref() {
             if !properties.is_empty() {
-                // o.p1…pN op= rhs  →  [set <o.p1…p(N-1)> 'pN (<o.p1…pN> op rhs)]
+                // o.p1…pN op= rhs  →  <o.p1…p(N-1)> (<o.p1…pN> op rhs) SET pN
                 let (last_key, rest_keys) = properties.split_last().unwrap();
-                result.push(Inst::LOAD("set".to_string()));
                 result.extend(emit_get_chain(input, &expressions[0], rest_keys, ctx)?);
-                result.push(Inst::PUSH(Value::Str(last_key.clone())));
                 result.extend(emit_get_chain(input, &expressions[0], &properties, ctx)?);
                 result.extend(rhs);
                 result.push(action);
-                result.push(Inst::PACK(3));
-                result.push(Inst::CALL);
+                result.push(Inst::SET(last_key.clone()));
             } else {
                 ctx.borrow_mut().mark_if_capture(source);
                 result.push(Inst::LOAD(source.clone()));
@@ -465,30 +453,18 @@ fn test_emit_op_assign_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    // [set [get a 'b] 'c [+ [get [get a 'b] 'c] d]]
+    // a.b (a.b.c + d) SET c
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("set".to_string()),
-            Inst::LOAD("get".to_string()),
             Inst::LOAD("a".to_string()),
-            Inst::PUSH(Value::Str("b".to_string())),
-            Inst::PACK(2),
-            Inst::CALL,
-            Inst::PUSH(Value::Str("c".to_string())),
-            Inst::LOAD("get".to_string()),
-            Inst::LOAD("get".to_string()),
+            Inst::GET("b".to_string()),
             Inst::LOAD("a".to_string()),
-            Inst::PUSH(Value::Str("b".to_string())),
-            Inst::PACK(2),
-            Inst::CALL,
-            Inst::PUSH(Value::Str("c".to_string())),
-            Inst::PACK(2),
-            Inst::CALL,
+            Inst::GET("b".to_string()),
+            Inst::GET("c".to_string()),
             Inst::LOAD("d".to_string()),
             Inst::ADD,
-            Inst::PACK(3),
-            Inst::CALL,
+            Inst::SET("c".to_string()),
         ]
     );
 }
@@ -1285,22 +1261,15 @@ fn test_emit_expand_nested() {
     );
 }
 
-/// Emit `base.k1.k2.…` as nested `[get [get base 'k1] 'k2]…` calls. Nested, not
-/// iterated: the call convention puts the function below its target.
+/// Emit `base.k1.k2.…` as `base` followed by one GET per key.
 fn emit_get_chain(
     input: &str,
     base: &Box<Node>,
     keys: &[String],
     ctx: &RefCell<EmitContext>,
 ) -> EmitResult {
-    let Some((last, rest)) = keys.split_last() else {
-        return emit_node(input, base, ctx);
-    };
-    let mut result = vec![Inst::LOAD("get".to_string())];
-    result.extend(emit_get_chain(input, base, rest, ctx)?);
-    result.push(Inst::PUSH(Value::Str(last.clone())));
-    result.push(Inst::PACK(2));
-    result.push(Inst::CALL);
+    let mut result = emit_node(input, base, ctx)?;
+    result.extend(keys.iter().map(|k| Inst::GET(k.clone())));
     Ok(result)
 }
 
@@ -1326,19 +1295,13 @@ fn test_emit_dot() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    // [get [get o 'x] 'y]
+    // o GET x GET y
     assert_eq!(
         insts,
         vec![
-            Inst::LOAD("get".to_string()),
-            Inst::LOAD("get".to_string()),
             Inst::LOAD("o".to_string()),
-            Inst::PUSH(Value::Str("x".to_string())),
-            Inst::PACK(2),
-            Inst::CALL,
-            Inst::PUSH(Value::Str("y".to_string())),
-            Inst::PACK(2),
-            Inst::CALL,
+            Inst::GET("x".to_string()),
+            Inst::GET("y".to_string()),
         ]
     );
 }
