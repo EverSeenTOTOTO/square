@@ -345,8 +345,8 @@ impl Inst {
                     vm.recycle_frame(rc);
                 }
 
-                // always return the top value
-                vm.call_frames.last().unwrap().borrow_mut().push(top);
+                // always return the top value（cur 已被 pop_frame 同步，免去 Vec::last）
+                vm.current_frame().borrow_mut().push(top);
                 Ok(())
             }
             Inst::PUSH_CLOSURE(meta) => {
