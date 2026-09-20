@@ -31,7 +31,8 @@ endif
 test-js:
 	node --test
 
-# fib 基准：square 字节码 VM vs 原生 JS（需先 make build 产出 square.wasm）。
+# 基准套件：square(wasm) vs Lua vs 原生 JS，覆盖调用/派发/分配/闭包/哈希
+# （需先 make build 产出 square.wasm；可带基准名过滤，如 make bench B="fib tak"）。
 .PHONY: bench
 bench:
-	node bench/fib.mjs
+	node bench/suite.mjs $(B)

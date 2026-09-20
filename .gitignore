@@ -3,3 +3,4 @@ node_modules
 *.wasm
 *.wat
 hosts/nodejs/dist
+!*.mjs
