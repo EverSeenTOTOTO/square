@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 hashbrown = "0.15"
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
+rustc-hash = { version = "2", default-features = false }
 spin = "0.9.8"
 talc =  { version = "4.2.0", features = ["counters"] }
 

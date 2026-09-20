@@ -7,7 +7,7 @@ use crate::{
     builtin::Builtin,
     errors::SquareError,
     vm_insts::Inst,
-    vm_value::{CalcResult, CaptureSrc, ClosureInfo, Function, ParamLayout, Value},
+    vm_value::{CalcResult, CaptureSrc, ClosureInfo, FxHashMap, Function, ParamLayout, Value},
 };
 
 #[cfg(test)]
@@ -260,6 +260,17 @@ impl Inst {
                 let mut frame = binding.borrow_mut();
                 let cond = cmp_imm(&frame.load_slot(*a), *op, imm);
                 if !cond {
+                    drop(frame);
+                    return self.jump(insts, &mut vm.pc, *off);
+                }
+                Ok(())
+            }
+            Inst::LOADC_JNZ(a, op, imm, off) => {
+                // LOADC_JNE 的为真跳转孪生：回边穿线产物，谓词相同极性相反
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let cond = cmp_imm(&frame.load_slot(*a), *op, imm);
+                if cond {
                     drop(frame);
                     return self.jump(insts, &mut vm.pc, *off);
                 }
@@ -950,7 +961,7 @@ pub struct VM {
     buildin: Builtin,
 
     /// `= x v` 动态定义的全局（编译期无法归属槽位的名字）
-    pub globals: HashMap<String, Value>,
+    pub globals: FxHashMap<String, Value>,
 
     /// 捕获空闭包/帧共享的空 upvalue 表
     empty_ups: Rc<Vec<Rc<RefCell<Value>>>>,
@@ -963,7 +974,7 @@ pub struct VM {
     frame_pool: Vec<Rc<RefCell<CallFrame>>>,
 
     /// 逐指令剖析：(rdtsc 周期累计, 执行次数)。profiling 开启时由 step 记录
-    pub inst_cycles: [(u64, u64); 46],
+    pub inst_cycles: [(u64, u64); 47],
     pub profiling: bool,
 }
 
@@ -980,13 +991,13 @@ impl VM {
         Self {
             call_frames: vec![root.clone()],
             buildin: Builtin::new(),
-            globals: HashMap::new(),
+            globals: FxHashMap::default(),
             empty_ups: Rc::new(Vec::new()),
             cur: root.clone(),
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
-            inst_cycles: [(0, 0); 46],
+            inst_cycles: [(0, 0); 47],
             profiling: false,
         }
     }
@@ -995,7 +1006,7 @@ impl VM {
         self.pc = 0;
         self.mpc = 0;
         self.globals.clear();
-        self.inst_cycles = [(0, 0); 46];
+        self.inst_cycles = [(0, 0); 47];
         let root = Rc::new(RefCell::new(CallFrame::new()));
         self.cur = root.clone();
         self.call_frames.splice(0.., vec![root]);

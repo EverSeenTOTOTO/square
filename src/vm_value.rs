@@ -11,11 +11,17 @@ use core::{
     fmt,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
+use core::hash::BuildHasherDefault;
+
 use hashbrown::HashMap;
+use rustc_hash::FxHasher;
 
 use crate::{errors::SquareError, vm::CallFrame};
 
-pub type Object = HashMap<Rc<str>, Value>;
+/// FxHash：短键哈希数周期（SipHash 数十周期）；no_std 下自行组别名
+pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+
+pub type Object = FxHashMap<Rc<str>, Value>;
 
 /// Proxy 载荷单独装箱，避免撑大 Value enum（搬运成本）
 #[derive(Debug)]
@@ -167,7 +173,7 @@ impl fmt::Display for Value {
 
 #[test]
 fn test_print_circular() {
-    let obj = Rc::new(RefCell::new(HashMap::new()));
+    let obj: Rc<RefCell<Object>> = Rc::new(RefCell::new(FxHashMap::default()));
     let vec = Rc::new(RefCell::new(vec![Value::Obj(obj.clone())]));
 
     obj.borrow_mut()

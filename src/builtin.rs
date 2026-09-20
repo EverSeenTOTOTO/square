@@ -12,7 +12,7 @@ use crate::vm_insts::Inst;
 use crate::vm_value::Object;
 use crate::{
     vm::{ExecResult, RtCx, VM},
-    vm_value::{Function, ProxyData, Value},
+    vm_value::{FxHashMap, Function, ProxyData, Value},
 };
 
 #[cfg(target_family = "wasm")]
@@ -51,12 +51,12 @@ fn new_closure_unwind(
 }
 
 pub struct Builtin {
-    values: HashMap<&'static str, (Value, Option<Syscall>)>,
+    values: FxHashMap<&'static str, (Value, Option<Syscall>)>,
 }
 
 impl Builtin {
     pub fn new() -> Self {
-        let mut values = HashMap::new();
+        let mut values = FxHashMap::default();
 
         #[cfg(target_family = "wasm")]
         use crate::print;
@@ -366,7 +366,7 @@ impl Builtin {
                 Value::Function(Rc::new(RefCell::new(Function::Syscall("obj")))),
                 Some(Rc::new(
                     |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
-                        let obj = Rc::new(RefCell::new(HashMap::new()));
+                        let obj: Rc<RefCell<Object>> = Rc::new(RefCell::new(FxHashMap::default()));
 
                         for i in (0..params.borrow().len()).step_by(2) {
                             if let (Some(key), Some(val)) =

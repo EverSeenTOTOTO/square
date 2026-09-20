@@ -1554,6 +1554,21 @@ fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
             _ => {}
         }
     }
+
+    // pass 3：回边穿线——JMP 的目标若是 LOADC_JNE（while 回边），就地换成其
+    // 为真跳转孪生 LOADC_JNZ：条件成立跳回循环体（原 JMP 目标的下一条），
+    // 不成立则自然落出到循环出口。省一次跳转派发；谓词不做取反（NaN/混合
+    // 类型下 NOT(cmp) 与反序比较不等价），靠相反极性保证语义精确。
+    let snapshot = fused.clone();
+    for (idx, inst) in fused.iter_mut().enumerate() {
+        if let Inst::JMP(off) = inst {
+            let target = (idx as i32 + 1 + *off) as usize;
+            if let Some(Inst::LOADC_JNE(a, op, imm, _)) = snapshot.get(target) {
+                let body_start = target as i32 + 1; // 条件为真时的落点（循环体）
+                *inst = Inst::LOADC_JNZ(*a, *op, imm.clone(), body_start - (idx as i32 + 1));
+            }
+        }
+    }
     fused
 }
 
