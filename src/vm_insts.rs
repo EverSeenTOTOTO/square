@@ -58,14 +58,17 @@ pub enum Inst {
     LOAD2_LOCAL(u16, u16), // 两次槽位读取合一次派发/借用
     LOADP_LOCAL(u16, Value), // 槽位读取 + 立即数入栈合一次派发/借用
     BINOP_IMM(u8, Value), // 立即数为右操作数的二元运算（op 用 Inst::id 的 ADD..REM）
+    LOADC_JNE(u16, u8, Value, i32), // 槽位与立即数比较、为假跳转（整条循环条件一条指令）
+    LOAD_ARITH_IMM(u16, u8, Value), // 槽位读 + 立即数运算入栈
+    LOAD2_ARITH(u16, u16, u8), // 两槽位读 + 运算入栈
 }
 
 /// 指令名表（与 [`Inst::id`] 对齐），剖析输出用
-pub const NAMES: [&str; 40] = [
+pub const NAMES: [&str; 43] = [
     "PUSH", "POP", "ADD", "SUB", "MUL", "DIV", "REM", "BITAND", "BITOR", "BITXOR", "BITNOT",
     "EQ", "NE", "LT", "LE", "GT", "GE", "SHL", "SHR", "JMP", "JNE", "LOAD_LOCAL", "LOAD_UP",
     "LOAD_GLOBAL", "STORE_LOCAL", "STORE_UP", "STORE_GLOBAL", "CALL", "RET", "PUSH_CLOSURE",
-    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL", "LOADP_LOCAL", "BINOP_IMM",
+    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL", "LOADP_LOCAL", "BINOP_IMM", "LOADC_JNE", "LOAD_ARITH_IMM", "LOAD2_ARITH",
 ];
 
 impl Inst {
@@ -117,6 +120,9 @@ impl Inst {
             Inst::LOAD2_LOCAL(..) => 37,
             Inst::LOADP_LOCAL(..) => 38,
             Inst::BINOP_IMM(..) => 39,
+            Inst::LOADC_JNE(..) => 40,
+            Inst::LOAD_ARITH_IMM(..) => 41,
+            Inst::LOAD2_ARITH(..) => 42,
         }
     }
 
@@ -163,6 +169,9 @@ impl Inst {
             Inst::LOAD2_LOCAL(..) => "LOAD2_LOCAL",
             Inst::LOADP_LOCAL(..) => "LOADP_LOCAL",
             Inst::BINOP_IMM(..) => "BINOP_IMM",
+            Inst::LOADC_JNE(..) => "LOADC_JNE",
+            Inst::LOAD_ARITH_IMM(..) => "LOAD_ARITH_IMM",
+            Inst::LOAD2_ARITH(..) => "LOAD2_ARITH",
         }
     }
 }
@@ -221,6 +230,15 @@ impl fmt::Display for Inst {
             Inst::LOAD2_LOCAL(a, b) => write!(f, "LOAD2_LOCAL {}, {}", a, b),
             Inst::LOADP_LOCAL(a, v) => write!(f, "LOADP_LOCAL {}, {}", a, v),
             Inst::BINOP_IMM(op, v) => write!(f, "BINOP_IMM {}, {}", NAMES[*op as usize], v),
+            Inst::LOADC_JNE(a, op, v, off) => {
+                write!(f, "LOADC_JNE {}, {} {}, {}", a, NAMES[*op as usize], v, off)
+            }
+            Inst::LOAD_ARITH_IMM(a, op, v) => {
+                write!(f, "LOAD_ARITH_IMM {}, {} {}", a, NAMES[*op as usize], v)
+            }
+            Inst::LOAD2_ARITH(a, b, op) => {
+                write!(f, "LOAD2_ARITH {}, {} {}", a, b, NAMES[*op as usize])
+            }
         }
     }
 }

@@ -65,6 +65,31 @@ impl RtCx {
 
 type OpFn = dyn Fn(&Value, &Value) -> CalcResult;
 
+/// 比较指令共享实现（op 用 Inst::id 的 EQ..GE）
+fn cmp_imm(lhs: &Value, op: u8, rhs: &Value) -> bool {
+    match op {
+        11 => lhs == rhs,
+        12 => lhs != rhs,
+        13 => lhs < rhs,
+        14 => lhs <= rhs,
+        15 => lhs > rhs,
+        16 => lhs >= rhs,
+        _ => unreachable!(),
+    }
+}
+
+/// 算术指令共享实现（op 用 Inst::id 的 ADD..REM）
+fn arith_imm(lhs: &Value, op: u8, rhs: &Value) -> CalcResult {
+    match op {
+        2 => lhs + rhs,
+        3 => lhs - rhs,
+        4 => lhs * rhs,
+        5 => lhs / rhs,
+        6 => lhs % rhs,
+        _ => unreachable!(),
+    }
+}
+
 impl Inst {
     fn exec(&self, vm: &mut VM, cx: &mut RtCx, insts: &Vec<Inst>) -> ExecResult {
         match self {
@@ -204,16 +229,7 @@ impl Inst {
                 let binding = vm.current_frame();
                 let mut frame = binding.borrow_mut();
                 let sp = frame.sp;
-                let (lhs, rhs) = (&frame.stack[sp - 2], &frame.stack[sp - 1]);
-                let cond = match *op {
-                    11 => lhs == rhs,
-                    12 => lhs != rhs,
-                    13 => lhs < rhs,
-                    14 => lhs <= rhs,
-                    15 => lhs > rhs,
-                    16 => lhs >= rhs,
-                    _ => unreachable!(),
-                };
+                let cond = cmp_imm(&frame.stack[sp - 2], *op, &frame.stack[sp - 1]);
                 frame.sp = sp - 2;
                 if !cond {
                     drop(frame);
@@ -236,6 +252,43 @@ impl Inst {
                 let val = frame.load_slot(*a);
                 frame.push(val);
                 frame.push(v.clone());
+                Ok(())
+            }
+            Inst::LOADC_JNE(a, op, imm, off) => {
+                // 整条循环条件一条指令：槽位与立即数比较，为假跳转
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let cond = cmp_imm(&frame.load_slot(*a), *op, imm);
+                if !cond {
+                    drop(frame);
+                    return self.jump(insts, &mut vm.pc, *off);
+                }
+                Ok(())
+            }
+            Inst::LOAD_ARITH_IMM(a, op, imm) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let result = arith_imm(&frame.load_slot(*a), *op, imm).map_err(|e| match e {
+                    SquareError::RuntimeError(msg) => {
+                        SquareError::InstructionError(msg, self.clone(), vm.pc)
+                    }
+                    _ => e,
+                })?;
+                frame.push(result);
+                Ok(())
+            }
+            Inst::LOAD2_ARITH(a, b, op) => {
+                let binding = vm.current_frame();
+                let mut frame = binding.borrow_mut();
+                let va = frame.load_slot(*a);
+                let vb = frame.load_slot(*b);
+                let result = arith_imm(&va, *op, &vb).map_err(|e| match e {
+                    SquareError::RuntimeError(msg) => {
+                        SquareError::InstructionError(msg, self.clone(), vm.pc)
+                    }
+                    _ => e,
+                })?;
+                frame.push(result);
                 Ok(())
             }
             Inst::BINOP_IMM(op, imm) => {
@@ -862,7 +915,7 @@ pub struct VM {
     frame_pool: Vec<Rc<RefCell<CallFrame>>>,
 
     /// 逐指令剖析：(rdtsc 周期累计, 执行次数)。profiling 开启时由 step 记录
-    pub inst_cycles: [(u64, u64); 40],
+    pub inst_cycles: [(u64, u64); 43],
     pub profiling: bool,
 }
 
@@ -885,7 +938,7 @@ impl VM {
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
-            inst_cycles: [(0, 0); 40],
+            inst_cycles: [(0, 0); 43],
             profiling: false,
         }
     }
@@ -894,7 +947,7 @@ impl VM {
         self.pc = 0;
         self.mpc = 0;
         self.globals.clear();
-        self.inst_cycles = [(0, 0); 40];
+        self.inst_cycles = [(0, 0); 43];
         let root = Rc::new(RefCell::new(CallFrame::new()));
         self.cur = root.clone();
         self.call_frames.splice(0.., vec![root]);

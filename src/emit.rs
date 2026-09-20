@@ -1396,8 +1396,59 @@ fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
     let mut fused: Vec<Inst> = Vec::with_capacity(insts.len());
     let mut map: Vec<usize> = Vec::with_capacity(insts.len() + 1);
     let mut src: Vec<usize> = Vec::with_capacity(insts.len()); // new idx -> 融合对首条（或自身）的旧下标
+    fn arith_op(inst: &Inst) -> Option<u8> {
+        match inst {
+            Inst::ADD => Some(2),
+            Inst::SUB => Some(3),
+            Inst::MUL => Some(4),
+            Inst::DIV => Some(5),
+            Inst::REM => Some(6),
+            _ => None,
+        }
+    }
+
     let mut i = 0;
     while i < insts.len() {
+        // 四连：LOAD + PUSH + CMP + JNE（整条循环条件）
+        if let (Inst::LOAD_LOCAL(a), Some(Inst::PUSH(v))) = (&insts[i], insts.get(i + 1)) {
+            if let (Some(op), Some(Inst::JNE(off))) =
+                (cmp_op(&insts[i + 2]), insts.get(i + 3))
+            {
+                fused.push(Inst::LOADC_JNE(*a, op, v.clone(), *off));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i + 2); // CMP 位置（偏移基准对齐原 JNE 前）
+                i += 4;
+                continue;
+            }
+        }
+        // 三连：LOAD + PUSH + 算术
+        if let (Inst::LOAD_LOCAL(a), Some(Inst::PUSH(v))) = (&insts[i], insts.get(i + 1)) {
+            if let Some(op) = arith_op(&insts[i + 2]) {
+                fused.push(Inst::LOAD_ARITH_IMM(*a, op, v.clone()));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 3;
+                continue;
+            }
+        }
+        // 三连：LOAD + LOAD + 算术
+        if let (Inst::LOAD_LOCAL(a), Some(Inst::LOAD_LOCAL(b))) = (&insts[i], insts.get(i + 1))
+        {
+            if let Some(op) = arith_op(&insts[i + 2]) {
+                fused.push(Inst::LOAD2_ARITH(*a, *b, op));
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                map.push(fused.len() - 1);
+                src.push(i);
+                i += 3;
+                continue;
+            }
+        }
         match (&insts[i], insts.get(i + 1)) {
             (cmp, Some(Inst::JNE(off))) if cmp_op(cmp).is_some() => {
                 // 保留原 JNE 偏移，pass 2 以 JNE 位置为基准重定位
@@ -1459,6 +1510,11 @@ fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
             }
             Inst::CMP_JNE(_, off) => {
                 // 基准是融合前的 JNE（对的第二条）
+                let target = (old_idx as i32 + 2 + *off) as usize;
+                *off = map[target] as i32 - (new_idx as i32 + 1);
+            }
+            Inst::LOADC_JNE(_, _, _, off) => {
+                // 基准是融合前的 JNE（四连的第 4 条，src 记录在第 3 条 CMP 位置）
                 let target = (old_idx as i32 + 2 + *off) as usize;
                 *off = map[target] as i32 - (new_idx as i32 + 1);
             }
