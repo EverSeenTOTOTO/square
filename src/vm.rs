@@ -463,7 +463,7 @@ impl Inst {
                 let target = vm.current_frame().borrow_mut().pop();
 
                 if let Some(obj) = target.as_obj() {
-                    let val = obj.borrow().get(key).cloned().unwrap_or(Value::Nil);
+                    let val = obj.borrow().get(key.as_str()).cloned().unwrap_or(Value::Nil);
                     vm.current_frame().borrow_mut().push(val);
                     Ok(())
                 } else {
@@ -471,7 +471,10 @@ impl Inst {
                     let get = vm.buildin.get_syscall("get");
                     get(
                         vm,
-                        Rc::new(RefCell::new(vec![target, Value::Str(key.to_string())])),
+                        Rc::new(RefCell::new(vec![
+                            target,
+                            Value::Str(Rc::from(key.as_str())),
+                        ])),
                         cx,
                         self,
                     )
@@ -486,10 +489,10 @@ impl Inst {
                     {
                         // 热路径：键已存在则原地覆写，免去每次 insert 的 String 分配
                         let mut map = obj.borrow_mut();
-                        if let Some(slot) = map.get_mut(key) {
+                        if let Some(slot) = map.get_mut(key.as_str()) {
                             *slot = value;
                         } else {
-                            map.insert(key.to_string(), value);
+                            map.insert(Rc::from(key.as_str()), value);
                         }
                     }
                     vm.current_frame().borrow_mut().push(Value::Obj(obj));
@@ -500,7 +503,7 @@ impl Inst {
                         vm,
                         Rc::new(RefCell::new(vec![
                             target,
-                            Value::Str(key.to_string()),
+                            Value::Str(Rc::from(key.as_str())),
                             value,
                         ])),
                         cx,
@@ -1798,7 +1801,7 @@ fn test_exec_builtin_value() {
     let callframe = binding.borrow_mut();
     assert_eq!(
         callframe.local_by_name("t").unwrap(),
-        Value::Str("fn".to_string())
+        Value::Str(Rc::from("fn"))
     )
 }
 

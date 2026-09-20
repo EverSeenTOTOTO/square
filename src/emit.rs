@@ -256,7 +256,7 @@ fn emit_token(input: &str, token: &Token, ctx: &RefCell<EmitContext>) -> EmitRes
     match token {
         Token::Num(_, num) => Ok(vec![Inst::PUSH(Value::Num(num.parse::<f64>().unwrap()))]),
         Token::Str(_, s) => {
-            let val = Value::Str(unescape(s));
+            let val = Value::Str(Rc::from(unescape(s).as_str()));
             Ok(vec![Inst::PUSH(val)])
         }
         Token::Id(_, id) => {
@@ -309,7 +309,7 @@ fn test_emit_token_str() {
     let ast = parse(code, &mut Position::new()).unwrap();
     let insts = emit_multi_node(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
 
-    assert_eq!(insts, vec![Inst::PUSH(Value::Str("42".to_string()))]);
+    assert_eq!(insts, vec![Inst::PUSH(Value::Str(Rc::from("42")))]);
 }
 
 #[test]

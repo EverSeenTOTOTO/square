@@ -15,7 +15,7 @@ use hashbrown::HashMap;
 
 use crate::{errors::SquareError, vm::CallFrame};
 
-pub type Object = HashMap<String, Value>;
+pub type Object = HashMap<Rc<str>, Value>;
 
 /// upvalue 的捕获来源：外层函数帧的槽位、外层闭包的第 j 个 upvalue（传递捕获）、
 /// 或 `this`（方法注入：闭包存入 obj 时由 set/obj 回填）
@@ -89,7 +89,7 @@ impl fmt::Display for Function {
 pub enum Value {
     Bool(bool),
     Num(f64),
-    Str(String),
+    Str(Rc<str>),
     Vec(Rc<RefCell<Vec<Value>>>),
     Obj(Rc<RefCell<Object>>),
     Proxy {
@@ -167,9 +167,9 @@ fn test_print_circular() {
     let vec = Rc::new(RefCell::new(vec![Value::Obj(obj.clone())]));
 
     obj.borrow_mut()
-        .insert("vec".to_string(), Value::Vec(vec.clone()));
+        .insert(Rc::from("vec"), Value::Vec(vec.clone()));
     obj.borrow_mut()
-        .insert("obj".to_string(), Value::Obj(obj.clone()).upgrade());
+        .insert(Rc::from("obj"), Value::Obj(obj.clone()).upgrade());
 
     // HashMap 迭代顺序不定（随机种子），键序敏感断言会 flaky，只断言内容
     let printed = format!("{}", Value::Obj(obj));
@@ -365,7 +365,7 @@ impl Value {
         }
     }
 
-    pub fn as_str(&self) -> Option<String> {
+    pub fn as_str(&self) -> Option<Rc<str>> {
         match self {
             Value::Str(val) => Some(val.clone()),
             Value::UpValue(val) => val.borrow().as_str(),

@@ -315,7 +315,7 @@ impl Builtin {
                             return {
                                 vm.current_frame()
                                     .borrow_mut()
-                                    .push(Value::Str(val.typename().to_string()));
+                                    .push(Value::Str(Rc::from(val.typename())));
                                 Ok(())
                             };
                         } else {
@@ -373,7 +373,7 @@ impl Builtin {
                                 (&params.borrow()[i].as_str(), params.borrow().get(i + 1))
                             {
                                 Self::try_capture_this(val, &obj);
-                                obj.borrow_mut().insert(key.to_string(), val.clone());
+                                obj.borrow_mut().insert(key.clone(), val.clone());
                             } else {
                                 return Err(SquareError::InstructionError(
                                     format!("failed to create object, index out of range {}", i),
