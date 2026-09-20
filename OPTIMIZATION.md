@@ -164,3 +164,34 @@ vec 9.2x / closure 4.7x / obj 8.8x。剖析指出的残余：派发底价 ~34 cy
 2. **阶段 2 生态**（性能边际收益递减后转向）：try 错误处理（消灭 wasm panic
    路径，生产级必修）→ JS FFI（`js.call` 打通 npm 生态）→ 模块系统 + prelude。
 3. **Value 2.0**（与 GC/驻留一起）：NaN-boxing 或句柄堆，评估文档见第六节。
+
+## 九、阶段 2 补记：异步原语统一（7e37b0f）
+
+生态工作（try / js FFI / prelude）见各提交。异步整合的设计与教训：
+
+**设计**：原有 sleep/defer/spawn 三个 bespoke syscall + js_sleep/
+js_queue_microtask 两个导入，统一为两个原语——`[await 'fn' [vec args]]`
+（park + 宿主按结果回调，Promise then/catch、同步值立即投递）与
+**闭包跨界**（[js ...] 实参中的闭包变回调句柄，宿主调用即 call_cb
+唤醒）。sleep/defer/spawn 降为 prelude 两行糖。唤醒统一为
+`call_cb(id, ptr, len)`（零参即裸唤醒）。
+
+**教训**（调试此功能挖出三个 bug，全部有普遍价值）：
+
+1. **哨兵 ra 覆盖**：`run()` 开头的 `current_frame().ra = insts.len()`
+   （程序结束哨兵）会覆盖跨帧 park 恢复中闭包帧的**活返回地址**——
+   任何在闭包内 park 的功能（await 在函数里）都会吞掉返回。修复：
+   仅根帧设置。教训：看似无害的防御性初始化在并发/恢复路径上是
+   定时炸弹。
+2. **闭包任务 ra=0 陷阱**：任务帧的 ra 默认 0，闭包 body RET 后
+   回落哨兵帧 → 从程序头重跑 → 每轮重跑注册新闭包 → microtask
+   级联 → 无限循环。修复：闭包帧 ra 设程序外大值。教训：默认值
+   在"程序外入口"语义下是"从头再来"而非"就此结束"。
+3. **microtask 化投递**：同步结果若同步回调，任务尚未 park 完成，
+   tick 会把未 park 的任务当"已完成"丢弃——随后 park 一个已出队
+   的任务，永久静默。修复：宿主所有立即投递走 queueMicrotask。
+   教训：跨同步边界的唤醒协议必须明确"谁保证 park 先于 wake"。
+
+**契约**（v1 限制，README 已记）：闭包回调为异步触发，返回值不
+同步回流宿主（事件/Promise 型 API 天然契合，arr.map 式同步取值不
+适合）；多实参回调以 vec 进首参。
