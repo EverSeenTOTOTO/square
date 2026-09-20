@@ -957,6 +957,7 @@ fn emit_call(
                 "while" => result.extend(emit_while(input, id, expressions, ctx)?),
                 "begin" => result.extend(emit_begin(input, id, expressions, ctx)?),
                 "cond" => result.extend(emit_cond(input, id, expressions, ctx)?),
+                "try" => result.extend(emit_try(input, id, expressions, ctx)?),
                 _ => {
                     // normal function call
                     result.push(load_inst(ctx, name));
@@ -1028,6 +1029,47 @@ fn test_emit_call_with_params() {
             Inst::CALL(1),
         ]
     );
+}
+
+/// `[try PROTECTED /[e] HANDLER]`：
+/// ```text
+/// <handler 闭包字面量>   ; 压栈（catch 时位于操作数栈顶）
+/// TRY(catch 偏移)        ; 安装 {帧深度, sp, catch 入口}
+/// <PROTECTED>            ; 值留栈
+/// POP_HANDLER
+/// JMP(1)                 ; 跳过 catch 段的 CALL
+/// catch:                 ; VM 已截回帧栈/sp 并压入错误值（Str 消息）
+/// CALL 1                 ; handler(err)
+/// ```
+/// try 的值 = PROTECTED 的值（正常）或 handler 的返回值（出错）。
+fn emit_try(
+    input: &str,
+    try_token: &Token,
+    expressions: &Vec<Box<Node>>,
+    ctx: &RefCell<EmitContext>,
+) -> EmitResult {
+    if expressions.len() != 3 {
+        return Err(SquareError::SyntaxError(
+            input.to_string(),
+            "failed to emit_try, expect protected expression and /[err] handler".to_string(),
+            try_token.pos().clone(),
+            None,
+        ));
+    }
+    let handler = emit_node(input, &expressions[2], ctx)?;
+
+    ctx.borrow_mut().push_scope();
+    let protected = emit_node(input, &expressions[1], ctx)?;
+    ctx.borrow_mut().pop_scope();
+
+    let p_len = protected.len() as i32;
+    let mut result = handler;
+    result.push(Inst::TRY(p_len + 2)); // catch 在 h+1+p+2，TRY 偏移基准 h+1
+    result.extend(protected);
+    result.push(Inst::POP_HANDLER);
+    result.push(Inst::JMP(1));
+    result.push(Inst::CALL(1));
+    Ok(result)
 }
 
 fn emit_fn(
@@ -1531,6 +1573,10 @@ fn fuse_superinsts(insts: Vec<Inst>) -> Vec<Inst> {
                 *off = map[target] as i32 - (new_idx as i32 + 1);
             }
             Inst::JNE(off) => {
+                let target = (old_idx as i32 + 1 + *off) as usize;
+                *off = map[target] as i32 - (new_idx as i32 + 1);
+            }
+            Inst::TRY(off) => {
                 let target = (old_idx as i32 + 1 + *off) as usize;
                 *off = map[target] as i32 - (new_idx as i32 + 1);
             }

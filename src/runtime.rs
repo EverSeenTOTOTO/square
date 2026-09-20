@@ -15,6 +15,7 @@ use alloc::{
 use core::cell::{Cell, RefCell};
 
 use crate::code_frame::SourceMap;
+use crate::println;
 use crate::errors::SquareError;
 use crate::vm::{ExecResult, RtCx, Task, UnwindFrame, VM};
 
@@ -169,7 +170,8 @@ pub extern "C" fn wake_by_id(id: u32) {
         tick(vm, insts)
     };
     if let Err(err) = result {
-        panic!("{}", format_error(&err));
+        // 异步任务里的错误：打印后丢弃该任务（已出队），其余任务继续
+        println!("{}", format_error(&err));
     }
 }
 

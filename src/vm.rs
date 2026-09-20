@@ -31,6 +31,14 @@ pub struct UnwindFrame {
     pub context: Vec<Rc<RefCell<CallFrame>>>,
 }
 
+/// try 安装的错误处理器：帧栈深度（回退目标）、操作数栈 sp（handler 闭包位置）、
+/// catch 段入口。错误发生时帧栈截到 depth、sp 复位、错误值（Str 消息）入栈后跳 target。
+pub struct TryHandler {
+    pub depth: usize,
+    pub sp: usize,
+    pub target: usize,
+}
+
 /// 运行时任务。`frame` 存在性可当作 park 信号：`Some` = 正在 park（延续已存、不在 VM 里活），
 /// `None` = live（状态在 VM 里）。定义在 `vm.rs` 是因为 native 单测也要构造（runtime.rs 整个 `#[cfg(wasm)]`）。
 pub struct Task {
@@ -323,6 +331,19 @@ impl Inst {
                     _ => e,
                 })?;
                 frame.stack[sp - 1] = result;
+                Ok(())
+            }
+            Inst::TRY(off) => {
+                let sp = vm.current_frame().borrow().sp;
+                vm.handlers.push(TryHandler {
+                    depth: vm.call_frames.len(),
+                    sp,
+                    target: (vm.pc as i32 + 1 + *off) as usize,
+                });
+                Ok(())
+            }
+            Inst::POP_HANDLER => {
+                vm.handlers.pop();
                 Ok(())
             }
             Inst::JMP(value) => self.jump(insts, &mut vm.pc, *value),
@@ -966,6 +987,9 @@ pub struct VM {
     /// 捕获空闭包/帧共享的空 upvalue 表
     empty_ups: Rc<Vec<Rc<RefCell<Value>>>>,
 
+    /// 活动的 try 错误处理器（内层在后）
+    pub handlers: Vec<TryHandler>,
+
     /// 当前帧缓存：与 call_frames 栈顶同步，current_frame() 免去 Vec::last + Rc clone
     cur: Rc<RefCell<CallFrame>>,
 
@@ -974,7 +998,7 @@ pub struct VM {
     frame_pool: Vec<Rc<RefCell<CallFrame>>>,
 
     /// 逐指令剖析：(rdtsc 周期累计, 执行次数)。profiling 开启时由 step 记录
-    pub inst_cycles: [(u64, u64); 47],
+    pub inst_cycles: [(u64, u64); 49],
     pub profiling: bool,
 }
 
@@ -993,12 +1017,42 @@ impl VM {
             buildin: Builtin::new(),
             globals: FxHashMap::default(),
             empty_ups: Rc::new(Vec::new()),
+            handlers: Vec::new(),
             cur: root.clone(),
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
-            inst_cycles: [(0, 0); 47],
+            inst_cycles: [(0, 0); 49],
             profiling: false,
+        }
+    }
+
+    /// 错误恢复：弹最内层有效 handler，帧栈截回其深度、sp 复位（handler 闭包在栈顶），
+    /// 错误消息以 Str 入栈，pc 跳 catch 段。跨续延跳出的过期 handler（深度大于当前
+    /// 帧栈）直接丢弃。返回 false 表示无 handler，错误继续向上抛。
+    fn handle_error(&mut self, e: &SquareError) -> bool {
+        loop {
+            let Some(h) = self.handlers.pop() else {
+                return false;
+            };
+            if self.call_frames.len() < h.depth {
+                continue; // 过期 handler（续延跳出 try 域）
+            }
+            while self.call_frames.len() > h.depth {
+                self.pop_frame();
+            }
+            let msg = match e {
+                SquareError::InstructionError(msg, ..) => msg.clone(),
+                other => format!("{}", other),
+            };
+            {
+                let binding = self.current_frame();
+                let mut frame = binding.borrow_mut();
+                frame.sp = h.sp;
+                frame.push(Value::Str(Rc::from(msg.as_str())));
+            }
+            self.pc = h.target;
+            return true;
         }
     }
 
@@ -1006,7 +1060,8 @@ impl VM {
         self.pc = 0;
         self.mpc = 0;
         self.globals.clear();
-        self.inst_cycles = [(0, 0); 47];
+        self.handlers.clear();
+        self.inst_cycles = [(0, 0); 49];
         let root = Rc::new(RefCell::new(CallFrame::new()));
         self.cur = root.clone();
         self.call_frames.splice(0.., vec![root]);
@@ -1132,7 +1187,14 @@ impl VM {
         self.current_frame().borrow_mut().ra = insts.len();
 
         while self.pc < insts.len() {
-            self.step(insts, cx)?;
+            match self.step(insts, cx) {
+                Ok(()) => {}
+                Err(e) => {
+                    if !self.handle_error(&e) {
+                        return Err(e);
+                    }
+                }
+            }
             if cx.is_parked() {
                 break; // sleep park：续延已存回 task.frame，停止本次推进。
                        // sleep 内设置 pc = #insts 也可实现中止，但是需要透传指令集总长
@@ -1237,6 +1299,98 @@ fn test_snapshot_roundtrip() {
     assert_eq!(o, bytes.len(), "trailing bytes / over-read mismatch");
 }
 
+
+#[test]
+fn test_exec_try_success() {
+    let code = "[let r [try 42 /[e] 0]]\nr";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+    let mut cx = RtCx::test();
+
+    vm.run(&insts, &mut cx).unwrap();
+
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    assert_eq!(callframe.top(), Some(&Value::Num(42.0)));
+    assert!(vm.handlers.is_empty()); // 正常路径 handler 已撤销
+}
+
+#[test]
+fn test_exec_try_catch() {
+    // Num + Nil 类型错误 → handler 收到 Str 消息
+    let code = "[let r [try [+ 1 nil] /[e] e]]\nr";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+    let mut cx = RtCx::test();
+
+    vm.run(&insts, &mut cx).unwrap();
+
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    match callframe.top() {
+        Some(Value::Str(msg)) => assert!(msg.contains("cannot perform")),
+        other => panic!("expect error Str, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_exec_try_undefined() {
+    let code = "[let r [try undefined_thing /[e] 'caught']]\nr";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+    let mut cx = RtCx::test();
+
+    vm.run(&insts, &mut cx).unwrap();
+
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    assert_eq!(callframe.top(), Some(&Value::Str(Rc::from("caught"))));
+}
+
+#[test]
+fn test_exec_try_deep_unwind() {
+    // 错误发生在三层函数调用深处：帧栈应截回 try 所在深度
+    let code = "
+[let f3 /[] undefined_deep]
+[let f2 /[] [f3]]
+[let f1 /[] [f2]]
+[let r [try [f1] /[e] 7]]
+r
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+    let mut cx = RtCx::test();
+
+    vm.run(&insts, &mut cx).unwrap();
+
+    assert_eq!(vm.call_frames.len(), 1); // 帧栈已回退到根
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    assert_eq!(callframe.top(), Some(&Value::Num(7.0)));
+}
+
+#[test]
+fn test_exec_try_nested() {
+    // 内层 try 捕获，外层不受影响
+    let code = "
+[let r [try [try [+ 1 nil] /[e1] 'inner'] /[e2] 'outer']]
+r
+";
+    let ast = parse(code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let mut vm = VM::new();
+    let mut cx = RtCx::test();
+
+    vm.run(&insts, &mut cx).unwrap();
+
+    let binding = vm.current_frame();
+    let callframe = binding.borrow_mut();
+    assert_eq!(callframe.top(), Some(&Value::Str(Rc::from("inner"))));
+}
 
 /// TCO + 展开参数（Pack）组合：尾调用复用帧时参数包顺序必须保持入参顺序
 #[test]

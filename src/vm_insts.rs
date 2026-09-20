@@ -60,6 +60,9 @@ pub enum Inst {
     BINOP_IMM(u8, Value), // 立即数为右操作数的二元运算（op 用 Inst::id 的 ADD..REM）
     LOADC_JNE(u16, u8, Value, i32), // 槽位与立即数比较、为假跳转（整条循环条件一条指令）
     LOADC_JNZ(u16, u8, Value, i32), // 同上、为真跳转（回边穿线专用，极性相反免取反比较）
+
+    TRY(i32), // 安装错误处理器（偏移到 catch 段；handler 闭包已在此前压栈）
+    POP_HANDLER, // 撤销最近安装的错误处理器
     LOAD_ARITH_IMM(u16, u8, Value), // 槽位读 + 立即数运算入栈
     LOAD2_ARITH(u16, u16, u8), // 两槽位读 + 运算入栈
     LOADGET_LOCAL(u16, String), // 槽位读 + 属性访问（o.y 一条指令）
@@ -68,11 +71,11 @@ pub enum Inst {
 }
 
 /// 指令名表（与 [`Inst::id`] 对齐），剖析输出用
-pub const NAMES: [&str; 47] = [
+pub const NAMES: [&str; 49] = [
     "PUSH", "POP", "ADD", "SUB", "MUL", "DIV", "REM", "BITAND", "BITOR", "BITXOR", "BITNOT",
     "EQ", "NE", "LT", "LE", "GT", "GE", "SHL", "SHR", "JMP", "JNE", "LOAD_LOCAL", "LOAD_UP",
     "LOAD_GLOBAL", "STORE_LOCAL", "STORE_UP", "STORE_GLOBAL", "CALL", "RET", "PUSH_CLOSURE",
-    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL", "LOADP_LOCAL", "BINOP_IMM", "LOADC_JNE", "LOAD_ARITH_IMM", "LOAD2_ARITH", "LOADGET_LOCAL", "LOADP_UP", "LOADU_ARITH", "LOADC_JNZ",
+    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES", "CMP_JNE", "LOAD2_LOCAL", "LOADP_LOCAL", "BINOP_IMM", "LOADC_JNE", "LOAD_ARITH_IMM", "LOAD2_ARITH", "LOADGET_LOCAL", "LOADP_UP", "LOADU_ARITH", "LOADC_JNZ", "TRY", "POP_HANDLER",
 ];
 
 impl Inst {
@@ -126,6 +129,8 @@ impl Inst {
             Inst::BINOP_IMM(..) => 39,
             Inst::LOADC_JNE(..) => 40,
             Inst::LOADC_JNZ(..) => 46,
+            Inst::TRY(_) => 47,
+            Inst::POP_HANDLER => 48,
             Inst::LOAD_ARITH_IMM(..) => 41,
             Inst::LOAD2_ARITH(..) => 42,
             Inst::LOADGET_LOCAL(..) => 43,
@@ -179,6 +184,8 @@ impl Inst {
             Inst::BINOP_IMM(..) => "BINOP_IMM",
             Inst::LOADC_JNE(..) => "LOADC_JNE",
             Inst::LOADC_JNZ(..) => "LOADC_JNZ",
+            Inst::TRY(_) => "TRY",
+            Inst::POP_HANDLER => "POP_HANDLER",
             Inst::LOAD_ARITH_IMM(..) => "LOAD_ARITH_IMM",
             Inst::LOAD2_ARITH(..) => "LOAD2_ARITH",
             Inst::LOADGET_LOCAL(..) => "LOADGET_LOCAL",
@@ -248,6 +255,8 @@ impl fmt::Display for Inst {
             Inst::LOADC_JNZ(a, op, v, off) => {
                 write!(f, "LOADC_JNZ {}, {} {}, {}", a, NAMES[*op as usize], v, off)
             }
+            Inst::TRY(off) => write!(f, "TRY {}", off),
+            Inst::POP_HANDLER => write!(f, "POP_HANDLER"),
             Inst::LOAD_ARITH_IMM(a, op, v) => {
                 write!(f, "LOAD_ARITH_IMM {}, {} {}", a, NAMES[*op as usize], v)
             }

@@ -61,24 +61,24 @@ test("嵌套 defer + sleep: 内层 deferred task 自己 sleep，仍按序完成"
 
 // ── 错误处理：坏参 / 缺参都该 trap 并报因 ────────────────────────
 
-test("错误: sleep 非数字 → trap", async () => {
+test("错误: sleep 非数字 → 状态返回（实例存活）", async () => {
   const s = await sq();
-  assert.throws(() => s.program("[sleep 'x']\n").run());
+  assert.equal(s.program("[sleep 'x']\n").run(), 1);
   assert.match(s.stdout(), /sleep expect a number/);
 });
 
-test("错误: defer 非函数 → trap", async () => {
+test("错误: defer 非函数 → 状态返回（实例存活）", async () => {
   const s = await sq();
-  assert.throws(() => s.program("[defer 5]\n").run());
+  assert.equal(s.program("[defer 5]\n").run(), 1);
   assert.match(s.stdout(), /defer expect a function/);
 });
 
-test("错误: 缺参数 → trap（不该 index 越界 panic）", async () => {
+test("错误: 缺参数 → 状态返回（不该 index 越界 panic）", async () => {
   const a = await sq();
-  assert.throws(() => a.program("[sleep]\n").run());
+  assert.equal(a.program("[sleep]\n").run(), 1);
   assert.match(a.stdout(), /sleep expect a number/);
   const b = await sq();
-  assert.throws(() => b.program("[defer]\n").run());
+  assert.equal(b.program("[defer]\n").run(), 1);
   assert.match(b.stdout(), /defer expect a function/);
 });
 

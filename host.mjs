@@ -41,15 +41,20 @@ export async function loadSquare({ wasmPath = defaultWasm, onWrite } = {}) {
   ref.memory = exportsObj.memory;
   const vm = exportsObj.init();
 
-  /** 编译源码成指令；返回绑定了 run/step 的 program 句柄。 */
+  /** 编译源码成指令；返回绑定了 run/step 的 program 句柄。
+   * 编译失败（句柄为 0）抛 Error，错误文本已在实例输出里。 */
   const program = (source) => {
     const enc = encoder.encode(source);
     const addr = exportsObj.alloc(enc.length);
     new Uint8Array(ref.memory.buffer, addr, enc.length).set(enc);
     const insts = exportsObj.compile(addr, enc.length);
     exportsObj.dealloc(addr, enc.length);
+    if (!insts) {
+      throw new Error(output.join("").trim() || "compile failed");
+    }
     return {
       insts,
+      /** 返回 0 正常；1 运行错误（文本已写入输出，实例存活可复用） */
       run: () => exportsObj.run(vm, insts),
       step: () => exportsObj.step(vm, insts),
     };

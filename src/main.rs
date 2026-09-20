@@ -85,14 +85,17 @@ pub extern "C" fn compile(source_addr: *mut u8, source_length: usize) -> *mut Ve
 
     let ast = match parse::parse(code, &mut code_frame::Position::new()) {
         Err(e) => {
-            panic!("{}", e);
+            // 编译错误走输出通道返回空句柄，宿主可继续使用实例（不再 panic 毒化）
+            println!("{}", e);
+            return core::ptr::null_mut();
         }
         Ok(node) => node,
     };
 
     let (insts, source_map) = match emit::emit(code, &ast, &mut RefCell::new(emit::EmitContext::new())) {
         Err(e) => {
-            panic!("{}", e);
+            println!("{}", e);
+            return core::ptr::null_mut();
         }
         Ok(pair) => pair,
     };
@@ -127,24 +130,33 @@ pub extern "C" fn init() -> *mut vm::VM {
 
 #[cfg(target_family = "wasm")]
 #[no_mangle]
-pub extern "C" fn step(vm_addr: *mut u8, insts_addrr: *const u8) {
+pub extern "C" fn step(vm_addr: *mut u8, insts_addrr: *const u8) -> u32 {
     let mut vm = unsafe { Box::from_raw(vm_addr as *mut vm::VM) };
     let insts = unsafe { Box::from_raw(insts_addrr as *mut Vec<vm_insts::Inst>) };
 
     runtime::ensure_started(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>);
     if let Err(e) = runtime::step_one(&mut vm, &insts) {
-        panic!("{}", runtime::format_error(&e));
+        println!("{}", runtime::format_error(&e));
+        Box::into_raw(vm);
+        Box::into_raw(insts);
+        return 1;
     }
 
     Box::into_raw(vm);
     Box::into_raw(insts);
+    0
 }
 
 #[cfg(target_family = "wasm")]
 #[no_mangle]
-pub extern "C" fn run(vm_addr: *mut u8, insts_addrr: *const u8) {
-    if let Err(e) = runtime::start(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>) {
-        panic!("{}", runtime::format_error(&e));
+pub extern "C" fn run(vm_addr: *mut u8, insts_addrr: *const u8) -> u32 {
+    // 运行错误经输出通道打印后返回 1；实例存活，宿主可 reset 后继续
+    match runtime::start(vm_addr as *mut vm::VM, insts_addrr as *const Vec<vm_insts::Inst>) {
+        Err(e) => {
+            println!("{}", runtime::format_error(&e));
+            1
+        }
+        Ok(()) => 0,
     }
 }
 
