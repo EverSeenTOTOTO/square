@@ -54,7 +54,62 @@ pub enum Inst {
     NAMES(Rc<Vec<String>>), // 程序开头：登记根帧槽位名表（快照/调试用）
 }
 
+/// 指令名表（与 [`Inst::id`] 对齐），剖析输出用
+pub const NAMES: [&str; 36] = [
+    "PUSH", "POP", "ADD", "SUB", "MUL", "DIV", "REM", "BITAND", "BITOR", "BITXOR", "BITNOT",
+    "EQ", "NE", "LT", "LE", "GT", "GE", "SHL", "SHR", "JMP", "JNE", "LOAD_LOCAL", "LOAD_UP",
+    "LOAD_GLOBAL", "STORE_LOCAL", "STORE_UP", "STORE_GLOBAL", "CALL", "RET", "PUSH_CLOSURE",
+    "PACK", "PEEK", "GET", "SET", "DELIMITER", "NAMES",
+];
+
 impl Inst {
+    #[inline]
+    pub fn name_of(id: usize) -> &'static str {
+        NAMES[id]
+    }
+
+    /// 稳定序号（供剖析表数组索引），新增指令时顺延
+    pub fn id(&self) -> usize {
+        match self {
+            Inst::PUSH(_) => 0,
+            Inst::POP => 1,
+            Inst::ADD => 2,
+            Inst::SUB => 3,
+            Inst::MUL => 4,
+            Inst::DIV => 5,
+            Inst::REM => 6,
+            Inst::BITAND => 7,
+            Inst::BITOR => 8,
+            Inst::BITXOR => 9,
+            Inst::BITNOT => 10,
+            Inst::EQ => 11,
+            Inst::NE => 12,
+            Inst::LT => 13,
+            Inst::LE => 14,
+            Inst::GT => 15,
+            Inst::GE => 16,
+            Inst::SHL => 17,
+            Inst::SHR => 18,
+            Inst::JMP(_) => 19,
+            Inst::JNE(_) => 20,
+            Inst::LOAD_LOCAL(_) => 21,
+            Inst::LOAD_UP(_) => 22,
+            Inst::LOAD_GLOBAL(_) => 23,
+            Inst::STORE_LOCAL(_) => 24,
+            Inst::STORE_UP(_) => 25,
+            Inst::STORE_GLOBAL(_) => 26,
+            Inst::CALL(_) => 27,
+            Inst::RET => 28,
+            Inst::PUSH_CLOSURE(_) => 29,
+            Inst::PACK(_) => 30,
+            Inst::PEEK(..) => 31,
+            Inst::GET(_) => 32,
+            Inst::SET(_) => 33,
+            Inst::DELIMITER(_) => 34,
+            Inst::NAMES(_) => 35,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Inst::PUSH(_) => "PUSH",

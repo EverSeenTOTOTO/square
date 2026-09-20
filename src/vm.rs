@@ -16,8 +16,6 @@ use crate::code_frame::Position;
 use crate::emit::{emit, EmitContext};
 #[cfg(test)]
 use crate::parse::parse;
-#[cfg(test)]
-use std::time::Instant;
 
 pub type ExecResult = Result<(), SquareError>;
 
@@ -785,8 +783,9 @@ pub struct VM {
     /// 仅在 `Rc` 唯一（无 callcc 续延共享）时回收，见 [`recycle_frame`]。
     frame_pool: Vec<CallFrame>,
 
-    #[cfg(test)]
-    inst_times: HashMap<&'static str, (u128, usize)>,
+    /// 逐指令剖析：(rdtsc 周期累计, 执行次数)。profiling 开启时由 step 记录
+    pub inst_cycles: [(u64, u64); 36],
+    pub profiling: bool,
 }
 
 
@@ -808,9 +807,8 @@ impl VM {
             pc: 0,
             mpc: 0,
             frame_pool: Vec::new(),
-
-            #[cfg(test)]
-            inst_times: HashMap::new(),
+            inst_cycles: [(0, 0); 36],
+            profiling: false,
         }
     }
 
@@ -818,12 +816,10 @@ impl VM {
         self.pc = 0;
         self.mpc = 0;
         self.globals.clear();
+        self.inst_cycles = [(0, 0); 36];
         let root = Rc::new(RefCell::new(CallFrame::new()));
         self.cur = root.clone();
         self.call_frames.splice(0.., vec![root]);
-
-        #[cfg(test)]
-        self.inst_times.clear();
     }
 
     #[inline]
@@ -920,38 +916,31 @@ impl VM {
     pub fn step(&mut self, insts: &Vec<Inst>, cx: &mut RtCx) -> ExecResult {
         let inst = &insts[self.pc];
 
-        #[cfg(test)]
-        println!("{}: {}", self.pc, inst);
-
-        #[cfg(test)]
-        let start = Instant::now();
+        // rdtsc 读取约 10 周期；分支预测下不剖析时几乎零成本
+        #[cfg(target_arch = "x86_64")]
+        let t0 = if self.profiling {
+            unsafe { core::arch::x86_64::_rdtsc() }
+        } else {
+            0
+        };
 
         inst.exec(self, cx, insts)?;
 
         self.pc += 1;
 
-        #[cfg(test)]
-        {
-            let duration = start.elapsed().as_nanos();
-            let entry = self.inst_times.entry(inst.name()).or_insert((0, 0));
-            *entry = (entry.0 + duration, entry.1 + 1);
+        #[cfg(target_arch = "x86_64")]
+        if self.profiling {
+            let dt = unsafe { core::arch::x86_64::_rdtsc() } - t0;
+            let e = &mut self.inst_cycles[inst.id()];
+            e.0 += dt;
+            e.1 += 1;
         }
-
-        #[cfg(test)]
-        println!(
-            "-------- CallFrame {} --------\n{}",
-            self.call_frames.len() - 1,
-            self.current_frame().borrow()
-        );
 
         Ok(())
     }
 
     pub fn run(&mut self, insts: &Vec<Inst>, cx: &mut RtCx) -> ExecResult {
         self.current_frame().borrow_mut().ra = insts.len();
-
-        #[cfg(test)]
-        self.inst_times.clear();
 
         while self.pc < insts.len() {
             self.step(insts, cx)?;
@@ -964,40 +953,25 @@ impl VM {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn print_times(&self) {
         let mut data: Vec<_> = self
-            .inst_times
+            .inst_cycles
             .iter()
-            .map(|(name, (total_time, count))| {
-                (
-                    name,
-                    *total_time,
-                    (*total_time as f64) / (*count as f64),
-                    *count,
-                )
-            })
+            .enumerate()
+            .filter(|(_, (_, count))| *count > 0)
+            .map(|(id, (total, count))| (id, *total, *total / *count, *count))
             .collect();
 
-        println!();
-        // Sort and print by total time
-        data.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        for (name, total_time, ..) in &data {
-            println!("Total time for {}: {} ns", name, total_time);
+        println!("\n== 按总周期排序 ==");
+        data.sort_by(|a, b| b.1.cmp(&a.1));
+        for (id, total, _, count) in &data {
+            println!("{:>12}: {:>14} cyc  {:>10} 次", Inst::name_of(*id), total, count);
         }
 
-        println!();
-        // Sort and print by average time
-        data.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
-        for (name, _, average_time, _) in &data {
-            println!("Average time for {}: {:.2} ns", name, average_time);
-        }
-
-        println!();
-        // Sort and print by count
-        data.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap());
-        for (name, .., count) in &data {
-            println!("Count for {}: {} times", name, count);
+        println!("\n== 按平均周期排序 ==");
+        data.sort_by(|a, b| b.2.cmp(&a.2));
+        for (id, _, avg, count) in &data {
+            println!("{:>12}: {:>8} cyc/次  {:>10} 次", Inst::name_of(*id), avg, count);
         }
     }
 }

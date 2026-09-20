@@ -171,4 +171,53 @@ pub extern "C" fn snapshot(vm_addr: *mut u8) -> u64 {
     pack_buffer(&bytes)
 }
 
+/// 原生 CLI 运行器：`square [-p|--profile] file.sq`。
+/// -p 输出逐指令 rdtsc 周期剖析（wasm 目标无 main，走 host 驱动）。
+#[cfg(not(target_family = "wasm"))]
+pub fn main() {
+    use std::cell::RefCell;
+
+    let args: Vec<String> = std::env::args().collect();
+    let profile = args.iter().any(|a| a == "-p" || a == "--profile");
+    let Some(path) = args.iter().skip(1).find(|a| !a.starts_with('-')) else {
+        eprintln!("usage: square [-p|--profile] file.sq");
+        std::process::exit(2);
+    };
+    let code = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("read {}: {}", path, e);
+        std::process::exit(2);
+    });
+
+    let ast = match parse::parse(&code, &mut code_frame::Position::new()) {
+        Ok(ast) => ast,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    let (insts, _sm) = match emit::emit(&code, &ast, &mut RefCell::new(emit::EmitContext::new()))
+    {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let mut vm = vm::VM::new();
+    vm.profiling = profile;
+    let task = alloc::rc::Rc::new(vm::Task {
+        frame: RefCell::new(None),
+    });
+    let mut cx = vm::RtCx::new(task);
+    if let Err(e) = vm.run(&insts, &mut cx) {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    }
+    if profile {
+        vm.print_times();
+    }
+}
+
+#[cfg(target_family = "wasm")]
 pub fn main() {}
