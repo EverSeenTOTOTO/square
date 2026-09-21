@@ -5,15 +5,19 @@
 //! 装载函数返回后释放指令数组，全局闭包的 ip 随即悬垂。拼接则天然同域，
 //! 且 DELIMITER 段号 / NAMES / 超指令融合都由 emit() 统一处理。
 
-use core::cell::RefCell;
-
 use alloc::format;
 
+#[cfg(test)]
+use core::cell::RefCell;
+#[cfg(test)]
 use crate::code_frame::Position;
+#[cfg(test)]
 use crate::emit::{emit, EmitContext};
-use crate::errors::SquareError;
+#[cfg(test)]
 use crate::parse::parse;
+#[cfg(test)]
 use crate::vm::{RtCx, VM};
+#[cfg(test)]
 use crate::vm_value::Value;
 
 pub const PRELUDE: &str = include_str!("prelude.sq");
@@ -87,6 +91,34 @@ mod tests {
     fn test_prelude_shadow() {
         let (_, v) = run("[begin [let map /[] 7] [map]]");
         assert_eq!(v, Value::Num(7.0));
+    }
+
+    /// vec = 参数包恒等（/[...] 变参 + __args 整体引用）；slice = at+splice 派生
+    /// （负起点/越界收敛）；str = fold + Display 拼接
+    #[test]
+    fn test_prelude_vec_slice_str() {
+        // Vec 相等为指针同一性，经 join/len/str 做值断言
+        let (_, v) = run("[join '' [vec 1 2 3]]");
+        assert_eq!(v, Value::Str(alloc::rc::Rc::from("123")));
+        let (_, v) = run("[len [vec]]");
+        assert_eq!(v, Value::Num(0.0));
+
+        let (_, v) = run("[join '' [slice [vec 1 2 3 4] 1 3]]");
+        assert_eq!(v, Value::Str(alloc::rc::Rc::from("23")));
+        // end 越界截断；start 越界/负 → 空（旧内建版会 panic）
+        let (_, v) = run("[join '' [slice [vec 1 2 3] 2 9]]");
+        assert_eq!(v, Value::Str(alloc::rc::Rc::from("3")));
+        let (_, v) = run("[len [slice [vec 1 2 3] 5 9]]");
+        assert_eq!(v, Value::Num(0.0));
+        let (_, v) = run("[len [slice [vec 1 2 3] -2 2]]");
+        assert_eq!(v, Value::Num(2.0));
+
+        let (_, v) = run("[str 42 'x' true]");
+        assert_eq!(v, Value::Str(alloc::rc::Rc::from("42xtrue")));
+        let (_, v) = run("[str]");
+        assert_eq!(v, Value::Str(alloc::rc::Rc::from("")));
+        let (_, v) = run("[str [vec 1 'a']]");
+        assert_eq!(v, Value::Str(alloc::rc::Rc::from("[1, a]")));
     }
 
     /// user_start 落在用户首语句的 DELIMITER 上；纯空白程序回落指令总数

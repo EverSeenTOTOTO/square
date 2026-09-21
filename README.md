@@ -29,6 +29,11 @@ A toy Lisp-style language written in Rust, supports first-class function and con
 [let [. x] [vec 1 2 3]] ; x = 2, `.` is a placeholder that MUST occupy one position
 [let [... x] [1 2 3 4]] ; x = 4, `...` is a placeholder that can occupy zero or as many positions as possible
 [let [. [x] ... y] [vec 1 [vec 2] 3 4 5]] ; x = 2, y = 5
+
+; variadic: `/[...]` makes no assumption about arity; the whole argument
+; pack is bound under the name `__args` (prelude's `vec` is exactly this)
+[= myvec /[...] __args]
+[= mylist /[a ...] [vec a __args]] ; leading fixed params + the rest as a pack
 ```
 
 ## Control flow
@@ -141,12 +146,13 @@ unlocking the ability to implement features such as proxies and inheritance.
 ## Prelude & builtins
 
 ```lisp
-; 预置库（编译期拼接，可用 let 遮蔽）：not map filter fold range
-; reverse append contains sum join
+; 预置库（编译期拼接，可用 let 遮蔽）：not vec slice str map filter fold
+; range reverse append contains sum join
 [println [sum [map /[x] [* x x] [range 5]]]]       ; 30
 
-; 内建：floor ceil round abs sqrt pow min max str substr；
-; len/at 兼容字符串；+ 对两字符串为拼接
+; 内建只剩原语：print println at put len splice typeof keys obj set get
+; proxy callcc js await；数学 floor ceil round abs sqrt pow min max；
+; substr。len/at 兼字符串；+ 对两字符串为拼接
 ```
 
 ## Async

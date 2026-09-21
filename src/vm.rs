@@ -1,7 +1,6 @@
 use alloc::{format, rc::Rc, string::String, string::ToString, vec, vec::Vec};
 use core::{cell::RefCell, fmt};
 
-use hashbrown::HashMap;
 
 use crate::{
     builtin::Builtin,
@@ -12,6 +11,12 @@ use crate::{
 
 #[cfg(test)]
 use crate::code_frame::Position;
+/// vm.rs 直跑测试不走 prelude 拼接；vec 已摘出为 prelude 函数，需要 vec 的
+/// 程序自带这行迷你定义（冻结在测试文件里，pc 断言不随 src/prelude.sq 漂移）
+#[cfg(test)]
+fn with_vec(code: &str) -> alloc::string::String {
+    format!("[= vec /[...] __args]\n{}", code)
+}
 #[cfg(test)]
 use crate::emit::{emit, EmitContext};
 #[cfg(test)]
@@ -1561,9 +1566,9 @@ fn test_exec_assign_capture() {
 
 #[test]
 fn test_exec_define_expand() {
-    let code = "[let [x] [vec 42]]";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let code = with_vec("[let [x] [vec 42]]");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1576,9 +1581,9 @@ fn test_exec_define_expand() {
 
 #[test]
 fn test_exec_assign_expand() {
-    let code = "[let x nil] [= [x] [vec 42]]";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let code = with_vec("[let x nil] [= [x] [vec 42]]");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1591,9 +1596,9 @@ fn test_exec_assign_expand() {
 
 #[test]
 fn test_exec_assign_expand_capture() {
-    let code = "[let x nil] [begin [= [x] [vec 42]]]";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let code = with_vec("[let x nil] [begin [= [x] [vec 42]]]");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1606,9 +1611,9 @@ fn test_exec_assign_expand_capture() {
 
 #[test]
 fn test_exec_define_expand_dot() {
-    let code = "[let [. x] [vec 1 42 3]]";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let code = with_vec("[let [. x] [vec 1 42 3]]");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1621,9 +1626,9 @@ fn test_exec_define_expand_dot() {
 
 #[test]
 fn test_exec_define_expand_dot_error() {
-    let code = "[let [. x] [vec 42]]";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let code = with_vec("[let [. x] [vec 42]]");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1632,16 +1637,16 @@ fn test_exec_define_expand_dot_error() {
         Err(SquareError::InstructionError(
             "bad peek_vec, index 1 out of range, pack length is 1".to_string(),
             Inst::PEEK(0, 1),
-            7,
+            15,
         ))
     );
 }
 
 #[test]
 fn test_exec_define_expand_greed() {
-    let code = "[let [... x] [vec 1 2 42]]";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let code = with_vec("[let [... x] [vec 1 2 42]]");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1654,9 +1659,9 @@ fn test_exec_define_expand_greed() {
 
 #[test]
 fn test_exec_define_expand_greed_error() {
-    let code = "[let [... x] [vec]]";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+    let code = with_vec("[let [... x] [vec]]");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -1665,18 +1670,18 @@ fn test_exec_define_expand_greed_error() {
         Err(SquareError::InstructionError(
             "bad peek_vec, offset 0 out of range, pack length is 0".to_string(),
             Inst::PEEK(0, -1),
-            4,
+            12,
         ))
     );
 }
 
 #[test]
 fn test_exec_define_expand_nested() {
-    let code = "
+    let code = with_vec("
 [let [. [x] ... y] [vec 1 [vec 42] 3 4 5]] ; x = 42, y = 5
-";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 
@@ -2354,7 +2359,7 @@ x
 
 #[test]
 fn test_profile() {
-    let code = "
+    let code = with_vec("
 [let [a b c d e f g] [vec 1 2 3 4 5 6 7]]
 
 [begin 
@@ -2365,9 +2370,9 @@ fn test_profile() {
                     [begin 
                         [begin [println a b c d e f g]]]]]]]]
 
-";
-    let ast = parse(code, &mut Position::new()).unwrap();
-    let (insts, _source_map) = emit(code, &ast, &RefCell::new(EmitContext::new())).unwrap();
+");
+    let ast = parse(&code, &mut Position::new()).unwrap();
+    let (insts, _source_map) = emit(&code, &ast, &RefCell::new(EmitContext::new())).unwrap();
     let mut vm = VM::new();
     let mut cx = RtCx::test();
 

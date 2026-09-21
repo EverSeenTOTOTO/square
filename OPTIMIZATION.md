@@ -201,3 +201,13 @@ js_queue_microtask 两个导入，统一为两个原语——`[await 'fn' [vec a
 的程序自带定义（`[= sleep /[ms] [await '__square_sleep' [vec ms]]]`、
 `[= defer /[f] [js 'queueMicrotask' [vec f]]]`）。spawn 不再提供
 （与 defer 完全等价）。
+
+**再后续**：vec/slice/str 也摘出到 prelude——内建收敛为纯原语。
+vec 即参数包恒等（`[= vec /[...] __args]`，`/[...]` 纯贪婪占位不限
+元数，`__args` 由编译器注册为参数包名——顺带成为语言的 variadic 形态）；
+slice 是 at+splice 派生（负起点/越界由 panic 收敛为截断/空）；
+str 是 fold+Display 拼接。**代价**：vec 基准（分配/内建调用维度）
+231→~251ms（+8.7%），其余五个基准持平——构造从 syscall 变闭包调用的
+帧开销，留待第二层 CALL 特化回收。曾尝试 `[... xs]` 绑参数包失败：
+`...` 是"弹性占位"语义（绑末位元素），非 rest 收集——这个误区本身
+值得一记。

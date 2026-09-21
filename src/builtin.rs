@@ -5,7 +5,6 @@ use alloc::rc::Rc;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
-use hashbrown::HashMap;
 
 use crate::errors::SquareError;
 use crate::vm_insts::Inst;
@@ -66,22 +65,6 @@ impl Builtin {
                     |_vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, _inst: &Inst| -> ExecResult {
                         params.borrow().iter().for_each(|val| print!("{}", val));
                         println!();
-                        Ok(())
-                    },
-                ) as Syscall),
-            ),
-        );
-
-        values.insert(
-            "vec",
-            (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("vec")))),
-                Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, _inst: &Inst| -> ExecResult {
-                        // params have already be packed
-                        vm.current_frame()
-                            .borrow_mut()
-                            .push(Value::Vec(params));
                         Ok(())
                     },
                 ) as Syscall),
@@ -237,49 +220,6 @@ impl Builtin {
                         Err(SquareError::InstructionError(
                             "splice() expect (vector, index, deleteCount, toInsert) parameter"
                                 .to_string(),
-                            inst.clone(),
-                            vm.pc,
-                        ))
-                    },
-                ) as Syscall),
-            ),
-        );
-
-        values.insert(
-            "slice",
-            (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("slice")))),
-                Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, inst: &Inst| -> ExecResult {
-                        if let Some(internal) =
-                            params.borrow().first().unwrap_or(&Value::Nil).as_vec()
-                        {
-                            if let (Some(Value::Num(start_index)), Some(Value::Num(end_index))) =
-                                (params.borrow().get(1), params.borrow().get(2))
-                            {
-                                let start = *start_index as usize;
-                                let end_ = *end_index as usize;
-                                let end = if end_ > internal.borrow().len() {
-                                    internal.borrow().len()
-                                } else {
-                                    end_
-                                };
-
-                                let slice = internal.borrow_mut()[start..end].to_vec();
-
-                                return {
-                                    vm.current_frame()
-                                        .borrow_mut()
-                                        .push(Value::Vec(Rc::new(RefCell::new(
-                                            slice,
-                                        ))));
-                                    Ok(())
-                                };
-                            }
-                        }
-
-                        Err(SquareError::InstructionError(
-                            "slice() expect (vector, start, end) parameter".to_string(),
                             inst.clone(),
                             vm.pc,
                         ))
@@ -731,28 +671,6 @@ impl Builtin {
         math_variadic!("max", core::f64::NEG_INFINITY, |a: f64, x: f64| if a > x { a } else { x });
 
         // ── 字符串 ─────────────────────────────────────────────────────
-        // str：任意值 → 显示文本（数字转字符串的主路径）
-        values.insert(
-            "str",
-            (
-                Value::Function(Rc::new(RefCell::new(Function::Syscall("str")))),
-                Some(Rc::new(
-                    |vm: &mut VM, params: Rc<RefCell<Vec<Value>>>, _cx: &mut RtCx, _inst: &Inst| -> ExecResult {
-                        let joined = params
-                            .borrow()
-                            .iter()
-                            .map(|v| format!("{}", v))
-                            .collect::<Vec<_>>()
-                            .join("");
-                        vm.current_frame()
-                            .borrow_mut()
-                            .push(Value::Str(Rc::from(joined.as_str())));
-                        Ok(())
-                    },
-                ) as Syscall),
-            ),
-        );
-
         // substr：(s, start, end) 按字符下标取子串
         values.insert(
             "substr",
