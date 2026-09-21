@@ -87,11 +87,3 @@
         [if [< i [- [len v] 1]] [= r [+ r sep]] nil]
         [+= i 1]]]
     r]]
-
-; ── 异步（糖：全部建立在 await/闭包跨界原语上）──────────────────────
-; sleep：park 当前任务，宿主 __square_sleep（Promise 化 setTimeout）唤醒，值为 nil
-[= sleep /[ms] [await '__square_sleep' [vec ms]]]
-; defer：闭包跨界给 queueMicrotask（下一个 microtask 作为任务跑）
-[= defer /[f] [js 'queueMicrotask' [vec f]]]
-; spawn ≡ defer（微任务时序；同轮执行的旧原生语义已随原语统一移除）
-[= spawn /[f] [defer f]]

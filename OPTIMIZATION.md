@@ -195,3 +195,9 @@ js_queue_microtask 两个导入，统一为两个原语——`[await 'fn' [vec a
 **契约**（v1 限制，README 已记）：闭包回调为异步触发，返回值不
 同步回流宿主（事件/Promise 型 API 天然契合，arr.map 式同步取值不
 适合）；多实参回调以 vec 进首参。
+
+**后续**：sleep/defer/spawn 糖亦已从 prelude 移除——prelude 只保留
+纯标准库（not/map/filter/…）；sleep/defer 是原语上的普通函数，由需要
+的程序自带定义（`[= sleep /[ms] [await '__square_sleep' [vec ms]]]`、
+`[= defer /[f] [js 'queueMicrotask' [vec f]]]`）。spawn 不再提供
+（与 defer 完全等价）。

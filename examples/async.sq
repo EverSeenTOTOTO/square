@@ -1,9 +1,16 @@
 ; 运行：./sq examples/async.sq
+; 异步没有内建——sleep/defer 只是原语上的普通函数（宿主提供 Promise 化
+; __square_sleep），并发/微任务调度即闭包跨界交给宿主事件循环。
 
-[spawn /[] [begin [sleep 400] [println 'task A done']]]
-[spawn /[] [begin [sleep 600] [defer /[] [println 'task B done']]]] ; defer is microtask
-[spawn /[] [begin [sleep 800] [println 'task C done']]]
+[= sleep /[ms] [await '__square_sleep' [vec ms]]]
+[= defer /[f] [js 'queueMicrotask' [vec f]]]
 
+; 并发任务：各自 sleep 后按到期先后打印
+[defer /[] [begin [sleep 400] [println 'task A done']]]
+[defer /[] [begin [sleep 600] [println 'task B done']]]
+[defer /[] [begin [sleep 800] [println 'task C done']]]
+
+; 嵌套 microtask：first / later / latest
 [defer /[] [begin
   [defer /[] [begin
     [println 'later']

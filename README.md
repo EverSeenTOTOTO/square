@@ -151,13 +151,20 @@ unlocking the ability to implement features such as proxies and inheritance.
 
 ## Async
 
-全部建立在两个原语上（`sleep`/`defer`/`spawn` 是 prelude 两行糖，原生实现已移除）：
+全部建立在两个原语上——没有内建的 sleep/defer/spawn，调度就是宿主的事件循环：
 
 ```lisp
 ; await：调用宿主函数并 park 等待——Promise 则 .then/.catch，同步值立即回调；
 ; 拒绝/宿主异常经 {"__sq_err"} 回传，try 可直接捕获
 [println [await 'Math.max' [vec 1 7 3]]]              ; 7
 [println [try [await 'Promise.reject' [vec 'boom']] /[e] e]]  ; boom
+
+; sleep/defer 只是原语上的普通函数（宿主提供 Promise 化 __square_sleep），
+; 程序自带定义即可：
+[= sleep /[ms] [await '__square_sleep' [vec ms]]]
+[= defer /[f] [js 'queueMicrotask' [vec f]]]
+[sleep 500]
+[defer /[] [println 'later']]
 
 ; 闭包跨界：作为实参传给 JS 的 square 闭包自动变回调句柄，
 ; 宿主调用它 = call_cb 唤醒该任务（事件/Promise 型 API 天然契合；

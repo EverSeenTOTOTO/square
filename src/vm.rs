@@ -1237,8 +1237,8 @@ impl VM {
                 }
             }
             if cx.is_parked() {
-                break; // sleep park：续延已存回 task.frame，停止本次推进。
-                       // sleep 内设置 pc = #insts 也可实现中止，但是需要透传指令集总长
+                break; // park（如 await）：续延已存回 task.frame，停止本次推进。
+                       // park 处设置 pc = #insts 也可实现中止，但是需要透传指令集总长
             }
         }
 
